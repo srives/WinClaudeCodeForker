@@ -28,6 +28,7 @@ $Global:WTSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8
 $Global:ClaudePath = "$env:USERPROFILE\.claude"
 $Global:ClaudeProjectsPath = "$env:USERPROFILE\.claude\projects"
 $Global:ClaudeSettingsPath = "$env:USERPROFILE\.claude\settings.json"
+$Global:TokenUsageCache = @{}
 
 # Trap for unhandled errors
 trap {
@@ -393,6 +394,12 @@ function Get-SessionTokenUsage {
         return $null
     }
 
+    # Check cache first
+    $cacheKey = "$ProjectPath|$SessionId"
+    if ($Global:TokenUsageCache.ContainsKey($cacheKey)) {
+        return $Global:TokenUsageCache[$cacheKey]
+    }
+
     try {
         # Get the session .jsonl file path
         $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
@@ -434,13 +441,18 @@ function Get-SessionTokenUsage {
             $reader.Close()
         }
 
-        return @{
+        $result = @{
             InputTokens = $totalInputTokens
             CacheCreationTokens = $totalCacheCreationTokens
             CacheReadTokens = $totalCacheReadTokens
             OutputTokens = $totalOutputTokens
             TotalTokens = $totalInputTokens + $totalCacheCreationTokens + $totalCacheReadTokens + $totalOutputTokens
         }
+
+        # Store in cache
+        $Global:TokenUsageCache[$cacheKey] = $result
+
+        return $result
 
     } catch {
         Write-DebugInfo "Error reading session token usage: $_" -Color Red
@@ -1046,7 +1058,8 @@ function Show-SessionMenu {
         [array]$Sessions,
         [bool]$ShowUnnamed = $false,
         [bool]$OnlyWithProfiles = $false,
-        [string]$Title = ""
+        [string]$Title = "",
+        [int]$SelectedIndex = 0
     )
 
     # Initialize as empty array if null
@@ -1066,7 +1079,7 @@ function Show-SessionMenu {
     }
 
     Write-Host "Claude Code Session Forker, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
-    Write-Host "(Note: Newly forked sessions shown in [brackets] until Claude CLI indexes them)" -ForegroundColor DarkGray
+    Write-Host "* A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it." -ForegroundColor DarkGray
 
     # Calculate status information
     $totalSessions = $Sessions.Count
@@ -1091,8 +1104,15 @@ function Show-SessionMenu {
     }
     $totalCostDisplay = Format-Cost -Cost $totalCost
 
-    # Display status line
-    Write-Host "Claude Sessions: $totalSessions (Named: $namedCount, Unnamed: $unnamedCount) | Debug: $debugStatus | Permissions: $permMode | Total Cost: $totalCostDisplay" -ForegroundColor DarkGray
+    # Display status line - adjust text based on named/unnamed counts
+    $sessionTypeText = if ($namedCount -eq 0) {
+        "Claude Unnamed Sessions: $unnamedCount"
+    } elseif ($unnamedCount -eq 0) {
+        "Claude Named Sessions: $namedCount"
+    } else {
+        "Claude Sessions: $totalSessions (Named: $namedCount, Unnamed: $unnamedCount)"
+    }
+    Write-Host "$sessionTypeText | Debug: $debugStatus | Permissions: $permMode | Total Cost: $totalCostDisplay" -ForegroundColor DarkGray
     Write-Host ""
 
     # Build display rows - always start numbering at 1
@@ -1234,7 +1254,12 @@ function Show-SessionMenu {
     }
 
     # Display rows
+    $rowIndex = 0
     foreach ($row in $rows) {
+        # Check if this row is selected (highlighted)
+        $isSelected = ($rowIndex -eq $SelectedIndex)
+        $rowColor = if ($isSelected) { "Yellow" } else { "Green" }
+
         if ($OnlyWithProfiles) {
             # Truncate values to fit columns: 3, 30, 8, 12, 12, 8, 20, 20, 20
             $title = Truncate-String $row.Title 30
@@ -1244,7 +1269,7 @@ function Show-SessionMenu {
             $path = Truncate-String $row.Path 20
             $rowText = ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-8} {6,-20} {7,-20} {8,-20}" -f $row.Num, $title, $row.Messages, $row.Created, $row.Modified, $cost, $profile, $colorScheme, $path)
             Write-Host "| " -NoNewline -ForegroundColor DarkGray
-            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor Green
+            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor $rowColor
             Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
             Write-Host " |" -ForegroundColor DarkGray
         } else {
@@ -1258,10 +1283,11 @@ function Show-SessionMenu {
             $path = Truncate-String $row.Path 20
             $rowText = ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-8} {8,-25} {9,-25} {10,-20}" -f $row.Num, $active, $model, $title, $row.Messages, $row.Created, $row.Modified, $cost, $profile, $forkTree, $path)
             Write-Host "| " -NoNewline -ForegroundColor DarkGray
-            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor Green
+            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor $rowColor
             Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
             Write-Host " |" -ForegroundColor DarkGray
         }
+        $rowIndex++
     }
 
     # Draw bottom border of box
@@ -1274,10 +1300,229 @@ function Show-SessionMenu {
     Write-Output -NoEnumerate $rows
 }
 
+function Get-ArrowKeyNavigation {
+    <#
+    .SYNOPSIS
+        Interactive arrow-key navigation for menu selection
+    .DESCRIPTION
+        Allows user to navigate menu with Up/Down arrows, select with Enter, or use single-key commands
+    #>
+    param(
+        [array]$MenuRows,
+        [int]$CurrentIndex = 0,
+        [bool]$ShowUnnamed,
+        [bool]$HasWTProfiles = $false,
+        [bool]$DeleteMode = $false,
+        [bool]$HasBypassPermissions = $false
+    )
+
+    if ($null -eq $MenuRows) { $MenuRows = @() }
+
+    $selectedIndex = $CurrentIndex
+    $rowCount = $MenuRows.Count
+
+    # Ensure selectedIndex is within bounds
+    if ($selectedIndex -lt 0) { $selectedIndex = 0 }
+    if ($selectedIndex -ge $rowCount -and $rowCount -gt 0) { $selectedIndex = $rowCount - 1 }
+
+    # Hide cursor for cleaner navigation
+    try {
+        [Console]::CursorVisible = $false
+    } catch {
+        # Ignore if console handle is not available
+    }
+
+    # Display prompt with available commands ONCE
+    $debugEnabled = Get-DebugState
+    $debugColor = if ($debugEnabled) { "Red" } else { "Yellow" }
+
+    Write-Host ""
+    if ($DeleteMode) {
+        Write-Host "Use " -NoNewline -ForegroundColor Gray
+        Write-Host "UP/DOWN" -NoNewline -ForegroundColor Cyan
+        Write-Host " arrows, " -NoNewline -ForegroundColor Gray
+        Write-Host "Enter" -NoNewline -ForegroundColor Green
+        Write-Host " to select | " -NoNewline -ForegroundColor Gray
+        Write-Host 'R' -NoNewline -ForegroundColor Yellow
+        Write-Host "efresh" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "e" -NoNewline -ForegroundColor Gray
+        Write-Host 'X' -NoNewline -ForegroundColor Yellow
+        Write-Host "it" -ForegroundColor Gray
+    } elseif ($ShowUnnamed) {
+        Write-Host "Use " -NoNewline -ForegroundColor Gray
+        Write-Host "UP/DOWN" -NoNewline -ForegroundColor Cyan
+        Write-Host " arrows, " -NoNewline -ForegroundColor Gray
+        Write-Host "Enter" -NoNewline -ForegroundColor Green
+        Write-Host " to select | " -NoNewline -ForegroundColor Gray
+        Write-Host 'N' -NoNewline -ForegroundColor Yellow
+        Write-Host "ew Session" -NoNewline -ForegroundColor Gray
+        if ($HasWTProfiles) {
+            Write-Host " | " -NoNewline -ForegroundColor Gray
+            Write-Host 'W' -NoNewline -ForegroundColor Yellow
+            Write-Host "in Terminal Config" -NoNewline -ForegroundColor Gray
+        }
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'H' -NoNewline -ForegroundColor Yellow
+        Write-Host "ide Unnamed Sessions" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        if ($HasBypassPermissions) {
+            Write-Host 'C' -NoNewline -ForegroundColor Yellow
+            Write-Host "hatty Mode" -NoNewline -ForegroundColor Gray
+        } else {
+            Write-Host 'Q' -NoNewline -ForegroundColor Yellow
+            Write-Host "uiet Mode" -NoNewline -ForegroundColor Gray
+        }
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "c" -NoNewline -ForegroundColor Gray
+        Write-Host 'O' -NoNewline -ForegroundColor Yellow
+        Write-Host "st" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'D' -NoNewline -ForegroundColor $debugColor
+        Write-Host "ebug" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'R' -NoNewline -ForegroundColor Yellow
+        Write-Host "efresh" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "e" -NoNewline -ForegroundColor Gray
+        Write-Host 'X' -NoNewline -ForegroundColor Yellow
+        Write-Host "it" -ForegroundColor Gray
+    } else {
+        Write-Host "Use " -NoNewline -ForegroundColor Gray
+        Write-Host "UP/DOWN" -NoNewline -ForegroundColor Cyan
+        Write-Host " arrows, " -NoNewline -ForegroundColor Gray
+        Write-Host "Enter" -NoNewline -ForegroundColor Green
+        Write-Host " to select | " -NoNewline -ForegroundColor Gray
+        Write-Host 'N' -NoNewline -ForegroundColor Yellow
+        Write-Host "ew Session" -NoNewline -ForegroundColor Gray
+        if ($HasWTProfiles) {
+            Write-Host " | " -NoNewline -ForegroundColor Gray
+            Write-Host 'W' -NoNewline -ForegroundColor Yellow
+            Write-Host "in Terminal Config" -NoNewline -ForegroundColor Gray
+        }
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'S' -NoNewline -ForegroundColor Yellow
+        Write-Host "how Unnamed Sessions" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        if ($HasBypassPermissions) {
+            Write-Host 'C' -NoNewline -ForegroundColor Yellow
+            Write-Host "hatty Mode" -NoNewline -ForegroundColor Gray
+        } else {
+            Write-Host 'Q' -NoNewline -ForegroundColor Yellow
+            Write-Host "uiet Mode" -NoNewline -ForegroundColor Gray
+        }
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "c" -NoNewline -ForegroundColor Gray
+        Write-Host 'O' -NoNewline -ForegroundColor Yellow
+        Write-Host "st" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'D' -NoNewline -ForegroundColor $debugColor
+        Write-Host "ebug" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'R' -NoNewline -ForegroundColor Yellow
+        Write-Host "efresh" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "e" -NoNewline -ForegroundColor Gray
+        Write-Host 'X' -NoNewline -ForegroundColor Yellow
+        Write-Host "it" -ForegroundColor Gray
+    }
+    Write-Host ""
+
+    try {
+        while ($true) {
+            # Wait for key press (non-blocking, no Enter required)
+            $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+            # Handle arrow keys - update selection and return to redisplay
+            if ($key.VirtualKeyCode -eq 38) {  # Up arrow
+                if ($rowCount -gt 0) {
+                    $selectedIndex = ($selectedIndex - 1)
+                    if ($selectedIndex -lt 0) { $selectedIndex = $rowCount - 1 }
+                    return @{ Type = 'Navigate'; Index = $selectedIndex }
+                }
+            }
+            elseif ($key.VirtualKeyCode -eq 40) {  # Down arrow
+                if ($rowCount -gt 0) {
+                    $selectedIndex = ($selectedIndex + 1) % $rowCount
+                    return @{ Type = 'Navigate'; Index = $selectedIndex }
+                }
+            }
+            # Handle Enter key
+            elseif ($key.VirtualKeyCode -eq 13) {  # Enter
+                if ($rowCount -gt 0) {
+                    return @{ Type = 'Select'; Index = $selectedIndex; Value = $MenuRows[$selectedIndex].Num }
+                }
+            }
+            # Handle single-key commands
+            else {
+                $char = $key.Character.ToString().ToUpper()
+
+                # Exit/Quit
+                if ($char -eq 'X') {
+                    if ($DeleteMode) {
+                        return @{ Type = 'ExitDeleteMode' }
+                    } else {
+                        return @{ Type = 'Quit' }
+                    }
+                }
+
+                # New session
+                if ($char -eq 'N' -and -not $DeleteMode) {
+                    return @{ Type = 'NewSession' }
+                }
+
+                # Show/Hide unnamed
+                if ($char -eq 'S') {
+                    return @{ Type = 'ShowUnnamed'; Index = $selectedIndex }
+                }
+                if ($char -eq 'H') {
+                    return @{ Type = 'HideUnnamed'; Index = $selectedIndex }
+                }
+
+                # Debug mode
+                if ($char -eq 'D') {
+                    return @{ Type = 'Debug'; Index = $selectedIndex }
+                }
+
+                # Cost analysis
+                if ($char -eq 'O') {
+                    return @{ Type = 'CostAnalysis'; Index = $selectedIndex }
+                }
+
+                # Refresh
+                if ($char -eq 'R') {
+                    return @{ Type = 'Refresh'; Index = $selectedIndex }
+                }
+
+                # Windows Terminal config
+                if ($char -eq 'W' -and $HasWTProfiles -and -not $DeleteMode) {
+                    return @{ Type = 'EnterDeleteMode'; Index = $selectedIndex }
+                }
+
+                # Permission toggles
+                if ($char -eq 'Q' -and -not $DeleteMode) {
+                    return @{ Type = 'EnableBypassPermissions'; Index = $selectedIndex }
+                }
+                if ($char -eq 'C' -and -not $DeleteMode) {
+                    return @{ Type = 'DisableBypassPermissions'; Index = $selectedIndex }
+                }
+            }
+        }
+    }
+    finally {
+        # Restore cursor
+        try {
+            [Console]::CursorVisible = $true
+        } catch {
+            # Ignore if console handle is not available
+        }
+    }
+}
+
 function Get-UserSelection {
     <#
     .SYNOPSIS
-        Gets user's menu selection with validation
+        Gets user's menu selection with validation (LEGACY - kept for compatibility)
     #>
     param(
         [int]$MinOption,
@@ -1301,19 +1546,19 @@ function Get-UserSelection {
         $debugColor = if ($debugEnabled) { "Red" } else { "Yellow" }
 
         if ($DeleteMode) {
-            Write-Host "Select Windows Terminal Profile $range, [$]Cost, " -ForegroundColor Yellow -NoNewline
+            Write-Host "Select Windows Terminal Profile $range, [O]Cost, " -ForegroundColor Yellow -NoNewline
             Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
             Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
         } elseif ($ShowUnnamed) {
             $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
-            Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [H]ide unnamed sessions$permOption, [$]Cost, " -ForegroundColor Yellow -NoNewline
+            Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [H]ide unnamed sessions$permOption, [O]Cost, " -ForegroundColor Yellow -NoNewline
             Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
             Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
         } else {
             $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
-            Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [S]how unnamed sessions$permOption, [$]Cost, " -ForegroundColor Yellow -NoNewline
+            Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [S]how unnamed sessions$permOption, [O]Cost, " -ForegroundColor Yellow -NoNewline
             Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
             Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
         }
@@ -3550,13 +3795,18 @@ function Start-MainMenu {
     Initialize-Environment
 
     # Menu loop with show/hide toggle and delete mode
-    $showUnnamed = $false
+    $showUnnamed = $true
     $deleteMode = $false
+    $selectedIndex = 0
+    $reloadSessions = $true
+    $sessions = $null
 
     while ($true) {
-        # Reload sessions from disk each time through the loop
-        # This ensures we see any new sessions, renamed sessions, etc.
-        $sessions = Get-AllClaudeSessions
+        # Only reload sessions when needed (not during navigation)
+        if ($reloadSessions) {
+            $sessions = Get-AllClaudeSessions
+            $reloadSessions = $false
+        }
 
         # Initialize as empty array if null
         if ($null -eq $sessions) { $sessions = @() }
@@ -3606,7 +3856,7 @@ function Start-MainMenu {
 
         # Show menu and get display rows
         $menuTitle = if ($deleteMode) { "WIN TERMINAL CONFIG" } else { "MAIN MENU" }
-        $displayRows = Show-SessionMenu -Sessions $sessions -ShowUnnamed $showUnnamed -OnlyWithProfiles $deleteMode -Title $menuTitle
+        $displayRows = Show-SessionMenu -Sessions $sessions -ShowUnnamed $showUnnamed -OnlyWithProfiles $deleteMode -Title $menuTitle -SelectedIndex $selectedIndex
 
         # Ensure $displayRows is treated as an array
         if ($displayRows -isnot [array]) {
@@ -3649,11 +3899,16 @@ function Start-MainMenu {
             $permissionStatus
         }
 
-        # Get user selection
-        $result = Get-UserSelection -MinOption $minOption -MaxOption $maxOption -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -HasBypassPermissions $hasBypassPermissions
+        # Get user selection using arrow-key navigation
+        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -HasBypassPermissions $hasBypassPermissions
 
         # Handle result
         switch ($result.Type) {
+            'Navigate' {
+                # Just update index and continue WITHOUT reloading sessions
+                $selectedIndex = $result.Index
+                continue
+            }
             'Quit' {
                 Write-Host ""
                 Write-ColorText "Goodbye!" -Color Cyan
@@ -3669,48 +3924,66 @@ function Start-MainMenu {
 
             'ShowUnnamed' {
                 $showUnnamed = $true
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'HideUnnamed' {
                 $showUnnamed = $false
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'Debug' {
                 # Show debug toggle
                 Show-DebugToggle
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'CostAnalysis' {
                 # Show cost analysis report
                 Show-CostAnalysis -Sessions $sessions
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'Refresh' {
                 # Refresh menu - just continue the loop to reload session data
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'EnterDeleteMode' {
                 $deleteMode = $true
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'ExitDeleteMode' {
                 $deleteMode = $false
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'EnableBypassPermissions' {
                 Enable-GlobalBypassPermissions
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
             'DisableBypassPermissions' {
                 Disable-GlobalBypassPermissions
+                $selectedIndex = 0
+                $reloadSessions = $true
                 continue
             }
 
@@ -3719,6 +3992,9 @@ function Start-MainMenu {
 
                 # Find the corresponding row
                 $selectedRow = $displayRows | Where-Object { $_.Num -eq $selectedNum }
+
+                # Set reload flag for when we return to menu
+                $reloadSessions = $true
 
                 if ($deleteMode) {
                     # Profile management mode - show management menu
