@@ -1,3 +1,6 @@
+Tldr; Just copy the single file, Claude-Menu.ps1, put it someplace memorable, then run:
+      powershell.exe -ExecutionPolicy Bypass -NoProfile -File "someplace\memorable\Claude-Menu.ps1"
+
 # Windows Claude Code Forker
 
 A PowerShell-based session manager for Claude Code CLI with Windows Terminal integration.
