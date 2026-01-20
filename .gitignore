@@ -28,3 +28,4 @@ desktop.ini
 *.bak
 settings.json.backup.*
 /.vs
+/.claude
