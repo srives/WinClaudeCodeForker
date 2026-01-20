@@ -17,11 +17,13 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.0.0"
+$Global:ScriptVersion = "2026.1.20"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
 $Global:BackgroundTrackingPath = "$Global:MenuPath\background-tracking.json"
+$Global:DebugStatePath = "$Global:MenuPath\debug.txt"
+$Global:DebugLogPath = "$Global:MenuPath\debug.log"
 $Global:WTSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
 $Global:ClaudePath = "$env:USERPROFILE\.claude"
 $Global:ClaudeProjectsPath = "$env:USERPROFILE\.claude\projects"
@@ -86,31 +88,91 @@ function ConvertTo-ClaudeprojectPath {
     <#
     .SYNOPSIS
         Converts a Windows path to Claude's encoded project path format
+    .DESCRIPTION
+        Claude encodes paths by:
+        1. Removing the colon from drive letter (C: -> C)
+        2. Replacing the FIRST backslash with -- (double dash)
+        3. Replacing subsequent backslashes with - (single dash)
     .EXAMPLE
         ConvertTo-ClaudeprojectPath "C:\repos" returns "C--repos"
+        ConvertTo-ClaudeprojectPath "C:\repos\Fork" returns "C--repos-Fork"
     #>
     param([string]$Path)
 
     $normalized = $Path.TrimEnd('\')
-    return $normalized -replace ':', '-' -replace '\\', '--'
+
+    # Remove colon from drive letter
+    $withoutColon = $normalized -replace ':', ''
+
+    # Replace first backslash with double dash
+    $withFirstDash = $withoutColon -replace '^([A-Za-z])\\', '$1--'
+
+    # Replace remaining backslashes with single dash
+    $encoded = $withFirstDash -replace '\\', '-'
+
+    return $encoded
 }
 
 function ConvertFrom-ClaudeprojectPath {
     <#
     .SYNOPSIS
         Converts Claude's encoded project path back to Windows path format
+    .DESCRIPTION
+        Decodes Claude's path format:
+        1. Extracts drive letter before first --
+        2. Replaces all - with \ for path components
     .EXAMPLE
         ConvertFrom-ClaudeprojectPath "C--repos" returns "C:\repos"
+        ConvertFrom-ClaudeprojectPath "C--repos-Fork" returns "C:\repos\Fork"
     #>
     param([string]$EncodedPath)
 
-    # Replace first dash with colon, then all double-dashes with backslashes
-    if ($EncodedPath -match '^([A-Za-z])-(.+)$') {
+    # Match drive letter and double-dash, then the rest
+    if ($EncodedPath -match '^([A-Za-z])--(.+)$') {
         $drive = $Matches[1]
-        $rest = $Matches[2] -replace '--', '\'
+        # Replace all remaining single dashes with backslashes
+        $rest = $Matches[2] -replace '-', '\'
         return "${drive}:\$rest"
+    } elseif ($EncodedPath -match '^([A-Za-z])$') {
+        # Just a drive letter (e.g., "C")
+        return "${EncodedPath}:\"
     }
+
+    # If pattern doesn't match, return as-is (shouldn't happen with valid Claude paths)
+    Write-ErrorLog "Invalid Claude path encoding: $EncodedPath"
     return $EncodedPath
+}
+
+function Get-ClaudeCLIPath {
+    <#
+    .SYNOPSIS
+        Gets the full path to Claude CLI executable
+    .DESCRIPTION
+        Returns the path to claude, preferring .cmd over .ps1 for Windows Terminal compatibility
+    #>
+    $claudePath = Get-Command claude -ErrorAction SilentlyContinue
+    if ($claudePath) {
+        $basePath = $claudePath.Source
+
+        # If Get-Command returned .ps1, check if there's a .cmd version
+        # (needed for Windows Terminal which uses cmd.exe, not PowerShell)
+        if ($basePath -like "*.ps1") {
+            $cmdPath = $basePath -replace '\.ps1$', '.cmd'
+            if (Test-Path $cmdPath) {
+                return $cmdPath
+            }
+        }
+
+        return $basePath
+    }
+
+    # Fallback: check .local\bin for claude.exe
+    $localPath = "$env:USERPROFILE\.local\bin\claude.exe"
+    if (Test-Path $localPath) {
+        return $localPath
+    }
+
+    return $null
 }
 
 function Test-ClaudeCLI {
@@ -118,15 +180,8 @@ function Test-ClaudeCLI {
     .SYNOPSIS
         Checks if Claude CLI is available in PATH
     #>
-    $claudePath = Get-Command claude -ErrorAction SilentlyContinue
-    if (-not $claudePath) {
-        $localPath = "$env:USERPROFILE\.local\bin\claude.exe"
-        if (Test-Path $localPath) {
-            return $true
-        }
-        return $false
-    }
-    return $true
+    $claudePath = Get-ClaudeCLIPath
+    return ($null -ne $claudePath)
 }
 
 function Test-WindowsTerminal {
@@ -143,6 +198,434 @@ function Test-WindowsTerminal {
 
 #endregion
 
+#region Debug Functions
+
+function Get-DebugState {
+    <#
+    .SYNOPSIS
+        Gets the current debug state (on/off)
+    #>
+    if (Test-Path $Global:DebugStatePath) {
+        $state = Get-Content $Global:DebugStatePath -Raw
+        return ($state -eq "on")
+    }
+    return $false
+}
+
+function Set-DebugState {
+    <#
+    .SYNOPSIS
+        Sets the debug state (on/off)
+    #>
+    param([bool]$Enabled)
+
+    $state = if ($Enabled) { "on" } else { "off" }
+    $state | Set-Content $Global:DebugStatePath -NoNewline
+}
+
+function Write-DebugInfo {
+    <#
+    .SYNOPSIS
+        Writes debug information if debug mode is enabled
+    .DESCRIPTION
+        Outputs to both console and debug log file with timestamp
+    #>
+    param(
+        [string]$Message,
+        [ConsoleColor]$Color = 'DarkGray'
+    )
+
+    if (Get-DebugState) {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logMessage = "[$timestamp] $Message"
+
+        # Write to console
+        Write-Host "[DEBUG] $Message" -ForegroundColor $Color
+
+        # Write to log file
+        try {
+            $logMessage | Add-Content -Path $Global:DebugLogPath -Encoding UTF8
+        } catch {
+            # Silently ignore log file errors
+        }
+    }
+}
+
+function Write-ErrorLog {
+    <#
+    .SYNOPSIS
+        Writes error messages to debug log (always, regardless of debug state)
+    .PARAMETER Message
+        The error message to log
+    #>
+    param(
+        [string]$Message
+    )
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] [ERROR] $Message"
+
+    try {
+        if (-not (Test-Path $Global:DebugLogPath)) {
+            $logDir = Split-Path $Global:DebugLogPath -Parent
+            if (-not (Test-Path $logDir)) {
+                New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            }
+        }
+        $logMessage | Add-Content -Path $Global:DebugLogPath -Encoding UTF8
+    } catch {
+        # Can't do anything if logging fails
+    }
+}
+
+function Show-DebugToggle {
+    <#
+    .SYNOPSIS
+        Shows current debug state and prompts to toggle
+    #>
+    $currentState = Get-DebugState
+    $stateText = if ($currentState) { "ON" } else { "OFF" }
+    $stateColor = if ($currentState) { "Green" } else { "Red" }
+
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  DEBUG MODE" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-Host "Current debug state: " -NoNewline
+    Write-Host $stateText -ForegroundColor $stateColor
+    Write-Host ""
+    Write-ColorText "When debug is ON:" -Color Yellow
+    Write-Host "  - Shows detailed session discovery information"
+    Write-Host "  - Shows file paths being checked"
+    Write-Host "  - Shows why sessions are found or not found"
+    Write-Host "  - Shows refresh operation details"
+    Write-Host "  - Writes all debug output to log file with timestamps"
+    Write-Host ""
+    Write-ColorText "Debug log file location:" -Color Cyan
+    Write-Host "  $Global:DebugLogPath"
+    Write-Host ""
+
+    if ($currentState) {
+        Write-ColorText "Would you like to:" -Color Yellow
+        Write-Host "  [T] Toggle debug OFF"
+        Write-Host "  [V] View debug log in notepad"
+        Write-Host "  [C] Clear debug log"
+        Write-Host "  [X] Cancel"
+        Write-Host ""
+        Write-ColorText "Choice: " -Color Yellow -NoNewline
+        $response = Read-Host
+
+        if ($response -eq 'T' -or $response -eq 't') {
+            Set-DebugState -Enabled $false
+            Write-Host ""
+            Write-Host "Debug mode is now: " -NoNewline
+            Write-Host "OFF" -ForegroundColor Red
+            Write-Host ""
+        } elseif ($response -eq 'V' -or $response -eq 'v') {
+            if (Test-Path $Global:DebugLogPath) {
+                Start-Process notepad.exe -ArgumentList $Global:DebugLogPath
+                Write-Host ""
+                Write-ColorText "Opening debug log in notepad..." -Color Green
+                Write-Host ""
+            } else {
+                Write-Host ""
+                Write-ColorText "Debug log file does not exist yet." -Color Yellow
+                Write-Host ""
+            }
+        } elseif ($response -eq 'C' -or $response -eq 'c') {
+            if (Test-Path $Global:DebugLogPath) {
+                Remove-Item $Global:DebugLogPath -Force
+                Write-Host ""
+                Write-ColorText "Debug log cleared." -Color Green
+                Write-Host ""
+            } else {
+                Write-Host ""
+                Write-ColorText "Debug log file does not exist." -Color Yellow
+                Write-Host ""
+            }
+        } else {
+            Write-Host ""
+            Write-ColorText "Cancelled." -Color Cyan
+            Write-Host ""
+        }
+    } else {
+        Write-ColorText "Do you want to toggle debug mode ON? (Y/N): " -Color Yellow -NoNewline
+        $response = Read-Host
+
+        if ($response -eq 'Y' -or $response -eq 'y') {
+            Set-DebugState -Enabled $true
+            Write-Host ""
+            Write-Host "Debug mode is now: " -NoNewline
+            Write-Host "ON" -ForegroundColor Green
+            Write-Host ""
+            Write-ColorText "Tip: Debug output is saved to:" -Color Cyan
+            Write-Host "  $Global:DebugLogPath"
+            Write-Host ""
+            Write-ColorText "You can open it anytime with:" -Color Cyan
+            Write-Host "  notepad `"$Global:DebugLogPath`""
+            Write-Host ""
+        } else {
+            Write-Host ""
+            Write-ColorText "Debug state unchanged." -Color Cyan
+            Write-Host ""
+        }
+    }
+
+    Read-Host "Press Enter to continue"
+}
+
+#endregion
+
+#region Cost Tracking
+
+function Get-SessionTokenUsage {
+    <#
+    .SYNOPSIS
+        Parses a session .jsonl file and extracts token usage data
+    #>
+    param(
+        [string]$SessionId,
+        [string]$ProjectPath
+    )
+
+    if (-not $SessionId -or -not $ProjectPath) {
+        return $null
+    }
+
+    try {
+        # Get the session .jsonl file path
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
+        $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
+
+        if (-not (Test-Path $sessionFile)) {
+            return $null
+        }
+
+        # Initialize totals
+        $totalInputTokens = 0
+        $totalCacheCreationTokens = 0
+        $totalCacheReadTokens = 0
+        $totalOutputTokens = 0
+
+        # Read file line by line
+        $reader = [System.IO.StreamReader]::new($sessionFile)
+        try {
+            while ($null -ne ($line = $reader.ReadLine())) {
+                # Only check lines that contain assistant messages with usage
+                if ($line -notmatch '"type":"assistant"' -or $line -notmatch '"usage"') {
+                    continue
+                }
+
+                # Parse the JSON
+                $entry = $line | ConvertFrom-Json
+
+                # Check if this is an assistant message with usage info
+                if ($entry.type -eq "assistant" -and $entry.message.usage) {
+                    $usage = $entry.message.usage
+
+                    $totalInputTokens += if ($usage.input_tokens) { $usage.input_tokens } else { 0 }
+                    $totalCacheCreationTokens += if ($usage.cache_creation_input_tokens) { $usage.cache_creation_input_tokens } else { 0 }
+                    $totalCacheReadTokens += if ($usage.cache_read_input_tokens) { $usage.cache_read_input_tokens } else { 0 }
+                    $totalOutputTokens += if ($usage.output_tokens) { $usage.output_tokens } else { 0 }
+                }
+            }
+        } finally {
+            $reader.Close()
+        }
+
+        return @{
+            InputTokens = $totalInputTokens
+            CacheCreationTokens = $totalCacheCreationTokens
+            CacheReadTokens = $totalCacheReadTokens
+            OutputTokens = $totalOutputTokens
+            TotalTokens = $totalInputTokens + $totalCacheCreationTokens + $totalCacheReadTokens + $totalOutputTokens
+        }
+
+    } catch {
+        Write-DebugInfo "Error reading session token usage: $_" -Color Red
+        return $null
+    }
+}
+
+function Get-SessionCost {
+    <#
+    .SYNOPSIS
+        Calculates the cost of a session based on token usage
+    .DESCRIPTION
+        Uses Claude Sonnet 4.5 pricing as of January 2026:
+        - Input: $3.00 per 1M tokens
+        - Cache writes: $3.75 per 1M tokens
+        - Cache reads: $0.30 per 1M tokens
+        - Output: $15.00 per 1M tokens
+    #>
+    param(
+        [hashtable]$TokenUsage
+    )
+
+    if (-not $TokenUsage) {
+        return 0.0
+    }
+
+    # Pricing per 1 million tokens (Claude Sonnet 4.5)
+    $inputRate = 3.00 / 1000000
+    $cacheWriteRate = 3.75 / 1000000
+    $cacheReadRate = 0.30 / 1000000
+    $outputRate = 15.00 / 1000000
+
+    $inputCost = $TokenUsage.InputTokens * $inputRate
+    $cacheWriteCost = $TokenUsage.CacheCreationTokens * $cacheWriteRate
+    $cacheReadCost = $TokenUsage.CacheReadTokens * $cacheReadRate
+    $outputCost = $TokenUsage.OutputTokens * $outputRate
+
+    $totalCost = $inputCost + $cacheWriteCost + $cacheReadCost + $outputCost
+
+    return [Math]::Round($totalCost, 4)
+}
+
+function Format-Cost {
+    <#
+    .SYNOPSIS
+        Formats a cost value for display
+    #>
+    param([double]$Cost)
+
+    if ($Cost -eq 0) {
+        return "-"
+    } elseif ($Cost -lt 0.01) {
+        return "<$0.01"
+    } else {
+        return "`$$($Cost.ToString('0.00'))"
+    }
+}
+
+function Format-TokenCount {
+    <#
+    .SYNOPSIS
+        Formats a token count with K/M suffixes
+    #>
+    param([int]$Count)
+
+    if ($Count -eq 0) {
+        return "-"
+    } elseif ($Count -ge 1000000) {
+        return "$([Math]::Round($Count / 1000000.0, 1))M"
+    } elseif ($Count -ge 1000) {
+        return "$([Math]::Round($Count / 1000.0, 1))K"
+    } else {
+        return "$Count"
+    }
+}
+
+function Show-CostAnalysis {
+    <#
+    .SYNOPSIS
+        Shows detailed cost analysis for all sessions
+    #>
+    param([array]$Sessions)
+
+    # Initialize as empty array if null
+    if ($null -eq $Sessions) { $Sessions = @() }
+
+    Clear-Host
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  COST ANALYSIS" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-Host "Calculating costs for $($Sessions.Count) session(s)..." -ForegroundColor Yellow
+    Write-Host ""
+
+    $sessionCosts = @()
+    $totalCost = 0.0
+    $totalTokens = 0
+
+    foreach ($session in $Sessions) {
+        $usage = Get-SessionTokenUsage -SessionId $session.sessionId -ProjectPath $session.projectPath
+        if ($usage) {
+            $cost = Get-SessionCost -TokenUsage $usage
+            $totalCost += $cost
+            $totalTokens += $usage.TotalTokens
+
+            $cacheHitRate = if (($usage.CacheCreationTokens + $usage.CacheReadTokens) -gt 0) {
+                [Math]::Round(($usage.CacheReadTokens / ($usage.CacheCreationTokens + $usage.CacheReadTokens)) * 100, 0)
+            } else {
+                0
+            }
+
+            $title = if ($session.customTitle) {
+                $session.customTitle
+            } elseif ($session.trackedName) {
+                "[$($session.trackedName)]"
+            } else {
+                "(unnamed)"
+            }
+
+            $sessionCosts += @{
+                Title = $title
+                Cost = $cost
+                InputTokens = $usage.InputTokens
+                OutputTokens = $usage.OutputTokens
+                CacheWrites = $usage.CacheCreationTokens
+                CacheReads = $usage.CacheReadTokens
+                TotalTokens = $usage.TotalTokens
+                CacheHitRate = $cacheHitRate
+                Created = $session.created
+            }
+        }
+    }
+
+    # Sort by cost (highest first)
+    $sessionCosts = $sessionCosts | Sort-Object -Property Cost -Descending
+
+    # Display table header
+    Write-Host "Session                              Cost      Input    Output   Cached   Hit%   Created" -ForegroundColor Cyan
+    Write-Host "-------------------------------------  -------   ------   ------   ------   ----   -------------------" -ForegroundColor DarkGray
+
+    # Display each session
+    foreach ($sc in $sessionCosts) {
+        $title = $sc.Title
+        if ($title.Length -gt 35) {
+            $title = $title.Substring(0, 32) + "..."
+        }
+        $title = $title.PadRight(35)
+
+        $costStr = (Format-Cost -Cost $sc.Cost).PadRight(9)
+        $inputStr = (Format-TokenCount -Count $sc.InputTokens).PadRight(8)
+        $outputStr = (Format-TokenCount -Count $sc.OutputTokens).PadRight(8)
+        $cacheStr = (Format-TokenCount -Count ($sc.CacheWrites + $sc.CacheReads)).PadRight(8)
+        $hitStr = if ($sc.CacheHitRate -gt 0) { "$($sc.CacheHitRate)%" } else { "-" }
+        $hitStr = $hitStr.PadRight(6)
+
+        try {
+            $created = ([DateTime]$sc.Created).ToString("yyyy-MM-dd HH:mm")
+        } catch {
+            $created = "N/A"
+        }
+
+        Write-Host "$title  $costStr  $inputStr  $outputStr  $cacheStr  $hitStr  $created"
+    }
+
+    # Display totals
+    Write-Host ""
+    Write-ColorText "TOTALS:" -Color Cyan
+    Write-Host "  Total Cost: " -NoNewline
+    Write-Host (Format-Cost -Cost $totalCost) -ForegroundColor Green
+    Write-Host "  Total Tokens: " -NoNewline
+    Write-Host (Format-TokenCount -Count $totalTokens) -ForegroundColor Green
+    Write-Host "  Average Cost per Session: " -NoNewline
+    if ($sessionCosts.Count -gt 0) {
+        Write-Host (Format-Cost -Cost ($totalCost / $sessionCosts.Count)) -ForegroundColor Green
+    } else {
+        Write-Host "-" -ForegroundColor Green
+    }
+    Write-Host ""
+    Write-Host ""
+    Read-Host "Press Enter to continue"
+}
+
+#endregion
+
 #region Session Discovery
 
 function Get-AllClaudeSessions {
@@ -155,50 +638,98 @@ function Get-AllClaudeSessions {
     #>
     $projectsRoot = "$env:USERPROFILE\.claude\projects"
 
+    Write-DebugInfo "=== Starting Session Discovery ===" -Color Cyan
+    Write-DebugInfo "Projects root: $projectsRoot"
+
     if (-not (Test-Path $projectsRoot)) {
-        Write-ColorText "No Claude projects directory found at: $projectsRoot" -Color Yellow
+        # Directory doesn't exist yet - first run scenario
+        Write-DebugInfo "Projects directory does not exist!" -Color Yellow
+        Write-DebugInfo "Expected path: $projectsRoot" -Color Yellow
+        Write-DebugInfo "This is normal for first-time users." -Color Yellow
         return @()
     }
+
+    Write-DebugInfo "Projects directory exists" -Color Green
 
     $allSessions = @()
     $sessionIdsSeen = @{}
 
     # First, get all sessions from Claude's index files
-    Get-ChildItem $projectsRoot -Directory | ForEach-Object {
-        $projectDir = $_.FullName
+    $projectDirs = Get-ChildItem $projectsRoot -Directory
+    Write-DebugInfo "Found $($projectDirs.Count) project directories in $projectsRoot" -Color Cyan
+
+    foreach ($dir in $projectDirs) {
+        $projectDir = $dir.FullName
+        $projectName = $dir.Name
         $indexPath = Join-Path $projectDir "sessions-index.json"
 
+        Write-DebugInfo "  Checking project: $projectName" -Color DarkCyan
+        Write-DebugInfo "    Full path: $projectDir"
+        Write-DebugInfo "    Index file: $indexPath"
+
         if (Test-Path $indexPath) {
+            Write-DebugInfo "    Index file EXISTS" -Color Green
             try {
                 $indexContent = Get-Content $indexPath -Raw | ConvertFrom-Json
 
+                # Validate JSON structure
+                if (-not (Test-JsonStructure -JsonObject $indexContent -RequiredProperties @('version', 'entries'))) {
+                    Write-ColorText "Warning: Invalid index structure in $indexPath" -Color Yellow
+                    continue
+                }
+
+                $entryCount = if ($indexContent.entries) { $indexContent.entries.Count } else { 0 }
+                Write-DebugInfo "    Found $entryCount session(s) in index" -Color Green
+
                 foreach ($entry in $indexContent.entries) {
                     # Sessions already have projectPath in the JSON
+                    Write-DebugInfo "      Session: $($entry.sessionId)" -Color DarkGray
+                    Write-DebugInfo "        Title: $($entry.customTitle)" -Color DarkGray
+                    Write-DebugInfo "        Path: $($entry.projectPath)" -Color DarkGray
                     $allSessions += $entry
                     $sessionIdsSeen[$entry.sessionId] = $true
                 }
             } catch {
                 Write-ColorText "Warning: Failed to parse $indexPath - $_" -Color Yellow
+                Write-DebugInfo "    ERROR parsing index: $_" -Color Red
             }
+        } else {
+            Write-DebugInfo "    Index file DOES NOT EXIST" -Color Yellow
         }
     }
 
+    Write-DebugInfo "Total sessions from Claude indexes: $($allSessions.Count)" -Color Cyan
+
     # Now, check session-mapping.json for sessions we've created that Claude hasn't indexed yet
+    Write-DebugInfo "Checking session-mapping.json for tracked sessions..." -Color Cyan
+    Write-DebugInfo "  Mapping file: $Global:SessionMappingPath"
+
     if (Test-Path $Global:SessionMappingPath) {
+        Write-DebugInfo "  Mapping file EXISTS" -Color Green
         try {
             $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            $mappedCount = if ($mapping.sessions) { $mapping.sessions.Count } else { 0 }
+            Write-DebugInfo "  Found $mappedCount tracked session(s)" -Color Green
 
             foreach ($mappedSession in $mapping.sessions) {
+                Write-DebugInfo "    Tracked session: $($mappedSession.sessionId)" -Color DarkGray
+                Write-DebugInfo "      Profile: $($mappedSession.wtProfileName)" -Color DarkGray
+                Write-DebugInfo "      Path: $($mappedSession.projectPath)" -Color DarkGray
+
                 # Skip if we already have this session from Claude's index
                 if ($sessionIdsSeen.ContainsKey($mappedSession.sessionId)) {
+                    Write-DebugInfo "      Already found in Claude's index - skipping" -Color DarkGray
                     continue
                 }
 
                 # Check if the session file exists
-                $encodedPath = $mappedSession.projectPath.TrimEnd('\') -replace ':', '' -replace '\\', '--'
+                $encodedPath = ConvertTo-ClaudeprojectPath -Path $mappedSession.projectPath
                 $sessionFile = Join-Path $projectsRoot "$encodedPath\$($mappedSession.sessionId).jsonl"
 
+                Write-DebugInfo "      Checking file: $sessionFile" -Color DarkGray
+
                 if (Test-Path $sessionFile) {
+                    Write-DebugInfo "      Session file EXISTS - adding to list" -Color Green
                     # Session exists but not in Claude's index yet - add it
                     $fileInfo = Get-Item $sessionFile
 
@@ -220,12 +751,28 @@ function Get-AllClaudeSessions {
 
                     $allSessions += $syntheticEntry
                     $sessionIdsSeen[$mappedSession.sessionId] = $true
+                } else {
+                    Write-DebugInfo "      Session file DOES NOT EXIST - skipping" -Color Yellow
                 }
             }
         } catch {
             Write-ColorText "Warning: Failed to read session mapping - $_" -Color Yellow
+            Write-DebugInfo "  ERROR reading mapping: $_" -Color Red
         }
+    } else {
+        Write-DebugInfo "  Mapping file DOES NOT EXIST" -Color Yellow
     }
+
+    Write-DebugInfo "=== Session Discovery Complete ===" -Color Cyan
+    Write-DebugInfo "Total sessions found: $($allSessions.Count)" -Color Green
+    if ($allSessions.Count -eq 0) {
+        Write-DebugInfo "NO SESSIONS FOUND!" -Color Red
+        Write-DebugInfo "Possible reasons:" -Color Yellow
+        Write-DebugInfo "  1. Claude Code has not been run yet (no sessions created)" -Color Yellow
+        Write-DebugInfo "  2. sessions-index.json files are missing or corrupted" -Color Yellow
+        Write-DebugInfo "  3. Path encoding mismatch (check directory names above)" -Color Yellow
+    }
+    Write-Host ""
 
     # Sort by modified date (most recent first)
     return $allSessions | Sort-Object -Property { [DateTime]$_.modified } -Descending
@@ -264,6 +811,7 @@ function Get-WTProfileName {
                 return $profileName
             }
         } catch {
+            Write-ErrorLog "Error getting profile name from registry: $_"
             return ""
         }
     }
@@ -320,7 +868,7 @@ function Get-SessionMappingEntry {
         $entry = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
         return $entry
     } catch {
-        # Silently ignore errors
+        Write-ErrorLog "Error getting session mapping entry: $_"
     }
 
     return ""
@@ -348,7 +896,7 @@ function Get-ForkedFromInfo {
             }
         }
     } catch {
-        # Silently ignore errors
+        Write-ErrorLog "Error getting fork info: $_"
     }
 
     return $null
@@ -370,7 +918,7 @@ function Get-SessionActivityMarker {
 
     try {
         # Get the session .jsonl file path
-        $encodedPath = $ProjectPath.TrimEnd('\') -replace ':', '' -replace '\\', '--'
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
         $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
 
         if (-not (Test-Path $sessionFile)) {
@@ -435,7 +983,7 @@ function Get-ForkTree {
                     }
                 }
             } catch {
-                # Silently ignore errors
+                Write-ErrorLog "Error reading profile registry for activity marker: $_"
             }
         }
     }
@@ -483,7 +1031,7 @@ function Get-WTProfileDetails {
             }
         }
     } catch {
-        # Silently ignore errors
+        Write-ErrorLog "Error getting profile info: $_"
     }
 
     return $null
@@ -501,6 +1049,9 @@ function Show-SessionMenu {
         [string]$Title = ""
     )
 
+    # Initialize as empty array if null
+    if ($null -eq $Sessions) { $Sessions = @() }
+
     Clear-Host
     Write-Host ""
 
@@ -514,8 +1065,34 @@ function Show-SessionMenu {
         Write-Host ""
     }
 
-    Write-Host "Claude Code Session Forker, S. Rives, v.2026.1.19" -ForegroundColor Cyan
+    Write-Host "Claude Code Session Forker, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
     Write-Host "(Note: Newly forked sessions shown in [brackets] until Claude CLI indexes them)" -ForegroundColor DarkGray
+
+    # Calculate status information
+    $totalSessions = $Sessions.Count
+    $namedCount = ($Sessions | Where-Object { $_.customTitle -and $_.customTitle -ne "" }).Count
+    $unnamedCount = $totalSessions - $namedCount
+    $debugStatus = if (Get-DebugState) { "ON" } else { "OFF" }
+    $permissionStatus = Get-GlobalPermissionStatus
+    $permMode = if ($permissionStatus -is [hashtable]) {
+        if ($permissionStatus.Enabled) { "Quiet" } else { "Chatty" }
+    } else {
+        if ($permissionStatus) { "Quiet" } else { "Chatty" }
+    }
+
+    # Calculate total cost across all sessions
+    $totalCost = 0.0
+    foreach ($session in $Sessions) {
+        $usage = Get-SessionTokenUsage -SessionId $session.sessionId -ProjectPath $session.projectPath
+        if ($usage) {
+            $cost = Get-SessionCost -TokenUsage $usage
+            $totalCost += $cost
+        }
+    }
+    $totalCostDisplay = Format-Cost -Cost $totalCost
+
+    # Display status line
+    Write-Host "Claude Sessions: $totalSessions (Named: $namedCount, Unnamed: $unnamedCount) | Debug: $debugStatus | Permissions: $permMode | Total Cost: $totalCostDisplay" -ForegroundColor DarkGray
     Write-Host ""
 
     # Build display rows - always start numbering at 1
@@ -598,6 +1175,11 @@ function Show-SessionMenu {
         # Get activity marker based on file modification time
         $activeMarker = Get-SessionActivityMarker -SessionId $session.sessionId -ProjectPath $session.projectPath
 
+        # Get cost (with caching to avoid repeated parsing)
+        $usage = Get-SessionTokenUsage -SessionId $session.sessionId -ProjectPath $session.projectPath
+        $cost = if ($usage) { Get-SessionCost -TokenUsage $usage } else { 0.0 }
+        $costDisplay = Format-Cost -Cost $cost
+
         $rows += @{
             Num = $displayNum
             Title = $title
@@ -610,41 +1192,80 @@ function Show-SessionMenu {
             Model = $model
             ForkTree = $forkTree
             Active = $activeMarker
+            Cost = $costDisplay
+            CostValue = $cost
             Session = $session
             OriginalIndex = $i
         }
         $displayNum++
     }
 
+    # Draw top border of box
+    if ($OnlyWithProfiles) {
+        $boxWidth = 145  # Approximate width for profile mode
+    } else {
+        $boxWidth = 180  # Approximate width for normal mode
+    }
+    Write-Host ("+" + ("-" * ($boxWidth - 2)) + "+") -ForegroundColor DarkGray
+
     # Display header - different format for profile mode
     if ($OnlyWithProfiles) {
-        Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f "#", "Session", "Messages", "Created", "Modified", "WT Profile", "Color Scheme", "Path") -ForegroundColor Cyan
-        Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f "-", "-------", "--------", "-------", "--------", "----------", "------------", "----") -ForegroundColor Cyan
+        $header = ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-8} {6,-20} {7,-20} {8,-20}" -f "#", "Session", "Messages", "Created", "Modified", "Cost", "WT Profile", "Color Scheme", "Path")
+        $headerLine = ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-8} {6,-20} {7,-20} {8,-20}" -f "-", "-------", "--------", "-------", "--------", "----", "----------", "------------", "----")
+        Write-Host "| " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Truncate-String $header ($boxWidth - 4)) -NoNewline -ForegroundColor Cyan
+        Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $header.Length)) -NoNewline
+        Write-Host " |" -ForegroundColor DarkGray
+        Write-Host "| " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Truncate-String $headerLine ($boxWidth - 4)) -NoNewline -ForegroundColor Cyan
+        Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $headerLine.Length)) -NoNewline
+        Write-Host " |" -ForegroundColor DarkGray
     } else {
-        Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f "#", "Active", "Model", "Session", "Messages", "Created", "Modified", "Win Terminal", "Forked From", "Path") -ForegroundColor Cyan
-        Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f "-", "------", "-----", "-------", "--------", "-------", "--------", "------------", "-----------", "----") -ForegroundColor Cyan
+        $header = ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-8} {8,-25} {9,-25} {10,-20}" -f "#", "Active", "Model", "Session", "Messages", "Created", "Modified", "Cost", "Win Terminal", "Forked From", "Path")
+        $headerLine = ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-8} {8,-25} {9,-25} {10,-20}" -f "-", "------", "-----", "-------", "--------", "-------", "--------", "----", "------------", "-----------", "----")
+        Write-Host "| " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Truncate-String $header ($boxWidth - 4)) -NoNewline -ForegroundColor Cyan
+        Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $header.Length)) -NoNewline
+        Write-Host " |" -ForegroundColor DarkGray
+        Write-Host "| " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Truncate-String $headerLine ($boxWidth - 4)) -NoNewline -ForegroundColor Cyan
+        Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $headerLine.Length)) -NoNewline
+        Write-Host " |" -ForegroundColor DarkGray
     }
 
     # Display rows
     foreach ($row in $rows) {
         if ($OnlyWithProfiles) {
-            # Truncate values to fit columns: 3, 30, 8, 12, 12, 20, 20, 20
+            # Truncate values to fit columns: 3, 30, 8, 12, 12, 8, 20, 20, 20
             $title = Truncate-String $row.Title 30
+            $cost = Truncate-String $row.Cost 8
             $profile = Truncate-String $row.Profile 20
             $colorScheme = Truncate-String $row.ColorScheme 20
             $path = Truncate-String $row.Path 20
-            Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f $row.Num, $title, $row.Messages, $row.Created, $row.Modified, $profile, $colorScheme, $path) -ForegroundColor Green
+            $rowText = ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-8} {6,-20} {7,-20} {8,-20}" -f $row.Num, $title, $row.Messages, $row.Created, $row.Modified, $cost, $profile, $colorScheme, $path)
+            Write-Host "| " -NoNewline -ForegroundColor DarkGray
+            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor Green
+            Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
+            Write-Host " |" -ForegroundColor DarkGray
         } else {
-            # Truncate values to fit columns: 3, 6, 8, 30, 8, 12, 12, 25, 25, 20
+            # Truncate values to fit columns: 3, 6, 8, 30, 8, 12, 12, 8, 25, 25, 20
             $active = Truncate-String $row.Active 6
             $model = Truncate-String $row.Model 8
             $title = Truncate-String $row.Title 30
+            $cost = Truncate-String $row.Cost 8
             $profile = Truncate-String $row.Profile 25
             $forkTree = Truncate-String $row.ForkTree 25
             $path = Truncate-String $row.Path 20
-            Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f $row.Num, $active, $model, $title, $row.Messages, $row.Created, $row.Modified, $profile, $forkTree, $path) -ForegroundColor Green
+            $rowText = ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-8} {8,-25} {9,-25} {10,-20}" -f $row.Num, $active, $model, $title, $row.Messages, $row.Created, $row.Modified, $cost, $profile, $forkTree, $path)
+            Write-Host "| " -NoNewline -ForegroundColor DarkGray
+            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor Green
+            Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
+            Write-Host " |" -ForegroundColor DarkGray
         }
     }
+
+    # Draw bottom border of box
+    Write-Host ("+" + ("-" * ($boxWidth - 2)) + "+") -ForegroundColor DarkGray
 
     Write-Host ""
 
@@ -675,16 +1296,26 @@ function Get-UserSelection {
             $range = "[$MinOption..$MaxOption]"
         }
 
+        # Check debug state for coloring
+        $debugEnabled = Get-DebugState
+        $debugColor = if ($debugEnabled) { "Red" } else { "Yellow" }
+
         if ($DeleteMode) {
-            Write-ColorText "Select Windows Terminal Profile $range, [R]efresh, e[X]it: " -Color Yellow -NoNewline
+            Write-Host "Select Windows Terminal Profile $range, [$]Cost, " -ForegroundColor Yellow -NoNewline
+            Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
+            Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
         } elseif ($ShowUnnamed) {
             $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
-            Write-ColorText "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [H]ide unnamed sessions$permOption, [R]efresh, e[X]it: " -Color Yellow -NoNewline
+            Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [H]ide unnamed sessions$permOption, [$]Cost, " -ForegroundColor Yellow -NoNewline
+            Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
+            Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
         } else {
             $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
-            Write-ColorText "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [S]how unnamed sessions$permOption, [R]efresh, e[X]it: " -Color Yellow -NoNewline
+            Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [S]how unnamed sessions$permOption, [$]Cost, " -ForegroundColor Yellow -NoNewline
+            Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
+            Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
         }
 
         $input = Read-Host
@@ -710,6 +1341,16 @@ function Get-UserSelection {
         }
         if ($input -eq 'H' -or $input -eq 'h') {
             return @{ Type = 'HideUnnamed' }
+        }
+
+        # Check for debug mode
+        if ($input -eq 'D' -or $input -eq 'd') {
+            return @{ Type = 'Debug' }
+        }
+
+        # Check for cost analysis
+        if ($input -eq '$') {
+            return @{ Type = 'CostAnalysis' }
         }
 
         # Check for refresh
@@ -741,6 +1382,58 @@ function Get-UserSelection {
         }
 
         Write-ColorText "Invalid selection. Please try again." -Color Red
+    }
+}
+
+#endregion
+
+#region Session Validation
+
+function Test-SessionFileValid {
+    <#
+    .SYNOPSIS
+        Validates that a session's .jsonl file exists and has content
+    .PARAMETER SessionId
+        The session ID to validate
+    .PARAMETER ProjectPath
+        The project path for the session
+    #>
+    param(
+        [string]$SessionId,
+        [string]$ProjectPath
+    )
+
+    try {
+        # Build path to session file
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
+        $sessionFile = Join-Path "$env:USERPROFILE\.claude\projects\$encodedPath" "$SessionId.jsonl"
+
+        # Check if file exists
+        if (-not (Test-Path $sessionFile)) {
+            Write-ErrorLog "Session file not found: $sessionFile"
+            return $false
+        }
+
+        # Check if file has content
+        $fileInfo = Get-Item $sessionFile
+        if ($fileInfo.Length -eq 0) {
+            Write-ErrorLog "Session file is empty: $sessionFile"
+            return $false
+        }
+
+        # Try to read first line to validate it's valid JSON
+        $firstLine = Get-Content $sessionFile -TotalCount 1
+        if ($firstLine) {
+            $null = $firstLine | ConvertFrom-Json
+        } else {
+            Write-ErrorLog "Session file has no lines: $sessionFile"
+            return $false
+        }
+
+        return $true
+    } catch {
+        Write-ErrorLog "Error validating session file: $_"
+        return $false
     }
 }
 
@@ -780,7 +1473,8 @@ function Start-NewSession {
         Write-Host ""
         Write-ColorText "Launching Claude in current terminal..." -Color Green
         Write-Host ""
-        Start-Process -FilePath "claude" -NoNewWindow -Wait
+        $claudePath = Get-ClaudeCLIPath
+        Start-Process -FilePath $claudePath -NoNewWindow -Wait
         exit 0
     }
 
@@ -825,9 +1519,10 @@ function Start-NewSession {
 
         $profileGuid = $profile.guid
         $projectPath = $PWD.Path
+        $claudePath = Get-ClaudeCLIPath
 
         # Launch Windows Terminal WITHOUT --session-id (let Claude create its own)
-        Start-Process -FilePath "wt.exe" -ArgumentList "-p", "`"$profileGuid`"", "-d", "`"$projectPath`"", "--", "claude", "--model", "$model" -NoNewWindow
+        Start-Process -FilePath "wt.exe" -ArgumentList "-p", "`"$profileGuid`"", "-d", "`"$projectPath`"", "--", "`"$claudePath`"", "--model", "`"$model`"" -NoNewWindow
 
         # 6. Wait for Claude to create the session and discover its ID
         $sessionId = Get-NewestSessionIdForPath -ProjectPath $projectPath -MaxWaitSeconds 15
@@ -867,6 +1562,25 @@ function Start-ContinueSession {
     #>
     param([object]$Session)
 
+    # Validate session file exists before continuing
+    if (-not (Test-SessionFileValid -SessionId $Session.sessionId -ProjectPath $Session.projectPath)) {
+        Write-Host ""
+        Write-ColorText "ERROR: Session file is missing or corrupted!" -Color Red
+        Write-Host ""
+        Write-Host "Session ID: $($Session.sessionId)"
+        Write-Host "Project Path: $($Session.projectPath)"
+        Write-Host ""
+        Write-ColorText "This usually happens when:" -Color Yellow
+        Write-Host "  1. The session was created but never used (empty conversation)"
+        Write-Host "  2. The session .jsonl file was deleted or moved"
+        Write-Host "  3. File system corruption occurred"
+        Write-Host ""
+        Write-Host "You may want to delete this session from the menu."
+        Write-Host ""
+        Read-Host "Press Enter to return to menu"
+        return
+    }
+
     Write-Host ""
     $sessionTitle = if ($Session.customTitle) { $Session.customTitle } else { '(unnamed)' }
 
@@ -886,7 +1600,7 @@ function Start-ContinueSession {
                 $existingProfile = $settings.profiles.list | Where-Object { $_.name -eq $wtProfileName }
             }
         } catch {
-            # Ignore errors, will create new profile if needed
+            Write-ErrorLog "Error checking for existing profile: $_"
         }
 
         # Generate/verify background image exists
@@ -926,7 +1640,8 @@ function Start-ContinueSession {
 
             # Launch in existing Windows Terminal profile
             $profileGuid = $existingProfile.guid
-            & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- claude --resume $Session.sessionId
+            $claudePath = Get-ClaudeCLIPath
+            & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
 
         } else {
             # Profile doesn't exist - create it
@@ -943,7 +1658,8 @@ function Start-ContinueSession {
 
                 # Launch in new Windows Terminal profile
                 $profileGuid = $profile.guid
-                & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- claude --resume $Session.sessionId
+                $claudePath = Get-ClaudeCLIPath
+                & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
 
             } catch {
                 Write-ColorText "Failed to create Windows Terminal profile: $_" -Color Red
@@ -951,8 +1667,9 @@ function Start-ContinueSession {
                 Write-Host ""
 
                 # Fallback to current terminal
+                $claudePath = Get-ClaudeCLIPath
                 $args = "--resume", $Session.sessionId
-                Start-Process -FilePath "claude" -ArgumentList $args -NoNewWindow -Wait
+                Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
             }
         }
     } else {
@@ -960,8 +1677,9 @@ function Start-ContinueSession {
         Write-ColorText "Continuing session: $sessionTitle" -Color Green
         Write-Host ""
 
+        $claudePath = Get-ClaudeCLIPath
         $args = "--resume", $Session.sessionId
-        Start-Process -FilePath "claude" -ArgumentList $args -NoNewWindow -Wait
+        Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
     }
 }
 
@@ -1252,22 +1970,71 @@ function Get-GlobalPermissionStatus {
     <#
     .SYNOPSIS
         Checks if global bypass permissions are enabled in settings.json
+    .DESCRIPTION
+        Returns true/false, or if debug is on, returns detailed information
     #>
-    if (-not (Test-Path $Global:ClaudeSettingsPath)) {
+    $debugEnabled = Get-DebugState
+    $settingsPath = $Global:ClaudeSettingsPath
+
+    if (-not (Test-Path $settingsPath)) {
+        if ($debugEnabled) {
+            return @{
+                Enabled = $false
+                Reason = "Settings file does not exist"
+                FilePath = $settingsPath
+                Line = "N/A"
+            }
+        }
         return $false
     }
 
     try {
-        $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
+        $settingsJson = Get-Content $settingsPath -Raw
         $settings = $settingsJson | ConvertFrom-Json
 
-        if ($settings.permissions -and
-            $settings.permissions.defaultMode -eq "bypassPermissions") {
-            return $true
+        $isQuiet = ($settings.permissions -and
+                    $settings.permissions.defaultMode -eq "bypassPermissions")
+
+        if ($debugEnabled) {
+            $lines = $settingsJson -split "`n"
+            $relevantLine = "N/A"
+
+            # Find the line with defaultMode
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '"defaultMode"') {
+                    $relevantLine = "Line $($i + 1): $($lines[$i].Trim())"
+                    break
+                }
+            }
+
+            if (-not $isQuiet) {
+                # Check if permissions section exists at all
+                $hasPermissions = $settingsJson -match '"permissions"'
+                if (-not $hasPermissions) {
+                    $relevantLine = "No 'permissions' section found in file"
+                } elseif ($relevantLine -eq "N/A") {
+                    $relevantLine = "No 'defaultMode' found in permissions section"
+                }
+            }
+
+            return @{
+                Enabled = $isQuiet
+                Reason = if ($isQuiet) { "permissions.defaultMode is set to 'bypassPermissions'" } else { "permissions.defaultMode is not 'bypassPermissions' or not set" }
+                FilePath = $settingsPath
+                Line = $relevantLine
+            }
         }
 
-        return $false
+        return $isQuiet
     } catch {
+        if ($debugEnabled) {
+            return @{
+                Enabled = $false
+                Reason = "Error reading settings file: $_"
+                FilePath = $settingsPath
+                Line = "N/A"
+            }
+        }
         return $false
     }
 }
@@ -1348,11 +2115,26 @@ function Enable-GlobalBypassPermissions {
         Write-ColorText "Claude will no longer prompt for permissions." -Color Green
         Write-Host ""
 
+        # Show debug information if debug is enabled
+        if (Get-DebugState) {
+            Write-Host ""
+            Write-ColorText "[DEBUG] Permission Mode Details:" -Color Cyan
+            $statusInfo = Get-GlobalPermissionStatus
+            if ($statusInfo -is [hashtable]) {
+                Write-Host "[DEBUG]   File checked: $($statusInfo.FilePath)" -ForegroundColor DarkGray
+                Write-Host "[DEBUG]   Status: $($statusInfo.Reason)" -ForegroundColor DarkGray
+                Write-Host "[DEBUG]   Evidence: $($statusInfo.Line)" -ForegroundColor DarkGray
+            }
+            Write-Host ""
+        }
+
     } catch {
         Write-Host ""
         Write-ColorText "Error enabling quiet mode: $_" -Color Red
         Write-Host ""
     }
+
+    Read-Host "Press Enter to continue"
 }
 
 function Disable-GlobalBypassPermissions {
@@ -1435,11 +2217,26 @@ function Disable-GlobalBypassPermissions {
         Write-ColorText "Claude will now prompt for permissions." -Color Green
         Write-Host ""
 
+        # Show debug information if debug is enabled
+        if (Get-DebugState) {
+            Write-Host ""
+            Write-ColorText "[DEBUG] Permission Mode Details:" -Color Cyan
+            $statusInfo = Get-GlobalPermissionStatus
+            if ($statusInfo -is [hashtable]) {
+                Write-Host "[DEBUG]   File checked: $($statusInfo.FilePath)" -ForegroundColor DarkGray
+                Write-Host "[DEBUG]   Status: $($statusInfo.Reason)" -ForegroundColor DarkGray
+                Write-Host "[DEBUG]   Evidence: $($statusInfo.Line)" -ForegroundColor DarkGray
+            }
+            Write-Host ""
+        }
+
     } catch {
         Write-Host ""
         Write-ColorText "Error enabling chatty mode: $_" -Color Red
         Write-Host ""
     }
+
+    Read-Host "Press Enter to continue"
 }
 
 function ConvertTo-Hashtable {
@@ -1473,7 +2270,7 @@ function Get-NewestSessionIdForPath {
     )
 
     # Encode path the same way Claude does
-    $encodedPath = $ProjectPath -replace ':', '-' -replace '\\', '-'
+    $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
     $sessionDir = Join-Path $Global:ClaudePath "projects\$encodedPath"
 
     Write-ColorText "Waiting for Claude to create session file..." -Color Cyan
@@ -1513,6 +2310,26 @@ function Start-ForkSession {
     #>
     param([object]$Session)
 
+    # Validate session file exists before forking
+    if (-not (Test-SessionFileValid -SessionId $Session.sessionId -ProjectPath $Session.projectPath)) {
+        Write-Host ""
+        Write-ColorText "ERROR: Cannot fork - source session file is missing or corrupted!" -Color Red
+        Write-Host ""
+        Write-Host "Session ID: $($Session.sessionId)"
+        Write-Host "Project Path: $($Session.projectPath)"
+        Write-Host ""
+        Write-ColorText "This usually happens when:" -Color Yellow
+        Write-Host "  1. The session was created but never used (empty conversation)"
+        Write-Host "  2. The session .jsonl file was deleted or moved"
+        Write-Host "  3. File system corruption occurred"
+        Write-Host ""
+        Write-Host "You cannot fork from a non-existent session."
+        Write-Host "You may want to delete this session from the menu."
+        Write-Host ""
+        Read-Host "Press Enter to return to menu"
+        return
+    }
+
     try {
         # 1. Get old session name for display
         $oldName = if ($Session.customTitle) { $Session.customTitle } else { "(unnamed)" }
@@ -1523,7 +2340,7 @@ function Start-ForkSession {
         # 3. Generate background image
         Write-Host ""
         Write-ColorText "Generating background image..." -Color Cyan
-        $bgPath = New-SessionBackgroundImage -NewName $newName -OldName $oldName
+        $bgPath = New-SessionBackgroundImage -NewName $newName -OldName $oldName -IsFork
 
         # 4. Create Windows Terminal profile
         Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
@@ -1565,10 +2382,11 @@ function Start-ForkSession {
         $profileGuid = $profile.guid
         $projectPath = $Session.projectPath
         $oldSessionId = $Session.sessionId
+        $claudePath = Get-ClaudeCLIPath
 
         # Launch Windows Terminal with the new profile
         # Using both --fork-session and --session-id to control the new session's ID
-        & wt.exe -p "$profileGuid" -d "$projectPath" -- claude --resume $oldSessionId --fork-session --session-id $newSessionId --model $model
+        & wt.exe -p "$profileGuid" -d "$projectPath" -- "$claudePath" --resume $oldSessionId --fork-session --session-id $newSessionId --model $model
 
         Write-ColorText "Forked session launched successfully!" -Color Green
         Write-Host ""
@@ -1614,6 +2432,34 @@ function Backup-WTSettings {
     return $backupPath
 }
 
+function Test-JsonStructure {
+    <#
+    .SYNOPSIS
+        Validates JSON object has expected properties
+    .PARAMETER JsonObject
+        The parsed JSON object to validate
+    .PARAMETER RequiredProperties
+        Array of property names that must exist
+    #>
+    param(
+        [PSObject]$JsonObject,
+        [string[]]$RequiredProperties
+    )
+
+    if ($null -eq $JsonObject) {
+        return $false
+    }
+
+    foreach ($prop in $RequiredProperties) {
+        if (-not ($JsonObject.PSObject.Properties.Name -contains $prop)) {
+            Write-ErrorLog "JSON validation failed: missing required property '$prop'"
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Test-WTSettingsValid {
     <#
     .SYNOPSIS
@@ -1621,9 +2467,22 @@ function Test-WTSettingsValid {
     #>
     try {
         $content = Get-Content $Global:WTSettingsPath -Raw
-        $null = $content | ConvertFrom-Json
+        $settings = $content | ConvertFrom-Json
+
+        # Validate expected structure
+        if (-not (Test-JsonStructure -JsonObject $settings -RequiredProperties @('profiles'))) {
+            Write-ErrorLog "Windows Terminal settings missing 'profiles' property"
+            return $false
+        }
+
+        if (-not (Test-JsonStructure -JsonObject $settings.profiles -RequiredProperties @('list'))) {
+            Write-ErrorLog "Windows Terminal settings.profiles missing 'list' property"
+            return $false
+        }
+
         return $true
     } catch {
+        Write-ErrorLog "Failed to validate Windows Terminal settings: $_"
         return $false
     }
 }
@@ -1698,7 +2557,18 @@ function Add-WTProfile {
 
     } catch {
         Write-ColorText "Failed to add profile, restoring from backup..." -Color Red
-        Copy-Item $backupPath $Global:WTSettingsPath -Force
+        if (Test-Path $backupPath) {
+            if (Test-Json -Path $backupPath) {
+                Copy-Item $backupPath $Global:WTSettingsPath -Force
+                Write-ColorText "Backup restored successfully" -Color Green
+            } else {
+                Write-ColorText "ERROR: Backup file is corrupted - cannot restore!" -Color Red
+                Write-ErrorLog "Backup file corrupted: $backupPath"
+            }
+        } else {
+            Write-ColorText "ERROR: Backup file not found!" -Color Red
+            Write-ErrorLog "Backup file not found: $backupPath"
+        }
         throw
     }
 }
@@ -1746,7 +2616,18 @@ function Remove-WTProfile {
 
     } catch {
         Write-ColorText "Failed to remove profile, restoring from backup..." -Color Red
-        Copy-Item $backupPath $Global:WTSettingsPath -Force
+        if (Test-Path $backupPath) {
+            if (Test-Json -Path $backupPath) {
+                Copy-Item $backupPath $Global:WTSettingsPath -Force
+                Write-ColorText "Backup restored successfully" -Color Green
+            } else {
+                Write-ColorText "ERROR: Backup file is corrupted - cannot restore!" -Color Red
+                Write-ErrorLog "Backup file corrupted: $backupPath"
+            }
+        } else {
+            Write-ColorText "ERROR: Backup file not found!" -Color Red
+            Write-ErrorLog "Backup file not found: $backupPath"
+        }
         throw
     }
 }
@@ -1789,11 +2670,14 @@ function Initialize-BaseWTProfile {
 function New-SessionBackgroundImage {
     <#
     .SYNOPSIS
-        Generates a PNG background image for a forked session
+        Generates a PNG background image for a session
+    .PARAMETER IsFork
+        If true, displays "forked from:" text. If false, displays origin info without "forked from:"
     #>
     param(
         [string]$NewName,
-        [string]$OldName
+        [string]$OldName,
+        [switch]$IsFork
     )
 
     try {
@@ -1819,7 +2703,13 @@ function New-SessionBackgroundImage {
         # Draw text right of center (position at 60% of width, centered vertically)
         $xPosition = 1920 * 0.6  # 60% of width = 1152
         $graphics.DrawString($NewName, $fontBig, $textBrush, $xPosition, 400)
-        $graphics.DrawString("forked from: $OldName", $fontSmall, $textBrush, $xPosition, 480)
+
+        # Second line: Show "forked from:" only if this is actually a fork
+        if ($IsFork) {
+            $graphics.DrawString("forked from: $OldName", $fontSmall, $textBrush, $xPosition, 480)
+        } else {
+            $graphics.DrawString($OldName, $fontSmall, $textBrush, $xPosition, 480)
+        }
 
         # Ensure output directory exists
         $outputDir = Join-Path $Global:MenuPath $NewName
@@ -1840,7 +2730,11 @@ function New-SessionBackgroundImage {
         $textBrush.Dispose()
 
         # Save tracking
-        Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent "forked from: $OldName" -ImageType "fork"
+        if ($IsFork) {
+            Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent "forked from: $OldName" -ImageType "fork"
+        } else {
+            Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent $OldName -ImageType "new"
+        }
 
         Write-ColorText "Background image created: $outputPath" -Color Green
 
@@ -1945,7 +2839,7 @@ function Update-SessionBackgroundImage {
                 "(deleted or unnamed)"
             }
 
-            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName
+            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork
         } else {
             # Not a fork - generate simple continue-style background
             Write-ColorText "Generating session background..." -Color Cyan
@@ -2130,7 +3024,7 @@ function Get-ModelFromRegistry {
             return $entry.model
         }
     } catch {
-        # Silently ignore errors
+        Write-ErrorLog "Error getting model from mapping: $_"
     }
 
     return ""
@@ -2152,7 +3046,7 @@ function Get-ModelFromSession {
 
     try {
         # Convert project path to Claude's encoded format
-        $encodedPath = $ProjectPath.TrimEnd('\') -replace ':', '' -replace '\\', '--'
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
         $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
 
         if (-not (Test-Path $sessionFile)) {
@@ -2195,7 +3089,7 @@ function Get-ModelFromSession {
             $reader.Close()
         }
     } catch {
-        # Silently ignore errors
+        Write-ErrorLog "Error getting model from session file: $_"
     }
 
     return ""
@@ -2226,7 +3120,7 @@ function Remove-Session {
 
         # 1. Remove from Claude's sessions-index.json
         Write-ColorText "  Removing from Claude's session index..." -Color Cyan
-        $encodedPath = $projectPath.TrimEnd('\') -replace ':', '' -replace '\\', '--'
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $projectPath
         $indexPath = Join-Path $Global:ClaudeProjectsPath "$encodedPath\sessions-index.json"
 
         if (Test-Path $indexPath) {
@@ -2287,7 +3181,7 @@ function Remove-Session {
                     $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
                     $otherSessionsUsingProfile = $mapping.sessions | Where-Object { $_.wtProfileName -eq $WTProfileName }
                 } catch {
-                    # Ignore errors
+                    Write-ErrorLog "Error checking other sessions using profile: $_"
                 }
             }
 
@@ -2318,7 +3212,7 @@ function Remove-Session {
                             $tracking | ConvertTo-Json -Depth 10 | Set-Content $Global:BackgroundTrackingPath -Encoding UTF8
                             Write-ColorText "    Removed from background tracking" -Color Green
                         } catch {
-                            # Ignore errors
+                            Write-ErrorLog "Error removing from background tracking: $_"
                         }
                     }
                 }
@@ -2595,6 +3489,21 @@ function Initialize-Environment {
         Write-ColorText "Created menu directory: $Global:MenuPath" -Color Green
     }
 
+    # Clear debug log on startup (fresh start each run)
+    if (Test-Path $Global:DebugLogPath) {
+        try {
+            Remove-Item $Global:DebugLogPath -Force -ErrorAction SilentlyContinue
+        } catch {
+            # Silently ignore errors
+        }
+    }
+
+    # Write startup header to debug log if debug is enabled
+    if (Get-DebugState) {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        "[$timestamp] ========== Claude Session Forker Started ==========" | Add-Content -Path $Global:DebugLogPath -Encoding UTF8
+    }
+
     # Check prerequisites
     if (-not (Test-ClaudeCLI)) {
         Write-ColorText "ERROR: Claude CLI not found in PATH" -Color Red
@@ -2649,6 +3558,52 @@ function Start-MainMenu {
         # This ensures we see any new sessions, renamed sessions, etc.
         $sessions = Get-AllClaudeSessions
 
+        # Initialize as empty array if null
+        if ($null -eq $sessions) { $sessions = @() }
+
+        # Check if this is first run (no sessions)
+        $claudeProjectsPath = "$env:USERPROFILE\.claude\projects"
+        $isFirstRun = -not (Test-Path $claudeProjectsPath)
+        $sessionCount = if ($sessions) { $sessions.Count } else { 0 }
+
+        if ($sessionCount -eq 0) {
+            Clear-Host
+            Write-Host ""
+            Write-ColorText "========================================" -Color Cyan
+            Write-ColorText "  CLAUDE SESSION FORKER" -Color Cyan
+            Write-ColorText "========================================" -Color Cyan
+            Write-Host ""
+
+            if ($isFirstRun) {
+                Write-ColorText "No Claude Code sessions found - First Run Detected!" -Color Yellow
+                Write-Host ""
+                Write-Host "It looks like you haven't created any Claude Code sessions yet."
+                Write-Host "This is normal if this is your first time using Claude Code."
+                Write-Host ""
+                Write-ColorText "What you need to do:" -Color Cyan
+                Write-Host ""
+                Write-Host "1. The Claude Code directory will be created when you start your first session"
+                Write-Host "2. Press [N] below to create your first session"
+                Write-Host "3. After running Claude Code once, sessions will appear here"
+            } else {
+                Write-ColorText "No Claude Code sessions found!" -Color Yellow
+                Write-Host ""
+                Write-Host "The Claude Code directory exists at:"
+                Write-Host "  $claudeProjectsPath"
+                Write-Host ""
+                Write-Host "But no sessions were found."
+                Write-Host ""
+                Write-ColorText "To get started:" -Color Cyan
+                Write-Host "- Press [N] to create your first session here"
+                Write-Host "- Or run 'claude' from any directory, then press [R] to refresh"
+            }
+
+            Write-Host ""
+            Write-ColorText "Tip:" -Color Cyan
+            Write-Host "You can also run 'claude' from any directory to create a session manually"
+            Write-Host ""
+        }
+
         # Show menu and get display rows
         $menuTitle = if ($deleteMode) { "WIN TERMINAL CONFIG" } else { "MAIN MENU" }
         $displayRows = Show-SessionMenu -Sessions $sessions -ShowUnnamed $showUnnamed -OnlyWithProfiles $deleteMode -Title $menuTitle
@@ -2675,8 +3630,24 @@ function Start-MainMenu {
             $maxOption = 1
         }
 
+        # Show helpful message if menu is empty but unnamed sessions exist
+        if ($displayRows.Count -eq 0 -and -not $showUnnamed -and $sessionCount -gt 0 -and -not $deleteMode) {
+            Write-Host ""
+            Write-ColorText "NOTE: You have $sessionCount Claude session(s) that are unnamed." -Color Yellow
+            Write-Host ""
+            Write-Host "Press [S] to ""Show unnamed sessions"" to view them."
+            Write-Host ""
+        }
+
         # Check global permission status
-        $hasBypassPermissions = Get-GlobalPermissionStatus
+        $permissionStatus = Get-GlobalPermissionStatus
+
+        # Extract boolean value (handle both hashtable and boolean return types)
+        $hasBypassPermissions = if ($permissionStatus -is [hashtable]) {
+            $permissionStatus.Enabled
+        } else {
+            $permissionStatus
+        }
 
         # Get user selection
         $result = Get-UserSelection -MinOption $minOption -MaxOption $maxOption -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -HasBypassPermissions $hasBypassPermissions
@@ -2703,6 +3674,18 @@ function Start-MainMenu {
 
             'HideUnnamed' {
                 $showUnnamed = $false
+                continue
+            }
+
+            'Debug' {
+                # Show debug toggle
+                Show-DebugToggle
+                continue
+            }
+
+            'CostAnalysis' {
+                # Show cost analysis report
+                Show-CostAnalysis -Sessions $sessions
                 continue
             }
 
