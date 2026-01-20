@@ -23,7 +23,9 @@ $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
 $Global:BackgroundTrackingPath = "$Global:MenuPath\background-tracking.json"
 $Global:WTSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+$Global:ClaudePath = "$env:USERPROFILE\.claude"
 $Global:ClaudeProjectsPath = "$env:USERPROFILE\.claude\projects"
+$Global:ClaudeSettingsPath = "$env:USERPROFILE\.claude\settings.json"
 
 # Trap for unhandled errors
 trap {
@@ -490,7 +492,7 @@ function Show-SessionMenu {
         Write-Host ""
     }
 
-    Write-Host "Claude Code Session Forker, S. Rives, 2026" -ForegroundColor Cyan
+    Write-Host "Claude Code Session Forker, S. Rives, v.2026.1.19" -ForegroundColor Cyan
     Write-Host "(Note: Newly forked sessions shown in [brackets] until Claude CLI indexes them)" -ForegroundColor DarkGray
     Write-Host ""
 
@@ -594,19 +596,19 @@ function Show-SessionMenu {
 
     # Display header - different format for profile mode
     if ($OnlyWithProfiles) {
-        Write-Host ("{0,-3} {1,-30} {2,-20} {3,-8} {4,-12} {5,-12} {6,-20} {7,-20}" -f "#", "Session", "Path", "Messages", "Created", "Modified", "WT Profile", "Color Scheme") -ForegroundColor Cyan
-        Write-Host ("{0,-3} {1,-30} {2,-20} {3,-8} {4,-12} {5,-12} {6,-20} {7,-20}" -f "-", "-------", "----", "--------", "-------", "--------", "----------", "------------") -ForegroundColor Cyan
+        Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f "#", "Session", "Messages", "Created", "Modified", "WT Profile", "Color Scheme", "Path") -ForegroundColor Cyan
+        Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f "-", "-------", "--------", "-------", "--------", "----------", "------------", "----") -ForegroundColor Cyan
     } else {
-        Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-20} {5,-8} {6,-12} {7,-12} {8,-25} {9,-25}" -f "#", "Active", "Model", "Session", "Path", "Messages", "Created", "Modified", "Win Terminal", "Forked From") -ForegroundColor Cyan
-        Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-20} {5,-8} {6,-12} {7,-12} {8,-25} {9,-25}" -f "-", "------", "-----", "-------", "----", "--------", "-------", "--------", "------------", "-----------") -ForegroundColor Cyan
+        Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f "#", "Active", "Model", "Session", "Messages", "Created", "Modified", "Win Terminal", "Forked From", "Path") -ForegroundColor Cyan
+        Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f "-", "------", "-----", "-------", "--------", "-------", "--------", "------------", "-----------", "----") -ForegroundColor Cyan
     }
 
     # Display rows
     foreach ($row in $rows) {
         if ($OnlyWithProfiles) {
-            Write-Host ("{0,-3} {1,-30} {2,-20} {3,-8} {4,-12} {5,-12} {6,-20} {7,-20}" -f $row.Num, $row.Title, $row.Path, $row.Messages, $row.Created, $row.Modified, $row.Profile, $row.ColorScheme) -ForegroundColor Green
+            Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f $row.Num, $row.Title, $row.Messages, $row.Created, $row.Modified, $row.Profile, $row.ColorScheme, $row.Path) -ForegroundColor Green
         } else {
-            Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-20} {5,-8} {6,-12} {7,-12} {8,-25} {9,-25}" -f $row.Num, $row.Active, $row.Model, $row.Title, $row.Path, $row.Messages, $row.Created, $row.Modified, $row.Profile, $row.ForkTree) -ForegroundColor Green
+            Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f $row.Num, $row.Active, $row.Model, $row.Title, $row.Messages, $row.Created, $row.Modified, $row.Profile, $row.ForkTree, $row.Path) -ForegroundColor Green
         }
     }
 
@@ -627,7 +629,8 @@ function Get-UserSelection {
         [int]$MaxOption,
         [bool]$ShowUnnamed,
         [bool]$HasWTProfiles = $false,
-        [bool]$DeleteMode = $false
+        [bool]$DeleteMode = $false,
+        [bool]$HasBypassPermissions = $false
     )
 
     while ($true) {
@@ -639,19 +642,21 @@ function Get-UserSelection {
         }
 
         if ($DeleteMode) {
-            Write-ColorText "Select Windows Terminal Profile $range, [R] Refresh, [A] Abort: " -Color Yellow -NoNewline
+            Write-ColorText "Select Windows Terminal Profile $range, [R]efresh, e[X]it: " -Color Yellow -NoNewline
         } elseif ($ShowUnnamed) {
-            $wtOption = if ($HasWTProfiles) { ", [W] Win Terminal Config" } else { "" }
-            Write-ColorText "$range fork or join, [N] New Session$wtOption, [H] Hide unnamed sessions, [R] Refresh, [A] Abort: " -Color Yellow -NoNewline
+            $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
+            $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
+            Write-ColorText "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [H]ide unnamed sessions$permOption, [R]efresh, e[X]it: " -Color Yellow -NoNewline
         } else {
-            $wtOption = if ($HasWTProfiles) { ", [W] Win Terminal Config" } else { "" }
-            Write-ColorText "$range fork or join, [N] New Session$wtOption, [S] Show unnamed sessions, [R] Refresh, [A] Abort: " -Color Yellow -NoNewline
+            $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
+            $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
+            Write-ColorText "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [S]how unnamed sessions$permOption, [R]efresh, e[X]it: " -Color Yellow -NoNewline
         }
 
         $input = Read-Host
 
-        # Check for abort
-        if ($input -eq 'A' -or $input -eq 'a') {
+        # Check for exit
+        if ($input -eq 'X' -or $input -eq 'x') {
             if ($DeleteMode) {
                 return @{ Type = 'ExitDeleteMode' }
             } else {
@@ -659,16 +664,6 @@ function Get-UserSelection {
             }
         }
 
-        # Check for old quit command - still support Q for backwards compatibility
-        if ($input -eq 'Q' -or $input -eq 'q') {
-            if ($DeleteMode) {
-                # In delete mode, only A works for abort, Q is invalid
-                Write-ColorText "Invalid selection. Use [A] to abort." -Color Red
-                continue
-            } else {
-                return @{ Type = 'Quit' }
-            }
-        }
 
         # Check for new session
         if (($input -eq 'N' -or $input -eq 'n') -and -not $DeleteMode) {
@@ -691,6 +686,16 @@ function Get-UserSelection {
         # Check for delete mode
         if (($input -eq 'W' -or $input -eq 'w') -and $HasWTProfiles -and -not $DeleteMode) {
             return @{ Type = 'EnterDeleteMode' }
+        }
+
+        # Check for quiet claude mode (enable bypass permissions)
+        if (($input -eq 'Q' -or $input -eq 'q') -and -not $DeleteMode) {
+            return @{ Type = 'EnableBypassPermissions' }
+        }
+
+        # Check for chatty claude mode (disable bypass permissions)
+        if (($input -eq 'C' -or $input -eq 'c') -and -not $DeleteMode) {
+            return @{ Type = 'DisableBypassPermissions' }
         }
 
         # Check for number selection
@@ -718,95 +723,106 @@ function Start-NewSession {
     Write-ColorText "Starting new Claude session..." -Color Cyan
     Write-Host ""
     Write-Host "Current directory: $PWD"
-    Write-Host ""
-    Write-ColorText "Would you like to create a Windows Terminal profile for this session?" -Color Cyan
-    Write-Host "  1. Yes - Create custom profile with background image"
-    Write-Host "  2. No - Launch in current terminal"
-    Write-Host ""
 
-    while ($true) {
-        Write-ColorText "Enter choice [1-2], [A] Abort: " -Color Yellow -NoNewline
-        $choice = Read-Host
+    # Prompt for optional session name
+    $sessionName = Get-OptionalSessionName
 
-        if ($choice -eq '1') {
-            # Create session with Windows Terminal profile
-            try {
-                # 1. Get session name
-                $sessionName = Get-SessionName
+    # Check if user aborted
+    if ($sessionName -eq 'abort') {
+        Write-Host ""
+        Write-ColorText "New session aborted." -Color Yellow
+        return
+    }
 
-                # 2. Generate session ID
-                $sessionId = [Guid]::NewGuid().ToString()
+    if ([string]::IsNullOrWhiteSpace($sessionName)) {
+        # No name provided - launch in current terminal (simple mode)
 
-                # 3. Generate background image
-                Write-Host ""
-                Write-ColorText "Generating background image..." -Color Cyan
-                $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName "new session"
-
-                # 4. Create Windows Terminal profile
-                Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
-                $wtProfileName = "Claude-$sessionName"
-                $profile = Add-WTProfile -Name $wtProfileName -StartingDirectory $PWD.Path -BackgroundImage $bgPath
-
-                # 5. Select model
-                $model = Get-ModelChoice
-
-                # Check if user aborted
-                if ($model -eq 'abort') {
-                    Write-Host ""
-                    Write-ColorText "New session aborted. Cleaning up..." -Color Yellow
-                    Remove-WTProfile -ProfileName $wtProfileName
-                    $imageDir = Join-Path $Global:MenuPath $sessionName
-                    if (Test-Path $imageDir) {
-                        Remove-Item $imageDir -Recurse -Force
-                    }
-                    return
-                }
-
-                # 6. Store in session mapping
-                Write-ColorText "Registering session..." -Color Cyan
-                Add-SessionMapping -SessionId $sessionId -WTProfileName $wtProfileName -ProjectPath $PWD.Path -Model $model
-
-                # 7. Launch Windows Terminal with the new profile
-                Write-Host ""
-                Write-ColorText "Launching new session in Windows Terminal..." -Color Green
-                Write-Host ""
-
-                $profileGuid = $profile.guid
-
-                # Launch Windows Terminal with the new profile and session ID
-                & wt.exe -p "$profileGuid" -d "$($PWD.Path)" -- claude --session-id $sessionId --model $model
-
-                Write-ColorText "New session launched successfully!" -Color Green
-                Write-Host ""
-                Write-Host "Profile: $wtProfileName"
-                Write-Host "Session ID: $sessionId"
-                Write-Host "Model: $model"
-                Write-Host ""
-                Write-ColorText "Tip: Use /rename in Claude to give this session a custom title" -Color Yellow
-                Write-Host ""
-
-                exit 0
-
-            } catch {
-                Write-ColorText "Failed to create new session: $_" -Color Red
-                throw
-            }
-
-        } elseif ($choice -eq '2') {
-            # Launch in current terminal (simple mode)
-            Write-Host ""
-            Write-ColorText "Launching Claude in current terminal..." -Color Green
-            Write-Host ""
-            Start-Process -FilePath "claude" -NoNewWindow -Wait
-            exit 0
-
-        } elseif ($choice -eq 'A' -or $choice -eq 'a') {
-            # User aborted
-            return
-
-        } else {
-            Write-ColorText "Invalid choice. Please enter 1, 2, or A." -Color Red
+        # Prompt for trusted session
+        $isTrusted = Get-TrustedSessionChoice
+        if ($isTrusted) {
+            Set-TrustedSessionSettings -ProjectPath $PWD.Path
         }
+
+        Write-Host ""
+        Write-ColorText "Launching Claude in current terminal..." -Color Green
+        Write-Host ""
+        Start-Process -FilePath "claude" -NoNewWindow -Wait
+        exit 0
+    }
+
+    # Name provided - create Windows Terminal profile with background
+    try {
+        # 1. Generate background image
+        Write-Host ""
+        Write-ColorText "Generating background image..." -Color Cyan
+        $originText = "$env:COMPUTERNAME`:$env:USERNAME"
+        $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $originText
+
+        # 2. Create Windows Terminal profile
+        Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
+        $wtProfileName = "Claude-$sessionName"
+        $profile = Add-WTProfile -Name $wtProfileName -StartingDirectory $PWD.Path -BackgroundImage $bgPath
+
+        # 3. Select model
+        $model = Get-ModelChoice
+
+        # Check if user aborted
+        if ($model -eq 'abort') {
+            Write-Host ""
+            Write-ColorText "New session aborted. Cleaning up..." -Color Yellow
+            Remove-WTProfile -ProfileName $wtProfileName
+            $imageDir = Join-Path $Global:MenuPath $sessionName
+            if (Test-Path $imageDir) {
+                Remove-Item $imageDir -Recurse -Force
+            }
+            return
+        }
+
+        # 4. Prompt for trusted session
+        $isTrusted = Get-TrustedSessionChoice
+        if ($isTrusted) {
+            Set-TrustedSessionSettings -ProjectPath $PWD.Path
+        }
+
+        # 5. Launch Windows Terminal with the new profile (let Claude create session ID)
+        Write-Host ""
+        Write-ColorText "Launching new session in Windows Terminal..." -Color Green
+        Write-Host ""
+
+        $profileGuid = $profile.guid
+        $projectPath = $PWD.Path
+
+        # Launch Windows Terminal WITHOUT --session-id (let Claude create its own)
+        Start-Process -FilePath "wt.exe" -ArgumentList "-p", "`"$profileGuid`"", "-d", "`"$projectPath`"", "--", "claude", "--model", "$model" -NoNewWindow
+
+        # 6. Wait for Claude to create the session and discover its ID
+        $sessionId = Get-NewestSessionIdForPath -ProjectPath $projectPath -MaxWaitSeconds 15
+
+        if ($sessionId) {
+            # 7. Update tracking with discovered session ID
+            Write-ColorText "Registering session..." -Color Cyan
+            Add-SessionMapping -SessionId $sessionId -WTProfileName $wtProfileName -ProjectPath $projectPath -Model $model
+
+            Write-ColorText "New session launched successfully!" -Color Green
+            Write-Host ""
+            Write-Host "Profile: $wtProfileName"
+            Write-Host "Session ID: $sessionId"
+            Write-Host "Model: $model"
+            Write-Host "Directory: $projectPath"
+            Write-Host ""
+            Write-ColorText "Tip: Use /rename in Claude to give this session a custom title" -Color Yellow
+            Write-Host ""
+        } else {
+            Write-ColorText "Warning: Could not discover session ID automatically." -Color Yellow
+            Write-ColorText "The session was launched, but tracking may be incomplete." -Color Yellow
+            Write-Host ""
+        }
+
+        exit 0
+
+    } catch {
+        Write-ColorText "Failed to create new session: $_" -Color Red
+        throw
     }
 }
 
@@ -936,7 +952,7 @@ function Get-SessionManagementChoice {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A] Abort: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         switch ($choice) {
@@ -967,7 +983,7 @@ function Get-RegenerateImageChoice {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A] Abort: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         switch ($choice) {
@@ -1006,7 +1022,7 @@ function Get-ForkOrContinue {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A] Abort: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         if ($choice -eq '1') {
@@ -1059,6 +1075,37 @@ function Get-SessionName {
     }
 }
 
+function Get-OptionalSessionName {
+    <#
+    .SYNOPSIS
+        Prompts for an optional session name (allows empty input)
+    #>
+    while ($true) {
+        Write-Host ""
+        Write-ColorText "Enter a name for this session (press [Enter] to continue without a name, [A] to Abort): " -Color Yellow -NoNewline
+        $name = Read-Host
+
+        # Check for abort
+        if ($name -eq 'A' -or $name -eq 'a') {
+            return 'abort'
+        }
+
+        # Allow empty (no name)
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            return ""
+        }
+
+        # Sanitize for filesystem
+        $safeName = $name -replace '[\\/:*?"<>|]', '_'
+
+        if ($name -ne $safeName) {
+            Write-ColorText "Name contains invalid characters. Using: $safeName" -Color Yellow
+        }
+
+        return $safeName
+    }
+}
+
 function Get-ModelChoice {
     <#
     .SYNOPSIS
@@ -1073,7 +1120,7 @@ function Get-ModelChoice {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A] Abort: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         switch ($choice) {
@@ -1085,6 +1132,343 @@ function Get-ModelChoice {
                 Write-ColorText "Invalid choice. Please enter 1, 2, 3, or A." -Color Red
             }
         }
+    }
+}
+
+function Get-TrustedSessionChoice {
+    <#
+    .SYNOPSIS
+        Prompts user if they want a trusted session with no permission limits
+    #>
+    Write-Host ""
+    Write-ColorText "Do you want a trusted session with no permission limits?" -Color Cyan
+    Write-Host "  Y - Yes, bypass all permissions (trusted workspace)"
+    Write-Host "  N - No, use default permission settings"
+    Write-Host ""
+
+    while ($true) {
+        Write-ColorText "Enter choice [Y/N]: " -Color Yellow -NoNewline
+        $choice = Read-Host
+
+        switch ($choice) {
+            {$_ -eq 'Y' -or $_ -eq 'y'} { return $true }
+            {$_ -eq 'N' -or $_ -eq 'n'} { return $false }
+            default {
+                Write-ColorText "Invalid choice. Please enter Y or N." -Color Red
+            }
+        }
+    }
+}
+
+function Set-TrustedSessionSettings {
+    <#
+    .SYNOPSIS
+        Creates or updates .claude\settings.local.json with trusted permissions
+    #>
+    param([string]$ProjectPath)
+
+    $claudeDir = Join-Path $ProjectPath ".claude"
+    $settingsFile = Join-Path $claudeDir "settings.local.json"
+
+    # Create .claude directory if it doesn't exist
+    if (-not (Test-Path $claudeDir)) {
+        New-Item -Path $claudeDir -ItemType Directory -Force | Out-Null
+    }
+
+    # Define the permissions object
+    $permissionsConfig = @{
+        defaultMode = "bypassPermissions"
+        allow = @("*")
+    }
+
+    if (Test-Path $settingsFile) {
+        # File exists, read and merge
+        try {
+            $settingsJson = Get-Content $settingsFile -Raw
+            $settings = $settingsJson | ConvertFrom-Json
+
+            # Ensure permissions property exists
+            if (-not $settings.permissions) {
+                $settings | Add-Member -MemberType NoteProperty -Name "permissions" -Value ([PSCustomObject]@{})
+            }
+
+            # Update permissions
+            $settings.permissions | Add-Member -MemberType NoteProperty -Name "defaultMode" -Value "bypassPermissions" -Force
+            $settings.permissions | Add-Member -MemberType NoteProperty -Name "allow" -Value @("*") -Force
+
+            # Save back
+            $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+            Write-ColorText "Updated existing settings.local.json with trusted permissions" -Color Green
+
+        } catch {
+            Write-ColorText "Warning: Could not update existing settings.local.json: $_" -Color Yellow
+        }
+    } else {
+        # File doesn't exist, create new
+        $settings = @{
+            permissions = $permissionsConfig
+        }
+
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+        Write-ColorText "Created settings.local.json with trusted permissions" -Color Green
+    }
+}
+
+function Get-GlobalPermissionStatus {
+    <#
+    .SYNOPSIS
+        Checks if global bypass permissions are enabled in settings.json
+    #>
+    if (-not (Test-Path $Global:ClaudeSettingsPath)) {
+        return $false
+    }
+
+    try {
+        $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
+        $settings = $settingsJson | ConvertFrom-Json
+
+        if ($settings.permissions -and
+            $settings.permissions.defaultMode -eq "bypassPermissions") {
+            return $true
+        }
+
+        return $false
+    } catch {
+        return $false
+    }
+}
+
+function Enable-GlobalBypassPermissions {
+    <#
+    .SYNOPSIS
+        Enables global bypass permissions in settings.json
+    #>
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  YOU ARE IN QUIET CLAUDE MODE" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-ColorText "What this does:" -Color Yellow
+    Write-Host "  - Modifies your global Claude settings file:"
+    Write-Host "    $Global:ClaudeSettingsPath"
+    Write-Host "  - Sets permissions.defaultMode to 'bypassPermissions'"
+    Write-Host "  - Sets permissions.allow to ['*'] (allow all tools)"
+    Write-Host ""
+    Write-ColorText "Impact:" -Color Yellow
+    Write-Host "  - Claude will NO LONGER prompt you for permission to:"
+    Write-Host "    * Read files"
+    Write-Host "    * Write files"
+    Write-Host "    * Execute bash commands"
+    Write-Host "    * Access the web"
+    Write-Host "    * Use any other tools"
+    Write-Host ""
+    Write-Host "  - This applies to ALL Claude sessions globally"
+    Write-Host "  - Individual projects can still override with .claude/settings.local.json"
+    Write-Host ""
+    Write-ColorText "Recommended for:" -Color Green
+    Write-Host "  - Trusted development environments"
+    Write-Host "  - Personal machines where you trust all projects"
+    Write-Host "  - Avoiding repetitive permission prompts"
+    Write-Host ""
+    Write-ColorText "NOT recommended for:" -Color Red
+    Write-Host "  - Shared machines"
+    Write-Host "  - Working with untrusted code"
+    Write-Host "  - Production environments"
+    Write-Host ""
+    Write-ColorText "You can reverse this at any time with [C]hatty Claude Mode" -Color Cyan
+    Write-Host ""
+    Write-ColorText "Are you sure you want to enable quiet mode (bypass permissions)? [Y/N]: " -Color Yellow -NoNewline
+    $confirm = Read-Host
+
+    if ($confirm -ne 'Y' -and $confirm -ne 'y') {
+        Write-Host ""
+        Write-ColorText "Operation cancelled." -Color Cyan
+        return
+    }
+
+    try {
+        $settings = @{}
+
+        # Read existing settings if file exists
+        if (Test-Path $Global:ClaudeSettingsPath) {
+            $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
+            $settings = $settingsJson | ConvertFrom-Json | ConvertTo-Hashtable
+        } else {
+            # Create .claude directory if it doesn't exist
+            $claudeDir = Split-Path $Global:ClaudeSettingsPath -Parent
+            if (-not (Test-Path $claudeDir)) {
+                New-Item -Path $claudeDir -ItemType Directory -Force | Out-Null
+            }
+        }
+
+        # Update permissions
+        $settings['permissions'] = @{
+            defaultMode = "bypassPermissions"
+            allow = @("*")
+        }
+
+        # Save back
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:ClaudeSettingsPath -Encoding UTF8
+        Write-Host ""
+        Write-ColorText "Quiet Claude Mode enabled successfully!" -Color Green
+        Write-ColorText "Claude will no longer prompt for permissions." -Color Green
+        Write-Host ""
+
+    } catch {
+        Write-Host ""
+        Write-ColorText "Error enabling quiet mode: $_" -Color Red
+        Write-Host ""
+    }
+}
+
+function Disable-GlobalBypassPermissions {
+    <#
+    .SYNOPSIS
+        Disables global bypass permissions in settings.json
+    #>
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  YOU ARE IN CHATTY CLAUDE MODE" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-ColorText "What this does:" -Color Yellow
+    Write-Host "  - Modifies your global Claude settings file:"
+    Write-Host "    $Global:ClaudeSettingsPath"
+    Write-Host "  - Sets permissions.defaultMode to 'default'"
+    Write-Host "  - Removes permissions.allow setting"
+    Write-Host ""
+    Write-ColorText "Impact:" -Color Yellow
+    Write-Host "  - Claude WILL prompt you for permission to:"
+    Write-Host "    * Read files"
+    Write-Host "    * Write files"
+    Write-Host "    * Execute bash commands"
+    Write-Host "    * Access the web"
+    Write-Host "    * Use other tools"
+    Write-Host ""
+    Write-Host "  - This applies to ALL Claude sessions globally"
+    Write-Host "  - Individual projects can still override with .claude/settings.local.json"
+    Write-Host ""
+
+    # Check if settings file exists
+    if (-not (Test-Path $Global:ClaudeSettingsPath)) {
+        Write-ColorText "Settings file not found at:" -Color Red
+        Write-Host "  $Global:ClaudeSettingsPath"
+        Write-Host ""
+        Write-ColorText "Nothing to disable." -Color Yellow
+        Write-Host ""
+        Read-Host "Press Enter to continue"
+        return
+    }
+
+    # Show current settings
+    try {
+        $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
+        Write-ColorText "Current global settings.json content:" -Color Cyan
+        Write-Host "----------------------------------------"
+        Write-Host $settingsJson
+        Write-Host "----------------------------------------"
+        Write-Host ""
+    } catch {
+        Write-ColorText "Warning: Could not read current settings: $_" -Color Yellow
+        Write-Host ""
+    }
+
+    Write-ColorText "You can reverse this at any time with [Q]uiet Claude Mode" -Color Cyan
+    Write-Host ""
+    Write-ColorText "Are you sure you want to enable chatty mode (disable bypass permissions)? [Y/N]: " -Color Yellow -NoNewline
+    $confirm = Read-Host
+
+    if ($confirm -ne 'Y' -and $confirm -ne 'y') {
+        Write-Host ""
+        Write-ColorText "Operation cancelled." -Color Cyan
+        return
+    }
+
+    try {
+        $settings = $settingsJson | ConvertFrom-Json | ConvertTo-Hashtable
+
+        # Update permissions to default
+        if ($settings.ContainsKey('permissions')) {
+            $settings['permissions'] = @{
+                defaultMode = "default"
+            }
+        }
+
+        # Save back
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:ClaudeSettingsPath -Encoding UTF8
+        Write-Host ""
+        Write-ColorText "Chatty Claude Mode enabled successfully!" -Color Green
+        Write-ColorText "Claude will now prompt for permissions." -Color Green
+        Write-Host ""
+
+    } catch {
+        Write-Host ""
+        Write-ColorText "Error enabling chatty mode: $_" -Color Red
+        Write-Host ""
+    }
+}
+
+function ConvertTo-Hashtable {
+    <#
+    .SYNOPSIS
+        Converts PSCustomObject to Hashtable
+    #>
+    param([Parameter(ValueFromPipeline)]$Object)
+
+    if ($null -eq $Object) { return @{} }
+
+    $hash = @{}
+    $Object.PSObject.Properties | ForEach-Object {
+        $value = $_.Value
+        if ($value -is [PSCustomObject]) {
+            $value = ConvertTo-Hashtable $value
+        }
+        $hash[$_.Name] = $value
+    }
+    return $hash
+}
+
+function Get-NewestSessionIdForPath {
+    <#
+    .SYNOPSIS
+        Discovers the newest Claude session ID for a given project path
+    #>
+    param(
+        [string]$ProjectPath,
+        [int]$MaxWaitSeconds = 10
+    )
+
+    # Encode path the same way Claude does
+    $encodedPath = $ProjectPath -replace ':', '-' -replace '\\', '-'
+    $sessionDir = Join-Path $Global:ClaudePath "projects\$encodedPath"
+
+    Write-ColorText "Waiting for Claude to create session file..." -Color Cyan
+
+    $startTime = Get-Date
+    $sessionId = $null
+
+    while ($true) {
+        $elapsed = ((Get-Date) - $startTime).TotalSeconds
+
+        if ($elapsed -gt $MaxWaitSeconds) {
+            Write-ColorText "Timeout waiting for session file. Session may not have been created." -Color Red
+            return $null
+        }
+
+        if (Test-Path $sessionDir) {
+            $sessionFiles = Get-ChildItem -Path $sessionDir -Filter "*.jsonl" -File -ErrorAction SilentlyContinue
+
+            if ($sessionFiles) {
+                # Get the newest session file
+                $newestFile = $sessionFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                $sessionId = $newestFile.BaseName
+                Write-ColorText "Discovered session ID: $sessionId" -Color Green
+                return $sessionId
+            }
+        }
+
+        # Wait a bit before checking again
+        Start-Sleep -Milliseconds 500
     }
 }
 
@@ -1458,11 +1842,13 @@ function New-ContinueSessionBackgroundImage {
 
         # Fonts - larger and more visible
         $fontBig = New-Object System.Drawing.Font("Consolas", 48, [System.Drawing.FontStyle]::Bold)
+        $fontLabel = New-Object System.Drawing.Font("Consolas", 36, [System.Drawing.FontStyle]::Italic)
         $textBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
 
         # Draw text right of center (position at 60% of width, centered vertically)
         $xPosition = 1920 * 0.6  # 60% of width = 1152
-        $graphics.DrawString("Session: $SessionName", $fontBig, $textBrush, $xPosition, 450)
+        $graphics.DrawString("Session:", $fontLabel, $textBrush, $xPosition, 400)
+        $graphics.DrawString($SessionName, $fontBig, $textBrush, $xPosition, 460)
 
         # Ensure output directory exists
         $outputDir = Join-Path $Global:MenuPath $SessionName
@@ -1479,10 +1865,11 @@ function New-ContinueSessionBackgroundImage {
         $bitmap.Dispose()
         $bgBrush.Dispose()
         $fontBig.Dispose()
+        $fontLabel.Dispose()
         $textBrush.Dispose()
 
         # Save tracking
-        Save-BackgroundTracking -SessionName $SessionName -BackgroundPath $outputPath -TextContent "Session: $SessionName" -ImageType "continue"
+        Save-BackgroundTracking -SessionName $SessionName -BackgroundPath $outputPath -TextContent "Session:`n$SessionName" -ImageType "continue"
 
         Write-ColorText "Background image created: $outputPath" -Color Green
 
@@ -2254,8 +2641,11 @@ function Start-MainMenu {
             $maxOption = 1
         }
 
+        # Check global permission status
+        $hasBypassPermissions = Get-GlobalPermissionStatus
+
         # Get user selection
-        $result = Get-UserSelection -MinOption $minOption -MaxOption $maxOption -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode
+        $result = Get-UserSelection -MinOption $minOption -MaxOption $maxOption -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -HasBypassPermissions $hasBypassPermissions
 
         # Handle result
         switch ($result.Type) {
@@ -2294,6 +2684,16 @@ function Start-MainMenu {
 
             'ExitDeleteMode' {
                 $deleteMode = $false
+                continue
+            }
+
+            'EnableBypassPermissions' {
+                Enable-GlobalBypassPermissions
+                continue
+            }
+
+            'DisableBypassPermissions' {
+                Disable-GlobalBypassPermissions
                 continue
             }
 

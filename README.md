@@ -1,12 +1,19 @@
-# Tldr; 
-- Just copy the single file, Claude-Menu.ps1, put it someplace memorable,
-- Then run:
+# Quick Start Guide: Launch and Manage Claude Code Sessions in Windows Terminal
 
-       powershell.exe -ExecutionPolicy Bypass -NoProfile -File "someplace\memorable\Claude-Menu.ps1"
+1. Download this repo
+2. Run inst.cmd
+3. Optional: Put fork.cmd in your PATH
+4. Run fork.cmd whenever you want to manage Claude sessions
+
 
 # Windows Claude Code Forker
 
-A PowerShell-based session manager for Claude Code CLI with Windows Terminal integration.
+Have you ever been working in Claude Code CLI and wished you could easily see and manage all your sessions across projects?
+Have you ever lost track of which session you were working on, or wanted to fork a session into its own dedicated terminal 
+window with a custom background?
+
+This is for you. It is a PowerShell-based session manager for Claude Code CLI with Windows Terminal integration--a nice way 
+to start Claude Code and see everything you are working on across all sessions across your hard drive.
 
 ## Features
 
@@ -17,6 +24,32 @@ A PowerShell-based session manager for Claude Code CLI with Windows Terminal int
 - 🔗 **Fork Tracking** - View session genealogy and relationships
 - 🗑️ **Session Management** - Delete sessions and automatically clean up profiles
 - ⚙️ **Profile Management** - Manage Windows Terminal profiles and background images
+
+## See It In Action
+
+### Never Lose Context - Visual Session Identification
+
+Each forked session gets a custom Windows Terminal profile with a watermark showing the session name and origin. No more "wait, which Claude window is this?"
+
+![Windows Terminal with session watermark](screenshot_watermark.png)
+*Windows Terminal showing session context directly in the background - instantly know which project you're working on*
+
+### Interactive Session Management
+
+Launch the menu to see all your Claude sessions across all projects, with fork relationships, activity indicators, and quick actions.
+
+![Main menu showing session list](MainMenu.png)
+*Main menu with session discovery, fork tracking, and Windows Terminal profile management*
+
+### Why This Matters
+
+When you're:
+- 🔀 Testing different approaches in parallel sessions
+- 🎯 Managing multiple client projects simultaneously
+- 🧪 Comparing AI responses to the same prompt
+- 📋 Keeping experimental work separate from production
+
+You need **instant visual context** - and that's exactly what the background watermarks provide. One glance tells you which session you're in.
 
 ## Prerequisites
 
