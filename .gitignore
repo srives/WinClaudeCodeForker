@@ -27,3 +27,4 @@ desktop.ini
 *.backup
 *.bak
 settings.json.backup.*
+/.vs
