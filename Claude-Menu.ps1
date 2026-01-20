@@ -52,6 +52,28 @@ function Write-ColorText {
     }
 }
 
+function Truncate-String {
+    <#
+    .SYNOPSIS
+        Truncates a string to fit within a column width
+    #>
+    param(
+        [string]$Value,
+        [int]$MaxLength
+    )
+
+    if ([string]::IsNullOrEmpty($Value)) {
+        return ""
+    }
+
+    # Truncate to MaxLength - 1 to leave one space before next column
+    $actualMax = $MaxLength - 1
+    if ($Value.Length -gt $actualMax) {
+        return $Value.Substring(0, $actualMax)
+    }
+    return $Value
+}
+
 function Write-Header {
     param([string]$Title)
     Write-Host ""
@@ -606,9 +628,21 @@ function Show-SessionMenu {
     # Display rows
     foreach ($row in $rows) {
         if ($OnlyWithProfiles) {
-            Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f $row.Num, $row.Title, $row.Messages, $row.Created, $row.Modified, $row.Profile, $row.ColorScheme, $row.Path) -ForegroundColor Green
+            # Truncate values to fit columns: 3, 30, 8, 12, 12, 20, 20, 20
+            $title = Truncate-String $row.Title 30
+            $profile = Truncate-String $row.Profile 20
+            $colorScheme = Truncate-String $row.ColorScheme 20
+            $path = Truncate-String $row.Path 20
+            Write-Host ("{0,-3} {1,-30} {2,-8} {3,-12} {4,-12} {5,-20} {6,-20} {7,-20}" -f $row.Num, $title, $row.Messages, $row.Created, $row.Modified, $profile, $colorScheme, $path) -ForegroundColor Green
         } else {
-            Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f $row.Num, $row.Active, $row.Model, $row.Title, $row.Messages, $row.Created, $row.Modified, $row.Profile, $row.ForkTree, $row.Path) -ForegroundColor Green
+            # Truncate values to fit columns: 3, 6, 8, 30, 8, 12, 12, 25, 25, 20
+            $active = Truncate-String $row.Active 6
+            $model = Truncate-String $row.Model 8
+            $title = Truncate-String $row.Title 30
+            $profile = Truncate-String $row.Profile 25
+            $forkTree = Truncate-String $row.ForkTree 25
+            $path = Truncate-String $row.Path 20
+            Write-Host ("{0,-3} {1,-6} {2,-8} {3,-30} {4,-8} {5,-12} {6,-12} {7,-25} {8,-25} {9,-20}" -f $row.Num, $active, $model, $title, $row.Messages, $row.Created, $row.Modified, $profile, $forkTree, $path) -ForegroundColor Green
         }
     }
 
@@ -952,7 +986,7 @@ function Get-SessionManagementChoice {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         switch ($choice) {
@@ -983,7 +1017,7 @@ function Get-RegenerateImageChoice {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         switch ($choice) {
@@ -1022,7 +1056,7 @@ function Get-ForkOrContinue {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         if ($choice -eq '1') {
@@ -1120,7 +1154,7 @@ function Get-ModelChoice {
     Write-Host ""
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], e[X]it: " -Color Yellow -NoNewline
+        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
         $choice = Read-Host
 
         switch ($choice) {
