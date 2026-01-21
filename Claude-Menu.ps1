@@ -985,7 +985,7 @@ function Get-AllClaudeSessions {
 
     Write-DebugInfo "Total sessions from Claude indexes: $($allSessions.Count)" -Color Cyan
 
-    # Now, check session-mapping.json for sessions we've created that Claude hasn't indexed yet
+    # Now, check session-mapping.json for tracked sessions
     Write-DebugInfo "Checking session-mapping.json for tracked sessions..." -Color Cyan
     Write-DebugInfo "  Mapping file: $Global:SessionMappingPath"
 
@@ -996,6 +996,25 @@ function Get-AllClaudeSessions {
             $mappedCount = if ($mapping.sessions) { $mapping.sessions.Count } else { 0 }
             Write-DebugInfo "  Found $mappedCount tracked session(s)" -Color Green
 
+            # First pass: Enrich existing sessions with trackedName
+            foreach ($mappedSession in $mapping.sessions) {
+                if ($sessionIdsSeen.ContainsKey($mappedSession.sessionId)) {
+                    # Session already in our list - add trackedName to it
+                    $sessionName = $mappedSession.wtProfileName -replace '^Claude-', ''
+                    for ($i = 0; $i -lt $allSessions.Count; $i++) {
+                        if ($allSessions[$i].sessionId -eq $mappedSession.sessionId) {
+                            # Add trackedName property if session is unnamed
+                            if (-not $allSessions[$i].customTitle -or $allSessions[$i].customTitle -eq "") {
+                                $allSessions[$i] | Add-Member -NotePropertyName 'trackedName' -NotePropertyValue $sessionName -Force
+                                Write-DebugInfo "    Added trackedName '$sessionName' to existing session $($mappedSession.sessionId)" -Color Green
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+
+            # Second pass: Add sessions not yet in Claude's index
             foreach ($mappedSession in $mapping.sessions) {
                 Write-DebugInfo "    Tracked session: $($mappedSession.sessionId)" -Color DarkGray
                 Write-DebugInfo "      Profile: $($mappedSession.wtProfileName)" -Color DarkGray
@@ -1003,7 +1022,7 @@ function Get-AllClaudeSessions {
 
                 # Skip if we already have this session from Claude's index
                 if ($sessionIdsSeen.ContainsKey($mappedSession.sessionId)) {
-                    Write-DebugInfo "      Already found in Claude's index - skipping" -Color DarkGray
+                    Write-DebugInfo "      Already found in Claude's index - already enriched" -Color DarkGray
                     continue
                 }
 
@@ -1190,8 +1209,10 @@ function Get-ForkedFromInfo {
 function Validate-SessionMappings {
     <#
     .SYNOPSIS
-        Validates that Windows Terminal profiles referenced in session mappings actually exist
-        Removes invalid profile references
+        Validates session mappings for consistency
+        - Removes mappings where session .jsonl files don't exist (orphaned mappings)
+        - Removes references to Windows Terminal profiles that no longer exist
+        Self-heals bad associations from earlier versions
     #>
 
     Write-DebugInfo "=== Validating Session Mappings ===" -Color Cyan
@@ -1222,6 +1243,19 @@ function Validate-SessionMappings {
         $cleanedCount = 0
 
         foreach ($session in $mapping.sessions) {
+            # SELF-HEALING: First check if session .jsonl file exists
+            $encodedPath = ConvertTo-ClaudeprojectPath -Path $session.projectPath
+            $sessionFile = Join-Path "$env:USERPROFILE\.claude\projects" "$encodedPath\$($session.sessionId).jsonl"
+
+            if (-not (Test-Path $sessionFile)) {
+                # Session file doesn't exist - this is an orphaned mapping
+                Write-DebugInfo "    SELF-HEAL: Session $($session.sessionId) file NOT FOUND (orphaned) - removing mapping" -Color Yellow
+                Write-DebugInfo "      Missing file: $sessionFile" -Color DarkGray
+                Write-DebugInfo "      Profile was: $($session.wtProfileName)" -Color DarkGray
+                $cleanedCount++
+                continue  # Skip this session - don't add to updatedSessions
+            }
+
             if ($session.wtProfileName) {
                 # Check if this profile actually exists
                 if ($actualProfiles -contains $session.wtProfileName) {
@@ -2898,7 +2932,21 @@ function Start-ContinueSession {
 
                 # Add to session mapping (use actual profile name in case it was modified)
                 $actualProfileName = $profile.name
-                Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath
+
+                # VALIDATION: Verify session file exists before saving mapping
+                $encodedPath = ConvertTo-ClaudeprojectPath -Path $Session.projectPath
+                $sessionFile = Join-Path "$env:USERPROFILE\.claude\projects" "$encodedPath\$($Session.sessionId).jsonl"
+                Write-DebugInfo "  Verifying session file: $sessionFile" -Color Cyan
+
+                if (Test-Path $sessionFile) {
+                    Write-DebugInfo "  Session file VERIFIED - proceeding with mapping" -Color Green
+                    Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath
+                } else {
+                    Write-DebugInfo "  ERROR: Session file NOT FOUND!" -Color Red
+                    Write-DebugInfo "  Session ID: $($Session.sessionId)" -Color Red
+                    Write-DebugInfo "  This indicates a bug - session object has wrong ID" -Color Red
+                    Write-ColorText "WARNING: Session file verification failed. Mapping not saved." -Color Red
+                }
 
                 Write-ColorText "Windows Terminal profile created: $actualProfileName" -Color Green
                 Write-Host ""
@@ -3034,8 +3082,21 @@ function Start-ContinueSession {
                         Write-DebugInfo "    SessionId: $($Session.sessionId)"
                         Write-DebugInfo "    WTProfileName: $actualProfileName"
                         Write-DebugInfo "    ProjectPath: $($Session.projectPath)"
-                        Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath
-                        Write-DebugInfo "  Session mapping updated successfully" -Color Green
+
+                        # VALIDATION: Verify session file exists before saving mapping
+                        $encodedPath = ConvertTo-ClaudeprojectPath -Path $Session.projectPath
+                        $sessionFile = Join-Path "$env:USERPROFILE\.claude\projects" "$encodedPath\$($Session.sessionId).jsonl"
+                        Write-DebugInfo "    Verifying session file: $sessionFile" -Color Cyan
+
+                        if (Test-Path $sessionFile) {
+                            Write-DebugInfo "    Session file VERIFIED - proceeding with mapping" -Color Green
+                            Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath
+                            Write-DebugInfo "  Session mapping updated successfully" -Color Green
+                        } else {
+                            Write-DebugInfo "    ERROR: Session file NOT FOUND!" -Color Red
+                            Write-DebugInfo "    This indicates a bug - session object has wrong ID" -Color Red
+                            Write-ColorText "WARNING: Session file verification failed. Mapping not saved." -Color Red
+                        }
 
                         Write-Host ""
                         Write-ColorText "Windows Terminal profile created successfully!" -Color Green
@@ -4678,6 +4739,11 @@ function New-ContinueSessionBackgroundImage {
         $graphics.DrawString($SessionName, $fontBig, $textBrush, $xPosition, $yPosition)
         $yPosition += 80
 
+        # Line 2: Computer and username
+        $computerUser = "$env:COMPUTERNAME`:$env:USERNAME"
+        $graphics.DrawString($computerUser, $fontSmall, $textBrush, $xPosition, $yPosition)
+        $yPosition += 60
+
         # Line 3: Show git branch if detected
         if ($GitBranch) {
             $graphics.DrawString("branch: $GitBranch", $fontSmall, $textBrush, $xPosition, $yPosition)
@@ -4842,12 +4908,45 @@ function Add-SessionMapping {
     try {
         $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
 
-        # Check if entry already exists
+        # SELF-HEALING: Check if WTProfileName is already mapped to a DIFFERENT session
+        # and if that session's .jsonl file doesn't exist (orphaned mapping)
+        $conflictIndex = -1
+        for ($i = 0; $i -lt $mapping.sessions.Count; $i++) {
+            if ($mapping.sessions[$i].wtProfileName -eq $WTProfileName -and
+                $mapping.sessions[$i].sessionId -ne $SessionId) {
+                # Found a different session with same WT profile name
+                # Check if that session's file exists
+                $encodedPath = ConvertTo-ClaudeprojectPath -Path $mapping.sessions[$i].projectPath
+                $sessionFile = Join-Path "$env:USERPROFILE\.claude\projects" "$encodedPath\$($mapping.sessions[$i].sessionId).jsonl"
+
+                if (-not (Test-Path $sessionFile)) {
+                    # Orphaned mapping - this session file doesn't exist
+                    $conflictIndex = $i
+                    Write-DebugInfo "SELF-HEAL: Found orphaned mapping for '$WTProfileName' -> session $($mapping.sessions[$i].sessionId)" -Color Yellow
+                    Write-DebugInfo "  Session file missing: $sessionFile" -Color Yellow
+                    Write-DebugInfo "  Will replace with new session: $SessionId" -Color Green
+                    break
+                }
+            }
+        }
+
+        # Check if entry already exists for this session ID
         $existingIndex = -1
         for ($i = 0; $i -lt $mapping.sessions.Count; $i++) {
             if ($mapping.sessions[$i].sessionId -eq $SessionId) {
                 $existingIndex = $i
                 break
+            }
+        }
+
+        # Remove orphaned mapping if found
+        if ($conflictIndex -ge 0) {
+            Write-DebugInfo "SELF-HEAL: Removing orphaned mapping at index $conflictIndex" -Color Yellow
+            $orphanedSession = $mapping.sessions[$conflictIndex]
+            $mapping.sessions = @($mapping.sessions | Where-Object { $_ -ne $orphanedSession })
+            # Adjust existingIndex if needed
+            if ($existingIndex -gt $conflictIndex) {
+                $existingIndex--
             }
         }
 
