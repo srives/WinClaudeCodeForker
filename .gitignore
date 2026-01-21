@@ -1,0 +1,32 @@
+# User-specific files
+*.lnk
+*.cmd
+
+# Testing files
+test-*.ps1
+test-*.json
+scratch/
+temp/
+
+# Generated documentation
+docs/_build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Backup files
+*.backup
+*.bak
+settings.json.backup.*
+/.vs
+/.claude
+/nul
