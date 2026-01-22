@@ -3,24 +3,25 @@
 [Download Installer Here](https://github.com/srives/WinClaudeCodeForker/releases/tag/name), called WinClaudeForker.exe
 
 
-## What's New in v1.4.0 (2026-01-20)
+## What's New in v1.5.0 (2026-01-21)
 
 ✨ **Major Features:**
-- 🌿 **Git Branch Integration** - Automatically detects and displays git branch on background images and in session info
-- 🤖 **Model Display** - Shows which model (Opus/Sonnet/Haiku) is used on background images
-- 🎨 **Smart Image Conflict Resolution** - Auto-overwrites orphaned backgrounds, shows usage before prompting
-- 📁 **Directory Selection** - Choose directory when creating new sessions with validation
-- 🚫 **Enhanced Abort Options** - Abort at more points with proper cleanup
+- 📄 **Dynamic Pagination** - Menu automatically adjusts to screen size with PgUp/PgDn navigation for large session lists
+- ✏️ **Session Rename** - Press M to rename sessions and update all references (Claude index, Windows Terminal profiles)
+- 🏷️ **Tracked Name Support** - Sessions in [brackets] now properly recognized with existing Windows Terminal profiles
+- ⚡ **Simplified Mode Switching** - Clean [Y/I/N] prompts for Quiet/Chatty mode with optional detailed info
 
-🛠️ **Bug Fixes:**
-- Fixed Windows Terminal crash caused by trailing backslashes in directory paths
-- Fixed PSCustomObject property modification errors in background tracking and session mapping
+🛠️ **Improvements:**
+- Page indicator shows "pg 1/x" when menu spans multiple screens
+- Rename updates all locations: sessions-index.json, Windows Terminal profiles, session mapping
+- Fixed sessions with tracked names incorrectly prompting to create profiles
+- Information overload reduced - detailed explanations hidden unless requested
 
-🔧 **Previous Release - v1.3.0:**
-- Smart Profile Management with automatic duplicate handling
-- Enhanced Discovery finds sessions in any directory structure
-- Dynamic UI with profile-aware continue option text
-- Better path truncation and redesigned debug menu
+🔧 **Previous Release - v1.4.0:**
+- Git Branch Integration on backgrounds and session info
+- Model Display (Opus/Sonnet/Haiku) on background images
+- Smart Image Conflict Resolution with usage tracking
+- Directory Selection for new sessions with validation
 
 # Windows Claude Code Forker
 
@@ -35,10 +36,12 @@ to start Claude Code and see everything you are working on across all sessions a
 
 - 🔍 **Session Discovery** - Automatically finds all Claude sessions across projects
 - 🍴 **Fork Sessions** - Create branching sessions with custom Windows Terminal profiles
+- ✏️ **Session Rename** - Rename sessions with automatic updates to all references (Claude index, Windows Terminal, session mapping)
 - 🎨 **Custom Backgrounds** - Generate or use custom background images for each session
 - 🌿 **Git Integration** - Automatically detects and displays git branch on backgrounds and in session info
 - 🤖 **Model Tracking** - Shows which AI model (Opus/Sonnet/Haiku) is used for each session
 - 📁 **Directory Control** - Choose working directory for new sessions with validation
+- 📄 **Dynamic Pagination** - Screen-aware menu with PgUp/PgDn navigation for large session lists
 - 📊 **Activity Tracking** - See which sessions are active with real-time indicators
 - 🔗 **Fork Tracking** - View session genealogy and relationships
 - 🗑️ **Session Management** - Delete sessions and automatically clean up profiles
@@ -151,17 +154,20 @@ Use UP/DOWN arrows, Enter to select | New Session | Win Terminal Config | Hide U
 
 **Navigation:**
 - **UP/DOWN arrows** - Navigate between sessions (instant, no lag)
+- **PgUp/PgDn** - Navigate between pages (when session list spans multiple screens)
 - **Enter** - Select the highlighted session
 - **Single-key commands** (no Enter required):
   - **N** - New Session
   - **W** - Win Terminal Config
   - **S** - Show Unnamed Sessions (when hidden)
   - **H** - Hide Unnamed Sessions (when shown)
+  - **M** - Rename selected session
   - **Q** - Quiet Mode (bypass permissions)
   - **C** - Chatty Mode (ask permissions)
   - **O** - cOst analysis
   - **D** - Debug mode
   - **R** - Refresh menu
+  - **1-9, 0** - Sort by column (press again to toggle ascending/descending)
   - **X** - eXit
 
 **Activity Indicators:**
@@ -199,6 +205,20 @@ Enter choice [1-3], [A] Abort:
 5. Windows Terminal profile is created
 6. Select model (Opus/Sonnet/Haiku)
 7. New session launches in its own Windows Terminal window
+
+### Renaming Sessions
+
+Press **[M]** to rename any session directly from the main menu:
+
+1. Navigate to the session you want to rename
+2. Press **M** (or navigate and press Enter, then choose rename option)
+3. Enter the new name (or press Enter to cancel)
+4. The script automatically updates:
+   - Claude's `sessions-index.json` (customTitle field)
+   - Windows Terminal profile name (if exists)
+   - Session mapping file (wtProfileName and updated timestamp)
+
+**Note:** Invalid filesystem characters (`\ / : * ? " < > |`) are automatically replaced with underscores.
 
 ### Windows Terminal Profile Management
 
@@ -268,18 +288,47 @@ Enter choice:
 
 **Debug log location:** `C:\Users\<username>\.claude-menu\debug.log`
 
+### Menu Pagination
+
+When you have more sessions than fit on screen, the menu automatically paginates:
+
+```
+                                                                             pg 1/3
++------------------------------------------------------------------------------+
+| Active Model   Session                    Messages Created    Modified  Cost |
+| ------ -----   -------                    -------- -------    --------  ---- |
+| ...sessions displayed...                                                      |
++------------------------------------------------------------------------------+
+
+Use UP/DOWN arrows, Enter to select | ... | PgUp | PgDn | eXit
+```
+
+**Features:**
+- Automatically calculates rows based on terminal height
+- Maintains 5-line buffer below sub-menu for readability
+- Shows "pg 1/x" indicator when multiple pages exist
+- **PgUp/PgDn** keys navigate between pages
+- Sorting works across all data, displaying current page slice
+- Returns to page 1 when changing sort order
+
 ### Permission Mode Toggle
 
 Press **[Q]** for Quiet mode or **[C]** for Chatty mode:
 
 ```
-Current permissions mode: Quiet (bypassing permission prompts)
+========================================
+  ENABLING QUIET CLAUDE MODE
+========================================
 
-  Settings file: C:\Users\...\settings.local.json
-  Configuration: Line 5: "defaultMode": "bypassPermissions"
+Quiet mode disables permission prompts for all Claude sessions.
 
-Would you like to switch to Chatty mode? (Y/N):
+[Y] Enable Quiet Mode | [I] Show Info | [N] Cancel:
 ```
+
+**Simple Workflow:**
+- **[Y]** - Enable the mode immediately (one keypress)
+- **[I]** - Show detailed information before proceeding (what it does, impact, recommendations, current settings)
+- **[N]** - Cancel and return to menu
 
 **Quiet Mode (Recommended):**
 - Bypasses Claude's permission prompts
@@ -292,8 +341,11 @@ Would you like to switch to Chatty mode? (Y/N):
 - More control but slower
 - Status shows "Permissions: Chatty"
 
-**With Debug Mode ON:**
-Shows exact file location and line number of the permission setting.
+**Note:** Detailed explanations are hidden by default to reduce information overload. Press [I] if you want to see:
+- What files are modified
+- Detailed impact description
+- Recommendations for when to use each mode
+- Current settings.json content (Chatty mode only)
 
 ### Deleting Sessions
 

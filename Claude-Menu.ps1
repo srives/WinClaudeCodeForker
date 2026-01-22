@@ -14,14 +14,14 @@
 
 .NOTES
     Author: S. Rives
-    Version: 1.4.0
-    Date: 2026-01-20
+    Version: 1.7.0
+    Date: 2026-01-21
     Requires: PowerShell 5.1+, Windows Terminal, Claude CLI
 #>
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "2026.1.20"
+$Global:ScriptVersion = "1.7.0"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -474,53 +474,46 @@ function Show-DebugToggle {
         Shows debug menu with options to toggle, view log, or see instructions
     #>
 
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            # Fallback - just add blank lines
-            Write-Host ""
-        }
-    }
-
     $currentState = Get-DebugState
     $stateText = if ($currentState) { "ON" } else { "OFF" }
     $stateColor = if ($currentState) { "Green" } else { "Red" }
 
-    $continue = $true
-    while ($continue) {
-        Write-Host ""
-        Write-ColorText "========================================" -Color Cyan
-        Write-ColorText "  DEBUG MODE" -Color Cyan
-        Write-ColorText "========================================" -Color Cyan
-        Write-Host ""
-        Write-Host "Current state: " -NoNewline
-        Write-Host $stateText -ForegroundColor $stateColor
-        Write-Host ""
-        Write-Host "Options:"
-        $toggleText = if ($currentState) { "Turn Debug Off" } else { "Turn Debug On" }
-        Write-Host "  1. $toggleText"
-        Write-Host "  2. Notepad Debug Log"
-        Write-Host "  3. Show instructions"
-        Write-Host "  4. Abort"
-        Write-Host ""
-        Write-ColorText "Choice [1-4]: " -Color Yellow -NoNewline
-        $response = Read-Host
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  DEBUG MODE" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-Host "Current state: " -NoNewline
+    Write-Host $stateText -ForegroundColor $stateColor
+    Write-Host ""
+    $toggleText = if ($currentState) { "Turn Debug Off" } else { "Turn Debug On" }
+    Write-Host "T" -NoNewline -ForegroundColor Yellow
+    Write-Host "oggle - $toggleText | " -NoNewline -ForegroundColor Gray
+    Write-Host "N" -NoNewline -ForegroundColor Yellow
+    Write-Host "otepad - Open Debug Log | " -NoNewline -ForegroundColor Gray
+    Write-Host "I" -NoNewline -ForegroundColor Yellow
+    Write-Host "nstructions - Show debug mode help | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
+
+    while ($true) {
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $response = $key.Character.ToString().ToUpper()
+        Write-Host " $response"  # Echo the key with space
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            $response = 'A'
+        }
 
         switch ($response) {
-            '1' {
+            'T' {
                 # Toggle debug flag
                 $newState = -not $currentState
                 Set-DebugState -Enabled $newState
-
-                # Exit back to main menu
-                $continue = $false
+                return
             }
-            '2' {
+            'N' {
                 # Open debug log in notepad
                 if (Test-Path $Global:DebugLogPath) {
                     Start-Process notepad.exe -ArgumentList $Global:DebugLogPath
@@ -528,11 +521,9 @@ function Show-DebugToggle {
                     Write-Host ""
                     Write-ColorText "Debug log file does not exist yet." -Color Yellow
                 }
-
-                # Exit back to main menu
-                $continue = $false
+                return
             }
-            '3' {
+            'I' {
                 # Show instructions
                 Write-Host ""
                 Write-ColorText "========================================" -Color Cyan
@@ -554,19 +545,14 @@ function Show-DebugToggle {
                 Write-Host ""
                 Write-Host "Press any key to return to the menu..." -ForegroundColor Yellow
                 $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-
-                # Exit back to main menu
-                $continue = $false
+                return
             }
-            '4' {
+            'A' {
                 # Abort - return to main menu
-                $continue = $false
+                return
             }
             default {
-                Write-Host ""
-                Write-ColorText "Invalid choice. Please enter 1-4." -Color Red
-                Write-Host ""
-                Start-Sleep -Seconds 1
+                # Invalid choice - just continue loop
             }
         }
     }
@@ -735,19 +721,6 @@ function Show-CostAnalysis {
     # Initialize as empty array if null
     if ($null -eq $Sessions) { $Sessions = @() }
 
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            # Fallback - just add blank lines
-            Write-Host ""
-        }
-    }
-
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
     Write-ColorText "  COST ANALYSIS" -Color Cyan
@@ -840,8 +813,6 @@ function Show-CostAnalysis {
         Write-Host "-" -ForegroundColor Green
     }
     Write-Host ""
-    Write-Host ""
-    Read-Host "Press Enter to continue"
 }
 
 #endregion
@@ -1565,7 +1536,9 @@ function Show-SessionMenu {
         $modified = [DateTime]$session.modified
 
         # Check if Windows Terminal profile exists
-        $wtProfile = Get-WTProfileName -SessionTitle $session.customTitle -SessionId $session.sessionId
+        # Pass customTitle if available, otherwise trackedName
+        $sessionTitleForWT = if ($session.customTitle) { $session.customTitle } elseif ($session.trackedName) { $session.trackedName } else { "" }
+        $wtProfile = Get-WTProfileName -SessionTitle $sessionTitleForWT -SessionId $session.sessionId
 
         # If in "only with profiles" mode, skip sessions without profiles
         if ($OnlyWithProfiles -and ($wtProfile -eq "" -or -not $wtProfile)) {
@@ -1971,17 +1944,18 @@ function Get-ArrowKeyNavigation {
 
     Write-Host ""
     if ($DeleteMode) {
-        Write-Host "Use " -NoNewline -ForegroundColor Gray
-        Write-Host "UP/DOWN" -NoNewline -ForegroundColor Cyan
-        Write-Host " arrows, " -NoNewline -ForegroundColor Gray
-        Write-Host "Enter" -NoNewline -ForegroundColor Green
+        Write-Host "Choose with " -NoNewline -ForegroundColor Gray
+        Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow
+        Write-Host ", then " -NoNewline -ForegroundColor Gray
+        Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
         Write-Host " to select | " -NoNewline -ForegroundColor Gray
         if ($ShowAllInDeleteMode) {
             Write-Host 'P' -NoNewline -ForegroundColor Yellow
             Write-Host "rofiles Only" -NoNewline -ForegroundColor Gray
         } else {
-            Write-Host 'A' -NoNewline -ForegroundColor Yellow
-            Write-Host "ll Sessions" -NoNewline -ForegroundColor Gray
+            Write-Host "a" -NoNewline -ForegroundColor Gray
+            Write-Host 'L' -NoNewline -ForegroundColor Yellow
+            Write-Host "l Sessions" -NoNewline -ForegroundColor Gray
         }
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'R' -NoNewline -ForegroundColor Yellow
@@ -1995,14 +1969,13 @@ function Get-ArrowKeyNavigation {
             Write-Host "Dn" -NoNewline -ForegroundColor Gray
             Write-Host " | " -NoNewline -ForegroundColor Gray
         }
-        Write-Host "e" -NoNewline -ForegroundColor Gray
-        Write-Host 'X' -NoNewline -ForegroundColor Yellow
-        Write-Host "it" -ForegroundColor Gray
+        Write-Host 'A' -NoNewline -ForegroundColor Yellow
+        Write-Host "bort" -ForegroundColor Gray
     } elseif ($ShowUnnamed) {
-        Write-Host "Use " -NoNewline -ForegroundColor Gray
-        Write-Host "UP/DOWN" -NoNewline -ForegroundColor Cyan
-        Write-Host " arrows, " -NoNewline -ForegroundColor Gray
-        Write-Host "Enter" -NoNewline -ForegroundColor Green
+        Write-Host "Choose with " -NoNewline -ForegroundColor Gray
+        Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow
+        Write-Host ", then " -NoNewline -ForegroundColor Gray
+        Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
         Write-Host " to select | " -NoNewline -ForegroundColor Gray
         Write-Host 'N' -NoNewline -ForegroundColor Yellow
         Write-Host "ew Session" -NoNewline -ForegroundColor Gray
@@ -2045,10 +2018,10 @@ function Get-ArrowKeyNavigation {
         Write-Host 'X' -NoNewline -ForegroundColor Yellow
         Write-Host "it" -ForegroundColor Gray
     } else {
-        Write-Host "Use " -NoNewline -ForegroundColor Gray
-        Write-Host "UP/DOWN" -NoNewline -ForegroundColor Cyan
-        Write-Host " arrows, " -NoNewline -ForegroundColor Gray
-        Write-Host "Enter" -NoNewline -ForegroundColor Green
+        Write-Host "Choose with " -NoNewline -ForegroundColor Gray
+        Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow
+        Write-Host ", then " -NoNewline -ForegroundColor Gray
+        Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
         Write-Host " to select | " -NoNewline -ForegroundColor Gray
         Write-Host 'N' -NoNewline -ForegroundColor Yellow
         Write-Host "ew Session" -NoNewline -ForegroundColor Gray
@@ -2094,6 +2067,16 @@ function Get-ArrowKeyNavigation {
 
     Write-Host ""
 
+    # Capture cursor position BEFORE displaying "Last command" (for sub-menu positioning)
+    # This is where dialog output should start - right after the sub-menu
+    $promptEndY = 0
+    try {
+        $promptEndY = $host.UI.RawUI.CursorPosition.Y
+        $Global:PromptEndY = $promptEndY  # Store globally for sub-menu functions
+    } catch {
+        # Ignore if can't get cursor position
+    }
+
     # Show last Claude command or error at bottom of screen if available
     if ($Global:LastClaudeError -or $Global:LastClaudeCommand) {
         try {
@@ -2131,15 +2114,6 @@ function Get-ArrowKeyNavigation {
                 Write-Host $Global:LastClaudeCommand -ForegroundColor DarkGray
             }
         }
-    }
-
-    # Capture cursor position after displaying all prompts (for sub-menu positioning)
-    $promptEndY = 0
-    try {
-        $promptEndY = $host.UI.RawUI.CursorPosition.Y
-        $Global:PromptEndY = $promptEndY  # Store globally for sub-menu functions
-    } catch {
-        # Ignore if can't get cursor position
     }
 
     # CRITICAL: Flush input buffer to clear any stale/sticky KeyAvailable artifacts
@@ -2240,18 +2214,65 @@ function Get-ArrowKeyNavigation {
             elseif ($key.VirtualKeyCode -eq 34) {  # PageDown
                 return @{ Type = 'PageDown'; Index = $selectedIndex }
             }
+            # Handle Escape key (same as X or A to exit/abort)
+            elseif ($key.VirtualKeyCode -eq 27) {  # Escape
+                # Clear "Last command" display and reposition cursor
+                $Global:LastClaudeCommand = $null
+                $Global:LastClaudeError = $null
+                if ($promptEndY -gt 0) {
+                    try {
+                        $pos = $host.UI.RawUI.CursorPosition
+                        $pos.Y = $promptEndY
+                        $pos.X = 0
+                        $host.UI.RawUI.CursorPosition = $pos
+                        [Console]::Write([char]27 + "[0J")
+                    } catch {}
+                }
+
+                if ($DeleteMode) {
+                    return @{ Type = 'ExitDeleteMode' }
+                } else {
+                    return @{ Type = 'Quit'; PromptEndY = $promptEndY }
+                }
+            }
             # Handle Enter key
             elseif ($key.VirtualKeyCode -eq 13) {  # Enter
+                # Clear "Last command" display and reposition cursor
+                $Global:LastClaudeCommand = $null
+                $Global:LastClaudeError = $null
+                if ($promptEndY -gt 0) {
+                    try {
+                        $pos = $host.UI.RawUI.CursorPosition
+                        $pos.Y = $promptEndY
+                        $pos.X = 0
+                        $host.UI.RawUI.CursorPosition = $pos
+                        [Console]::Write([char]27 + "[0J")
+                    } catch {}
+                }
+
                 if ($rowCount -gt 0) {
                     return @{ Type = 'Select'; Index = $selectedIndex }
                 }
             }
             # Handle single-key commands
             else {
+                # Clear "Last command" display and reposition cursor FIRST
+                $Global:LastClaudeCommand = $null
+                $Global:LastClaudeError = $null
+                if ($promptEndY -gt 0) {
+                    try {
+                        $pos = $host.UI.RawUI.CursorPosition
+                        $pos.Y = $promptEndY
+                        $pos.X = 0
+                        $host.UI.RawUI.CursorPosition = $pos
+                        [Console]::Write([char]27 + "[0J")
+                    } catch {}
+                }
+
                 $char = $key.Character.ToString().ToUpper()
 
-                # Exit/Quit
-                if ($char -eq 'X') {
+                # Exit/Quit/Abort
+                if ($char -eq 'X' -or ($char -eq 'A' -and $DeleteMode)) {
                     if ($DeleteMode) {
                         return @{ Type = 'ExitDeleteMode' }
                     } else {
@@ -2301,7 +2322,7 @@ function Get-ArrowKeyNavigation {
                 }
 
                 # Show All / Profiles Only toggle in Delete Mode
-                if ($char -eq 'A' -and $DeleteMode -and -not $ShowAllInDeleteMode) {
+                if ($char -eq 'L' -and $DeleteMode -and -not $ShowAllInDeleteMode) {
                     return @{ Type = 'ShowAllInDeleteMode'; Index = $selectedIndex }
                 }
                 if ($char -eq 'P' -and $DeleteMode -and $ShowAllInDeleteMode) {
@@ -2376,7 +2397,7 @@ function Get-UserSelection {
         if ($DeleteMode) {
             Write-Host "Select Windows Terminal Profile $range, [O]Cost, " -ForegroundColor Yellow -NoNewline
             Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
-            Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
+            Write-Host "ebug, [R]efresh, [A]bort: " -ForegroundColor Yellow -NoNewline
         } elseif ($ShowUnnamed) {
             $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
@@ -2393,8 +2414,8 @@ function Get-UserSelection {
 
         $input = Read-Host
 
-        # Check for exit
-        if ($input -eq 'X' -or $input -eq 'x') {
+        # Check for exit/abort
+        if ($input -eq 'X' -or $input -eq 'x' -or (($input -eq 'A' -or $input -eq 'a') -and $DeleteMode)) {
             if ($DeleteMode) {
                 return @{ Type = 'ExitDeleteMode' }
             } else {
@@ -2519,43 +2540,44 @@ function Start-NewSession {
     .SYNOPSIS
         Starts a new Claude session in the current directory
     #>
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
 
     Write-Host ""
     Write-ColorText "Starting new Claude session..." -Color Cyan
     Write-Host ""
-    Write-Host "Current directory: $PWD"
-    Write-Host ""
 
     # Prompt for directory choice
     Write-ColorText "Directory for new session:" -Color Yellow
-    Write-Host "  [C] Use current directory (shown above)"
-    Write-Host "  [S] Set different directory"
-    Write-Host "  [A] Abort"
     Write-Host ""
 
     $directoryChoice = $null
     $targetDirectory = $PWD.Path.TrimEnd('\')
 
-    while ($true) {
-        Write-ColorText "Choice [C/S/A]: " -Color Yellow -NoNewline
-        $choice = Read-Host
+    Write-Host "Use " -NoNewline -ForegroundColor Gray
+    Write-Host "C" -NoNewline -ForegroundColor Yellow
+    Write-Host "urrent - $targetDirectory | " -NoNewline -ForegroundColor Gray
+    Write-Host "S" -NoNewline -ForegroundColor Yellow
+    Write-Host "et different directory | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
-        if ($choice -eq 'C' -or $choice -eq 'c') {
+    while ($true) {
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            $choice = 'A'
+        }
+
+        if ($choice -eq 'C') {
+            Write-Host ""
             # Use current directory
             $targetDirectory = $PWD.Path.TrimEnd('\')
             break
-        } elseif ($choice -eq 'S' -or $choice -eq 's') {
+        } elseif ($choice -eq 'S') {
+            Write-Host ""
             # Prompt for new directory
             Write-Host ""
 
@@ -2588,12 +2610,11 @@ function Start-NewSession {
                 }
             }
             break
-        } elseif ($choice -eq 'A' -or $choice -eq 'a') {
-            Write-Host ""
+        } elseif ($choice -eq 'A') {
             Write-ColorText "New session aborted." -Color Yellow
             return
         } else {
-            Write-ColorText "Invalid choice. Please enter C, S, or A." -Color Red
+            # Invalid choice - just continue loop
         }
     }
 
@@ -2631,11 +2652,12 @@ function Start-NewSession {
         Write-Host ""
         $claudePath = Get-ClaudeCLIPath
 
-        # Change to target directory and launch Claude
-        Push-Location $targetDirectory
-        Start-Process -FilePath $claudePath -NoNewWindow -Wait
-        Pop-Location
-        exit 0
+        # Launch Claude in Windows Terminal with default profile
+        & wt.exe -d "$targetDirectory" -- "$claudePath"
+
+        # Store command for display
+        $Global:LastClaudeCommand = "claude (new session in $targetDirectory)"
+        $Global:LastClaudeError = $null
     }
 
     # Name provided - create Windows Terminal profile with background
@@ -2676,7 +2698,7 @@ function Start-NewSession {
             # Detect git branch
             $gitBranch = Get-GitBranch -Path $targetDirectory
 
-            $bgPath = New-SessionBackgroundImage -NewName $finalSessionName -OldName $originText -GitBranch $gitBranch -Model $model
+            $bgPath = New-SessionBackgroundImage -NewName $finalSessionName -OldName $originText -GitBranch $gitBranch -Model $model -ProjectPath $targetDirectory
         }
 
         # 4. Create Windows Terminal profile
@@ -2792,10 +2814,20 @@ function Start-ContinueSession {
         Write-Host "  [Y] Yes, delete it now"
         Write-Host "  [N] No, return to menu"
         Write-Host ""
-        Write-ColorText "Enter choice [Y/N]: " -Color Yellow -NoNewline
-        $deleteChoice = Read-Host
+        Write-Host "Y" -NoNewline -ForegroundColor Yellow
+        Write-Host "es | " -NoNewline -ForegroundColor Gray
+        Write-Host "N" -NoNewline -ForegroundColor Yellow
+        Write-Host "o: " -NoNewline -ForegroundColor Gray
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $deleteChoice = $key.Character.ToString().ToUpper()
+        Write-Host $deleteChoice  # Echo the key
 
-        if ($deleteChoice -eq 'Y' -or $deleteChoice -eq 'y') {
+        # Handle Esc as No
+        if ($key.VirtualKeyCode -eq 27) {
+            $deleteChoice = 'N'
+        }
+
+        if ($deleteChoice -eq 'Y') {
             # Call the delete session function
             try {
                 Start-DeleteSession -Session $Session
@@ -2812,12 +2844,19 @@ function Start-ContinueSession {
     Write-DebugInfo "  Session file validation PASSED" -Color Green
 
     Write-Host ""
-    $sessionTitle = if ($Session.customTitle) { $Session.customTitle } else { '(unnamed)' }
+    # Get session title - prefer customTitle, fall back to trackedName, then (unnamed)
+    $sessionTitle = if ($Session.customTitle) {
+        $Session.customTitle
+    } elseif ($Session.trackedName) {
+        $Session.trackedName
+    } else {
+        '(unnamed)'
+    }
     Write-DebugInfo "  Session Title: $sessionTitle"
 
-    # Only create Windows Terminal profiles for named sessions
-    if ($Session.customTitle -and $Session.customTitle -ne "") {
-        Write-DebugInfo "  Session HAS custom title - checking for WT profile" -Color Cyan
+    # Only create Windows Terminal profiles for named sessions (either customTitle OR trackedName)
+    if (($Session.customTitle -and $Session.customTitle -ne "") -or ($Session.trackedName -and $Session.trackedName -ne "")) {
+        Write-DebugInfo "  Session HAS name (custom title or tracked) - checking for WT profile" -Color Cyan
         Write-ColorText "Continuing session: $sessionTitle" -Color Green
         Write-Host ""
 
@@ -2863,7 +2902,7 @@ function Start-ContinueSession {
             $sessionEntry = Get-SessionMappingEntry -SessionId $Session.sessionId
             $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
 
-            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionTitle -GitBranch $gitBranch -Model $modelName
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionTitle -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
             Write-DebugInfo "    Created background image at: $bgPath" -Color Green
         } else {
             Write-DebugInfo "    Background image EXISTS" -Color Green
@@ -2952,7 +2991,13 @@ function Start-ContinueSession {
                 Write-Host ""
 
                 # Show user-friendly launch message
-                $displayName = if ($Session.customTitle) { $Session.customTitle } else { $Session.sessionId }
+                $displayName = if ($Session.customTitle) {
+                    $Session.customTitle
+                } elseif ($Session.trackedName) {
+                    $Session.trackedName
+                } else {
+                    $Session.sessionId
+                }
                 Write-ColorText "Launching terminal with profile: $actualProfileName" -Color Cyan
                 Write-Host ""
 
@@ -2972,25 +3017,40 @@ function Start-ContinueSession {
                 Write-ColorText "Launching terminal with default profile instead..." -Color Yellow
                 Write-Host ""
 
-                # Fallback to default profile
+                # Fallback to Windows Terminal with default profile
                 $claudePath = Get-ClaudeCLIPath
-                $args = "--resume", $Session.sessionId
-                Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
+                & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+
+                # Store command for display
+                $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
+                $Global:LastClaudeError = $null
             }
         }
     } else {
-        # Unnamed session - offer to create Windows Terminal profile
-        Write-DebugInfo "  Session DOES NOT have custom title - unnamed session path" -Color Cyan
-        Write-ColorText "Continuing session: $sessionTitle" -Color Green
+        # Unnamed session (no customTitle AND no trackedName) - offer to create Windows Terminal profile
+        Write-DebugInfo "  Session is truly unnamed (no custom title or tracked name) - unnamed session path" -Color Cyan
+        Write-ColorText "Continuing session: (unnamed)" -Color Green
         Write-Host ""
         Write-ColorText "This session does not have a name or Windows Terminal profile." -Color Yellow
         Write-Host ""
-        Write-ColorText "Would you like to create a profile with a custom name? (Y/N): " -Color Cyan -NoNewline
-        $createProfile = Read-Host
+        Write-ColorText "Would you like to create a profile with a custom name?" -Color Cyan
+        Write-Host ""
+        Write-Host "Y" -NoNewline -ForegroundColor Yellow
+        Write-Host "es | " -NoNewline -ForegroundColor Gray
+        Write-Host "N" -NoNewline -ForegroundColor Yellow
+        Write-Host "o: " -NoNewline -ForegroundColor Gray
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $createProfile = $key.Character.ToString().ToUpper()
+        Write-Host $createProfile  # Echo the key
+
+        # Handle Esc as No
+        if ($key.VirtualKeyCode -eq 27) {
+            $createProfile = 'N'
+        }
 
         Write-DebugInfo "  User response to create profile: $createProfile"
 
-        if ($createProfile -eq 'Y' -or $createProfile -eq 'y') {
+        if ($createProfile -eq 'Y') {
             Write-DebugInfo "  User chose YES - prompting for session name"
             # Prompt for session name
             Write-Host ""
@@ -3005,10 +3065,13 @@ function Start-ContinueSession {
                 Write-ColorText "Session name cannot be empty. Launching terminal with default profile..." -Color Red
                 Write-Host ""
 
-                # Launch terminal with default profile
+                # Launch in Windows Terminal with default profile
                 $claudePath = Get-ClaudeCLIPath
-                $args = "--resume", $Session.sessionId
-                Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
+                & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+
+                # Store command for display
+                $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
+                $Global:LastClaudeError = $null
                 return
             }
 
@@ -3058,7 +3121,7 @@ function Start-ContinueSession {
                 $sessionEntry = Get-SessionMappingEntry -SessionId $Session.sessionId
                 $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
 
-                $bgImagePath = New-SessionBackgroundImage -NewName $finalSafeName -OldName "" -GitBranch $gitBranch -Model $modelName
+                $bgImagePath = New-SessionBackgroundImage -NewName $finalSafeName -OldName "" -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
                 Write-DebugInfo "  Background image path: $bgImagePath" -Color Green
             }
 
@@ -3112,7 +3175,13 @@ function Start-ContinueSession {
                         Write-DebugInfo "    Session ID: $($Session.sessionId)"
 
                         # Show user-friendly launch message
-                        $displayName = if ($Session.customTitle) { $Session.customTitle } else { $Session.sessionId }
+                        $displayName = if ($Session.customTitle) {
+                            $Session.customTitle
+                        } elseif ($Session.trackedName) {
+                            $Session.trackedName
+                        } else {
+                            $Session.sessionId
+                        }
                         Write-Host ""
                         Write-ColorText "Launching terminal with profile: $actualProfileName" -Color Cyan
                         Write-Host ""
@@ -3132,11 +3201,14 @@ function Start-ContinueSession {
                         Write-ColorText "Failed to create Windows Terminal profile. Launching terminal with default profile..." -Color Red
                         Write-Host ""
 
-                        # Fallback to default profile
-                        Write-DebugInfo "  Launching terminal with default profile (fallback)" -Color Yellow
+                        # Fallback to Windows Terminal with default profile
+                        Write-DebugInfo "  Launching Windows Terminal with default profile (fallback)" -Color Yellow
                         $claudePath = Get-ClaudeCLIPath
-                        $args = "--resume", $Session.sessionId
-                        Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
+                        & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+
+                        # Store command for display
+                        $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
+                        $Global:LastClaudeError = $null
                     }
                 } catch {
                     Write-DebugInfo "  EXCEPTION in Add-WTProfile: $_" -Color Red
@@ -3145,11 +3217,14 @@ function Start-ContinueSession {
                     Write-ColorText "Launching terminal with default profile instead..." -Color Yellow
                     Write-Host ""
 
-                    # Fallback to default profile
-                    Write-DebugInfo "  Launching terminal with default profile (exception fallback)" -Color Yellow
+                    # Fallback to Windows Terminal with default profile
+                    Write-DebugInfo "  Launching Windows Terminal with default profile (exception fallback)" -Color Yellow
                     $claudePath = Get-ClaudeCLIPath
-                    $args = "--resume", $Session.sessionId
-                    Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
+                    & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+
+                    # Store command for display
+                    $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
+                    $Global:LastClaudeError = $null
                 }
             } else {
                 Write-DebugInfo "  Background image generation FAILED - bgImagePath is null/empty" -Color Red
@@ -3157,23 +3232,33 @@ function Start-ContinueSession {
                 Write-ColorText "Failed to generate background image. Launching terminal with default profile..." -Color Red
                 Write-Host ""
 
-                # Fallback to default profile
-                Write-DebugInfo "  Launching terminal with default profile (no background image)" -Color Yellow
+                # Fallback to Windows Terminal with default profile
+                Write-DebugInfo "  Launching Windows Terminal with default profile (no background image)" -Color Yellow
                 $claudePath = Get-ClaudeCLIPath
-                $args = "--resume", $Session.sessionId
-                Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
+                & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+
+                # Store command for display
+                $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
+                $Global:LastClaudeError = $null
             }
         } else {
-            # User chose not to create profile - launch terminal with default profile
-            Write-DebugInfo "  User chose NO - launching terminal with default profile" -Color Yellow
+            # User chose not to create profile - launch in Windows Terminal with default profile
+            Write-DebugInfo "  User chose NO - launching in Windows Terminal with default profile" -Color Yellow
             Write-Host ""
             Write-ColorText "Launching terminal with default profile..." -Color Cyan
             Write-Host ""
 
             $claudePath = Get-ClaudeCLIPath
-            $args = "--resume", $Session.sessionId
-            Write-DebugInfo "  Starting process: $claudePath --resume $($Session.sessionId)"
-            Start-Process -FilePath $claudePath -ArgumentList $args -NoNewWindow -Wait
+            Write-DebugInfo "  Starting Windows Terminal with default profile"
+            Write-DebugInfo "    Working Dir: $($Session.projectPath)"
+            Write-DebugInfo "    Command: $claudePath --resume $($Session.sessionId)"
+
+            # Launch in Windows Terminal with default profile
+            & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+
+            # Store command for display
+            $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
+            $Global:LastClaudeError = $null
         }
     }
 
@@ -3190,39 +3275,38 @@ function Get-SessionManagementChoice {
         [string]$WTProfileName
     )
 
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
-
     Write-Host ""
     Write-ColorText "Windows Terminal Profile Management" -Color Cyan
     Write-ColorText "Session: $($Session.customTitle)" -Color DarkGray
     Write-ColorText "Profile: $WTProfileName" -Color DarkGray
     Write-Host ""
-    Write-Host "1. Regenerate background image"
-    Write-Host "2. Delete Windows Terminal profile"
-    Write-Host "3. Remove background image from profile"
-    Write-Host ""
+    Write-Host "R" -NoNewline -ForegroundColor Yellow
+    Write-Host "egenerate - Regenerate background image | " -NoNewline -ForegroundColor Gray
+    Write-Host "D" -NoNewline -ForegroundColor Yellow
+    Write-Host "elete - Delete Windows Terminal profile | " -NoNewline -ForegroundColor Gray
+    Write-Host "B" -NoNewline -ForegroundColor Yellow
+    Write-Host "ackground - Remove background image from profile | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
-        $choice = Read-Host
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            return 'abort'
+        }
 
         switch ($choice) {
-            '1' { return 'regenerate' }
-            '2' { return 'delete' }
-            '3' { return 'remove-background' }
-            {$_ -eq 'A' -or $_ -eq 'a'} { return 'abort' }
+            'R' { Write-Host ""; return 'regenerate' }
+            'D' { Write-Host ""; return 'delete' }
+            'B' { Write-Host ""; return 'remove-background' }
+            'A' { Write-Host ""; return 'abort' }
             default {
-                Write-ColorText "Invalid choice. Please enter 1, 2, 3, or A." -Color Red
+                # Invalid choice - just continue loop
             }
         }
     }
@@ -3235,37 +3319,36 @@ function Get-RegenerateImageChoice {
     #>
     param([string]$SessionName)
 
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
-
     Write-Host ""
     Write-ColorText "Regenerate Background Image Options" -Color Cyan
     Write-Host ""
-    Write-Host "1. Regenerate/Refresh from session: $SessionName"
-    Write-Host "2. Use custom image file"
-    Write-Host "3. Generate from custom text"
-    Write-Host ""
+    Write-Host "R" -NoNewline -ForegroundColor Yellow
+    Write-Host "efresh - Regenerate from session: $SessionName | " -NoNewline -ForegroundColor Gray
+    Write-Host "F" -NoNewline -ForegroundColor Yellow
+    Write-Host "ile - Use custom image file | " -NoNewline -ForegroundColor Gray
+    Write-Host "T" -NoNewline -ForegroundColor Yellow
+    Write-Host "ext - Generate from custom text | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
-        $choice = Read-Host
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            return 'abort'
+        }
 
         switch ($choice) {
-            '1' { return 'refresh' }
-            '2' { return 'file' }
-            '3' { return 'text' }
-            {$_ -eq 'A' -or $_ -eq 'a'} { return 'abort' }
+            'R' { Write-Host ""; return 'refresh' }
+            'F' { Write-Host ""; return 'file' }
+            'T' { Write-Host ""; return 'text' }
+            'A' { Write-Host ""; return 'abort' }
             default {
-                Write-ColorText "Invalid choice. Please enter 1, 2, 3, or A." -Color Red
+                # Invalid choice - just continue loop
             }
         }
     }
@@ -3281,18 +3364,6 @@ function Get-ForkOrContinue {
         [string]$SessionTitle = "",
         [string]$ProjectPath = ""
     )
-
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
 
     Write-Host ""
     Write-ColorText "Session options" -Color Cyan
@@ -3327,30 +3398,49 @@ function Get-ForkOrContinue {
     }
 
     # Display appropriate continue option based on profile existence
+    Write-Host "C" -NoNewline -ForegroundColor Yellow
     if ($hasProfile) {
-        Write-Host "1. Continue - Resume Claude Session with Windows Profile"
+        Write-Host "ontinue - Resume Claude Session | " -NoNewline -ForegroundColor Gray
     } else {
-        Write-Host "1. Continue - Create Windows Terminal Profile and Resume Claude Session"
+        Write-Host "ontinue - Create profile and resume | " -NoNewline -ForegroundColor Gray
     }
-    Write-Host "2. Fork - Create new branch with custom Windows Terminal profile"
-    Write-Host "   (Will fork session: $SessionId)"
-    Write-Host "3. Delete session"
-    Write-Host ""
+    Write-Host "F" -NoNewline -ForegroundColor Yellow
+    Write-Host "ork - Create new branch | " -NoNewline -ForegroundColor Gray
+    Write-Host "D" -NoNewline -ForegroundColor Yellow
+    Write-Host "elete | " -NoNewline -ForegroundColor Gray
+    Write-Host "R" -NoNewline -ForegroundColor Yellow
+    Write-Host "ename | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
-        $choice = Read-Host
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
 
-        if ($choice -eq '1') {
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            return 'abort'
+        }
+
+        if ($choice -eq 'C') {
+            Write-Host ""
             return 'continue'
-        } elseif ($choice -eq '2') {
+        } elseif ($choice -eq 'F') {
+            Write-Host ""
             return 'fork'
-        } elseif ($choice -eq '3') {
+        } elseif ($choice -eq 'D') {
+            Write-Host ""
             return 'delete'
-        } elseif ($choice -eq 'A' -or $choice -eq 'a') {
+        } elseif ($choice -eq 'R') {
+            Write-Host ""
+            return 'rename'
+        } elseif ($choice -eq 'A') {
+            Write-Host ""
             return 'abort'
         } else {
-            Write-ColorText "Invalid choice. Please enter 1, 2, 3, or A." -Color Red
+            # Invalid choice - just continue loop
         }
     }
 }
@@ -3427,37 +3517,36 @@ function Get-ModelChoice {
     .SYNOPSIS
         Prompts user to select a Claude model
     #>
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
-
     Write-Host ""
     Write-ColorText "Select model:" -Color Cyan
     Write-Host ""
-    Write-Host "1. Opus (most capable)"
-    Write-Host "2. Sonnet (balanced) - Recommended"
-    Write-Host "3. Haiku (fast)"
-    Write-Host ""
+    Write-Host "O" -NoNewline -ForegroundColor Yellow
+    Write-Host "pus - Most capable | " -NoNewline -ForegroundColor Gray
+    Write-Host "S" -NoNewline -ForegroundColor Yellow
+    Write-Host "onnet - Balanced (Recommended) | " -NoNewline -ForegroundColor Gray
+    Write-Host "H" -NoNewline -ForegroundColor Yellow
+    Write-Host "aiku - Fast | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
-        Write-ColorText "Enter choice [1-3], [A]bort: " -Color Yellow -NoNewline
-        $choice = Read-Host
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            return 'abort'
+        }
 
         switch ($choice) {
-            '1' { return 'opus' }
-            '2' { return 'sonnet' }
-            '3' { return 'haiku' }
-            {$_ -eq 'A' -or $_ -eq 'a'} { return 'abort' }
+            'O' { Write-Host ""; return 'opus' }
+            'S' { Write-Host ""; return 'sonnet' }
+            'H' { Write-Host ""; return 'haiku' }
+            'A' { Write-Host ""; return 'abort' }
             default {
-                Write-ColorText "Invalid choice. Please enter 1, 2, 3, or A." -Color Red
+                # Invalid choice - just continue loop
             }
         }
     }
@@ -3470,35 +3559,33 @@ function Get-TrustedSessionChoice {
     .RETURNS
         Returns 'yes', 'no', or 'abort'
     #>
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
-
     Write-Host ""
     Write-ColorText "Do you want a trusted session with no permission limits?" -Color Cyan
-    Write-Host "  Y - Yes, bypass all permissions (trusted workspace)"
-    Write-Host "  N - No, use default permission settings"
-    Write-Host "  A - Abort"
     Write-Host ""
+    Write-Host "Y" -NoNewline -ForegroundColor Yellow
+    Write-Host "es - Bypass all permissions (trusted workspace) | " -NoNewline -ForegroundColor Gray
+    Write-Host "N" -NoNewline -ForegroundColor Yellow
+    Write-Host "o - Use default permission settings | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
-        Write-ColorText "Enter choice [Y/N/A]: " -Color Yellow -NoNewline
-        $choice = Read-Host
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            return 'abort'
+        }
 
         switch ($choice) {
-            {$_ -eq 'Y' -or $_ -eq 'y'} { return 'yes' }
-            {$_ -eq 'N' -or $_ -eq 'n'} { return 'no' }
-            {$_ -eq 'A' -or $_ -eq 'a'} { return 'abort' }
+            'Y' { Write-Host ""; return 'yes' }
+            'N' { Write-Host ""; return 'no' }
+            'A' { Write-Host ""; return 'abort' }
             default {
-                Write-ColorText "Invalid choice. Please enter Y, N, or A." -Color Red
+                # Invalid choice - just continue loop
             }
         }
     }
@@ -3637,59 +3724,79 @@ function Enable-GlobalBypassPermissions {
         Enables global bypass permissions in settings.json
     #>
 
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            # Fallback - just add blank lines
-            Write-Host ""
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  CHATTY MODE ENABLED (SWITCH TO QUIET)?" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-Host "Quiet mode disables permission prompts for all Claude sessions."
+    Write-Host ""
+    Write-Host "Switch to " -NoNewline -ForegroundColor Gray
+    Write-Host "Q" -NoNewline -ForegroundColor Yellow
+    Write-Host "uiet Mode | " -NoNewline -ForegroundColor Gray
+    Write-Host "S" -NoNewline -ForegroundColor Yellow
+    Write-Host "how Info | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort: " -NoNewline -ForegroundColor Gray
+    $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    $choice = $key.Character.ToString().ToUpper()
+    Write-Host $choice  # Echo the key
+
+    # Handle Esc as abort
+    if ($key.VirtualKeyCode -eq 27) {
+        $choice = 'A'
+    }
+
+    # Show detailed information if requested
+    if ($choice -eq 'S') {
+        Write-Host ""
+        Write-ColorText "What this does:" -Color Yellow
+        Write-Host "  - Modifies your global Claude settings file:"
+        Write-Host "    $Global:ClaudeSettingsPath"
+        Write-Host "  - Sets permissions.defaultMode to 'bypassPermissions'"
+        Write-Host "  - Sets permissions.allow to ['*'] (allow all tools)"
+        Write-Host ""
+        Write-ColorText "Impact:" -Color Yellow
+        Write-Host "  - Claude will NO LONGER prompt you for permission to:"
+        Write-Host "    * Read files"
+        Write-Host "    * Write files"
+        Write-Host "    * Execute bash commands"
+        Write-Host "    * Access the web"
+        Write-Host "    * Use any other tools"
+        Write-Host ""
+        Write-Host "  - This applies to ALL Claude sessions globally"
+        Write-Host "  - Individual projects can still override with .claude/settings.local.json"
+        Write-Host ""
+        Write-ColorText "Recommended for:" -Color Green
+        Write-Host "  - Trusted development environments"
+        Write-Host "  - Personal machines where you trust all projects"
+        Write-Host "  - Avoiding repetitive permission prompts"
+        Write-Host ""
+        Write-ColorText "NOT recommended for:" -Color Red
+        Write-Host "  - Shared machines"
+        Write-Host "  - Working with untrusted code"
+        Write-Host "  - Production environments"
+        Write-Host ""
+        Write-ColorText "You can reverse this at any time with [C]hatty Claude Mode" -Color Cyan
+        Write-Host ""
+        Write-Host "Switch to " -NoNewline -ForegroundColor Gray
+        Write-Host "Q" -NoNewline -ForegroundColor Yellow
+        Write-Host "uiet mode now? " -NoNewline -ForegroundColor Gray
+        Write-Host "A" -NoNewline -ForegroundColor Yellow
+        Write-Host "bort" -NoNewline -ForegroundColor Gray
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host $choice  # Echo the key
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            $choice = 'A'
         }
     }
 
-    Write-Host ""
-    Write-ColorText "========================================" -Color Cyan
-    Write-ColorText "  YOU ARE IN QUIET CLAUDE MODE" -Color Cyan
-    Write-ColorText "========================================" -Color Cyan
-    Write-Host ""
-    Write-ColorText "What this does:" -Color Yellow
-    Write-Host "  - Modifies your global Claude settings file:"
-    Write-Host "    $Global:ClaudeSettingsPath"
-    Write-Host "  - Sets permissions.defaultMode to 'bypassPermissions'"
-    Write-Host "  - Sets permissions.allow to ['*'] (allow all tools)"
-    Write-Host ""
-    Write-ColorText "Impact:" -Color Yellow
-    Write-Host "  - Claude will NO LONGER prompt you for permission to:"
-    Write-Host "    * Read files"
-    Write-Host "    * Write files"
-    Write-Host "    * Execute bash commands"
-    Write-Host "    * Access the web"
-    Write-Host "    * Use any other tools"
-    Write-Host ""
-    Write-Host "  - This applies to ALL Claude sessions globally"
-    Write-Host "  - Individual projects can still override with .claude/settings.local.json"
-    Write-Host ""
-    Write-ColorText "Recommended for:" -Color Green
-    Write-Host "  - Trusted development environments"
-    Write-Host "  - Personal machines where you trust all projects"
-    Write-Host "  - Avoiding repetitive permission prompts"
-    Write-Host ""
-    Write-ColorText "NOT recommended for:" -Color Red
-    Write-Host "  - Shared machines"
-    Write-Host "  - Working with untrusted code"
-    Write-Host "  - Production environments"
-    Write-Host ""
-    Write-ColorText "You can reverse this at any time with [C]hatty Claude Mode" -Color Cyan
-    Write-Host ""
-    Write-ColorText "Are you sure you want to enable quiet mode (bypass permissions)? [Y/N]: " -Color Yellow -NoNewline
-    $confirm = Read-Host
-
-    if ($confirm -ne 'Y' -and $confirm -ne 'y') {
+    if ($choice -ne 'Q') {
         Write-Host ""
-        Write-ColorText "Operation cancelled." -Color Cyan
+        Write-ColorText "Operation aborted." -Color Cyan
         return
     }
 
@@ -3739,8 +3846,6 @@ function Enable-GlobalBypassPermissions {
         Write-ColorText "Error enabling quiet mode: $_" -Color Red
         Write-Host ""
     }
-
-    Read-Host "Press Enter to continue"
 }
 
 function Disable-GlobalBypassPermissions {
@@ -3748,75 +3853,100 @@ function Disable-GlobalBypassPermissions {
     .SYNOPSIS
         Disables global bypass permissions in settings.json
     #>
-    # Position cursor below main menu
-    if ($Global:PromptEndY -gt 0) {
-        try {
-            $pos = $host.UI.RawUI.CursorPosition
-            $pos.Y = $Global:PromptEndY
-            $pos.X = 0
-            $host.UI.RawUI.CursorPosition = $pos
-        } catch {
-            Write-Host ""  # Fallback
-        }
-    }
 
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
-    Write-ColorText "  YOU ARE IN CHATTY CLAUDE MODE" -Color Cyan
+    Write-ColorText "  QUIET MODE ENABLED (SWITCH TO CHATTY)?" -Color Cyan
     Write-ColorText "========================================" -Color Cyan
     Write-Host ""
-    Write-ColorText "What this does:" -Color Yellow
-    Write-Host "  - Modifies your global Claude settings file:"
-    Write-Host "    $Global:ClaudeSettingsPath"
-    Write-Host "  - Sets permissions.defaultMode to 'default'"
-    Write-Host "  - Removes permissions.allow setting"
+    Write-Host "Chatty mode enables permission prompts for all Claude sessions."
     Write-Host ""
-    Write-ColorText "Impact:" -Color Yellow
-    Write-Host "  - Claude WILL prompt you for permission to:"
-    Write-Host "    * Read files"
-    Write-Host "    * Write files"
-    Write-Host "    * Execute bash commands"
-    Write-Host "    * Access the web"
-    Write-Host "    * Use other tools"
-    Write-Host ""
-    Write-Host "  - This applies to ALL Claude sessions globally"
-    Write-Host "  - Individual projects can still override with .claude/settings.local.json"
-    Write-Host ""
+    Write-Host "Switch to " -NoNewline -ForegroundColor Gray
+    Write-Host "C" -NoNewline -ForegroundColor Yellow
+    Write-Host "hatty Mode | " -NoNewline -ForegroundColor Gray
+    Write-Host "S" -NoNewline -ForegroundColor Yellow
+    Write-Host "how Info | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort: " -NoNewline -ForegroundColor Gray
+    $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    $choice = $key.Character.ToString().ToUpper()
+    Write-Host $choice  # Echo the key
+
+    # Handle Esc as abort
+    if ($key.VirtualKeyCode -eq 27) {
+        $choice = 'A'
+    }
 
     # Check if settings file exists
     if (-not (Test-Path $Global:ClaudeSettingsPath)) {
+        Write-Host ""
         Write-ColorText "Settings file not found at:" -Color Red
         Write-Host "  $Global:ClaudeSettingsPath"
         Write-Host ""
         Write-ColorText "Nothing to disable." -Color Yellow
         Write-Host ""
-        Read-Host "Press Enter to continue"
         return
     }
 
-    # Show current settings
-    try {
-        $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
-        Write-ColorText "Current global settings.json content:" -Color Cyan
-        Write-Host "----------------------------------------"
-        Write-Host $settingsJson
-        Write-Host "----------------------------------------"
+    # Show detailed information if requested
+    if ($choice -eq 'S') {
         Write-Host ""
-    } catch {
-        Write-ColorText "Warning: Could not read current settings: $_" -Color Yellow
+        Write-ColorText "What this does:" -Color Yellow
+        Write-Host "  - Modifies your global Claude settings file:"
+        Write-Host "    $Global:ClaudeSettingsPath"
+        Write-Host "  - Sets permissions.defaultMode to 'default'"
+        Write-Host "  - Removes permissions.allow setting"
         Write-Host ""
+        Write-ColorText "Impact:" -Color Yellow
+        Write-Host "  - Claude WILL prompt you for permission to:"
+        Write-Host "    * Read files"
+        Write-Host "    * Write files"
+        Write-Host "    * Execute bash commands"
+        Write-Host "    * Access the web"
+        Write-Host "    * Use other tools"
+        Write-Host ""
+        Write-Host "  - This applies to ALL Claude sessions globally"
+        Write-Host "  - Individual projects can still override with .claude/settings.local.json"
+        Write-Host ""
+
+        # Show current settings
+        try {
+            $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
+            Write-ColorText "Current global settings.json content:" -Color Cyan
+            Write-Host "----------------------------------------"
+            Write-Host $settingsJson
+            Write-Host "----------------------------------------"
+            Write-Host ""
+        } catch {
+            Write-ColorText "Warning: Could not read current settings: $_" -Color Yellow
+            Write-Host ""
+        }
+
+        Write-ColorText "You can reverse this at any time with [Q]uiet Claude Mode" -Color Cyan
+        Write-Host ""
+        Write-Host "Switch to " -NoNewline -ForegroundColor Gray
+        Write-Host "C" -NoNewline -ForegroundColor Yellow
+        Write-Host "hatty mode now? " -NoNewline -ForegroundColor Gray
+        Write-Host "A" -NoNewline -ForegroundColor Yellow
+        Write-Host "bort" -NoNewline -ForegroundColor Gray
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host $choice  # Echo the key
+
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            $choice = 'A'
+        }
     }
 
-    Write-ColorText "You can reverse this at any time with [Q]uiet Claude Mode" -Color Cyan
-    Write-Host ""
-    Write-ColorText "Are you sure you want to enable chatty mode (disable bypass permissions)? [Y/N]: " -Color Yellow -NoNewline
-    $confirm = Read-Host
-
-    if ($confirm -ne 'Y' -and $confirm -ne 'y') {
+    if ($choice -ne 'C') {
         Write-Host ""
-        Write-ColorText "Operation cancelled." -Color Cyan
+        Write-ColorText "Operation aborted." -Color Cyan
         return
     }
+
+    # Load settings for later use
+    $settingsJson = Get-Content $Global:ClaudeSettingsPath -Raw
 
     try {
         $settings = $settingsJson | ConvertFrom-Json | ConvertTo-Hashtable
@@ -3853,8 +3983,6 @@ function Disable-GlobalBypassPermissions {
         Write-ColorText "Error enabling chatty mode: $_" -Color Red
         Write-Host ""
     }
-
-    Read-Host "Press Enter to continue"
 }
 
 function ConvertTo-Hashtable {
@@ -3954,10 +4082,20 @@ function Start-ForkSession {
         Write-Host "  [Y] Yes, delete it now"
         Write-Host "  [N] No, return to menu"
         Write-Host ""
-        Write-ColorText "Enter choice [Y/N]: " -Color Yellow -NoNewline
-        $deleteChoice = Read-Host
+        Write-Host "Y" -NoNewline -ForegroundColor Yellow
+        Write-Host "es | " -NoNewline -ForegroundColor Gray
+        Write-Host "N" -NoNewline -ForegroundColor Yellow
+        Write-Host "o: " -NoNewline -ForegroundColor Gray
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $deleteChoice = $key.Character.ToString().ToUpper()
+        Write-Host $deleteChoice  # Echo the key
 
-        if ($deleteChoice -eq 'Y' -or $deleteChoice -eq 'y') {
+        # Handle Esc as No
+        if ($key.VirtualKeyCode -eq 27) {
+            $deleteChoice = 'N'
+        }
+
+        if ($deleteChoice -eq 'Y') {
             # Call the delete session function
             try {
                 Start-DeleteSession -Session $Session
@@ -3973,7 +4111,13 @@ function Start-ForkSession {
 
     try {
         # 1. Get old session name for display
-        $oldName = if ($Session.customTitle) { $Session.customTitle } else { "(unnamed)" }
+        $oldName = if ($Session.customTitle) {
+            $Session.customTitle
+        } elseif ($Session.trackedName) {
+            $Session.trackedName
+        } else {
+            "(unnamed)"
+        }
 
         # 2. Get new session name
         $newName = Get-SessionName -OldSessionName $oldName
@@ -4013,7 +4157,7 @@ function Start-ForkSession {
             # Detect git branch
             $gitBranch = Get-GitBranch -Path $Session.projectPath
 
-            $bgPath = New-SessionBackgroundImage -NewName $finalNewName -OldName $oldName -IsFork -GitBranch $gitBranch -Model $model
+            $bgPath = New-SessionBackgroundImage -NewName $finalNewName -OldName $oldName -IsFork -GitBranch $gitBranch -Model $model -ProjectPath $Session.projectPath
         }
 
         # 6. Create Windows Terminal profile
@@ -4534,25 +4678,37 @@ function Resolve-BackgroundImageConflict {
         Write-Host "  - $profileName"
     }
     Write-Host ""
-    Write-Host "Options:"
-    Write-Host "  [O] Overwrite the existing image (affects all profiles using it)"
-    Write-Host "  [U] Use the existing image"
-    Write-Host "  [N] Create new session with different name"
-    Write-Host "  [A] Abort"
-    Write-Host ""
+    Write-Host "O" -NoNewline -ForegroundColor Yellow
+    Write-Host "verwrite - Overwrite existing image (affects all profiles) | " -NoNewline -ForegroundColor Gray
+    Write-Host "U" -NoNewline -ForegroundColor Yellow
+    Write-Host "se Existing | " -NoNewline -ForegroundColor Gray
+    Write-Host "N" -NoNewline -ForegroundColor Yellow
+    Write-Host "ew Name - Create new session with different name | " -NoNewline -ForegroundColor Gray
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
-        Write-ColorText "Choice [O/U/N/A]: " -Color Yellow -NoNewline
-        $choice = Read-Host
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $choice = $key.Character.ToString().ToUpper()
+        Write-Host " $choice"  # Echo the key with space
 
-        switch ($choice.ToUpper()) {
+        # Handle Esc as abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            return @{ action = 'abort'; name = $SessionName }
+        }
+
+        switch ($choice) {
             'O' {
+                Write-Host ""
                 return @{ action = 'overwrite'; name = $SessionName }
             }
             'U' {
+                Write-Host ""
                 return @{ action = 'use'; name = $SessionName; path = $outputPath }
             }
             'N' {
+                Write-Host ""
                 # Find a unique name by appending numbers
                 $baseName = $SessionName
                 $counter = 1
@@ -4563,46 +4719,71 @@ function Resolve-BackgroundImageConflict {
                     $newName = "$baseName$counter"
                 }
 
-                Write-Host ""
                 Write-ColorText "Using new session name: $newName" -Color Green
                 return @{ action = 'create'; name = $newName }
             }
             'A' {
+                Write-Host ""
                 return @{ action = 'abort'; name = $SessionName }
             }
             default {
-                Write-ColorText "Invalid choice. Please enter O, U, N, or A." -Color Red
+                # Invalid choice - just continue loop
             }
         }
     }
 }
 
-function New-SessionBackgroundImage {
+function New-UniformBackgroundImage {
     <#
     .SYNOPSIS
-        Generates a PNG background image for a session
-    .PARAMETER IsFork
-        If true, displays "forked from:" text. If false, displays origin info without "forked from:"
+        Creates a uniform background image with up to 6 lines of information
+    .DESCRIPTION
+        This is the common function used by all background image generators.
+        Produces a 1920x1080 PNG with consistent formatting.
+    .PARAMETER SessionName
+        Line 1: Session name, label, or custom text (required)
+    .PARAMETER ForkedFrom
+        Line 2: If provided, displays "Forked from: {name}" (optional)
+    .PARAMETER ComputerUser
+        Line 3: Computer and username (required - pass "$env:COMPUTERNAME`:$env:USERNAME")
     .PARAMETER GitBranch
-        Optional git branch name to display
+        Line 4: If provided, displays "branch: {branch}" (optional)
     .PARAMETER Model
-        Optional model name to display
+        Line 5: If provided, displays "model: {model}" (optional)
+    .PARAMETER DirectoryPath
+        Line 6: Directory path (required)
+    .PARAMETER OutputPath
+        Full path where the PNG should be saved (required)
     #>
     param(
-        [string]$NewName,
-        [string]$OldName,
-        [switch]$IsFork,
+        [Parameter(Mandatory=$true)]
+        [string]$SessionName,
+
+        [string]$ForkedFrom = $null,
+
+        [Parameter(Mandatory=$true)]
+        [string]$ComputerUser,
+
         [string]$GitBranch = $null,
-        [string]$Model = $null
+
+        [string]$Model = $null,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DirectoryPath,
+
+        [Parameter(Mandatory=$true)]
+        [string]$OutputPath
     )
 
     try {
-        Write-DebugInfo "=== New-SessionBackgroundImage ===" -Color Cyan
-        Write-DebugInfo "  NewName: $NewName" -Color Yellow
-        Write-DebugInfo "  OldName: $OldName" -Color Yellow
-        Write-DebugInfo "  IsFork: $IsFork" -Color Yellow
-        Write-DebugInfo "  GitBranch: $GitBranch" -Color Yellow
-        Write-DebugInfo "  Model: $Model" -Color Yellow
+        Write-DebugInfo "=== New-UniformBackgroundImage ===" -Color Cyan
+        Write-DebugInfo "  SessionName: $SessionName"
+        Write-DebugInfo "  ForkedFrom: $ForkedFrom"
+        Write-DebugInfo "  ComputerUser: $ComputerUser"
+        Write-DebugInfo "  GitBranch: $GitBranch"
+        Write-DebugInfo "  Model: $Model"
+        Write-DebugInfo "  DirectoryPath: $DirectoryPath"
+        Write-DebugInfo "  OutputPath: $OutputPath"
 
         Add-Type -AssemblyName System.Drawing
 
@@ -4618,55 +4799,66 @@ function New-SessionBackgroundImage {
         $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180, 20, 20, 40))
         $graphics.FillRectangle($bgBrush, 0, 0, 1920, 1080)
 
-        # Fonts - larger and more visible
+        # Fonts
         $fontBig = New-Object System.Drawing.Font("Consolas", 48, [System.Drawing.FontStyle]::Bold)
         $fontSmall = New-Object System.Drawing.Font("Consolas", 32, [System.Drawing.FontStyle]::Italic)
         $textBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
 
-        # Draw text right of center (position at 60% of width, centered vertically)
+        # Draw text right of center (position at 60% of width)
         $xPosition = 1920 * 0.6  # 60% of width = 1152
-        $yPosition = 400
+        $yPosition = 350
+        $lineSpacing = 60
 
-        # Line 1: Session name
-        $graphics.DrawString($NewName, $fontBig, $textBrush, $xPosition, $yPosition)
+        # Line 1: Session Name (always shown)
+        Write-DebugInfo "  Drawing Line 1: $SessionName" -Color Green
+        $graphics.DrawString($SessionName, $fontBig, $textBrush, $xPosition, $yPosition)
         $yPosition += 80
 
-        # Line 2: Show "forked from:" only if this is actually a fork
-        if ($IsFork) {
-            $graphics.DrawString("forked from: $OldName", $fontSmall, $textBrush, $xPosition, $yPosition)
-            $yPosition += 60
-        } elseif ($OldName) {
-            $graphics.DrawString($OldName, $fontSmall, $textBrush, $xPosition, $yPosition)
-            $yPosition += 60
+        # Line 2: Forked From (optional)
+        if ($ForkedFrom) {
+            Write-DebugInfo "  Drawing Line 2: Forked from: $ForkedFrom" -Color Green
+            $graphics.DrawString("Forked from: $ForkedFrom", $fontSmall, $textBrush, $xPosition, $yPosition)
+            $yPosition += $lineSpacing
+        } else {
+            Write-DebugInfo "  Skipping Line 2 (no ForkedFrom)" -Color Yellow
         }
 
-        # Line 3: Show git branch if detected
+        # Line 3: Computer:User (always shown)
+        Write-DebugInfo "  Drawing Line 3: $ComputerUser" -Color Green
+        $graphics.DrawString($ComputerUser, $fontSmall, $textBrush, $xPosition, $yPosition)
+        $yPosition += $lineSpacing
+
+        # Line 4: Git Branch (optional)
         if ($GitBranch) {
-            Write-DebugInfo "  Drawing git branch line: branch: $GitBranch" -Color Green
+            Write-DebugInfo "  Drawing Line 4: branch: $GitBranch" -Color Green
             $graphics.DrawString("branch: $GitBranch", $fontSmall, $textBrush, $xPosition, $yPosition)
-            $yPosition += 60
+            $yPosition += $lineSpacing
         } else {
-            Write-DebugInfo "  Skipping git branch line (GitBranch is null or empty)" -Color Yellow
+            Write-DebugInfo "  Skipping Line 4 (no GitBranch)" -Color Yellow
         }
 
-        # Line 4: Show model if provided
+        # Line 5: Model (optional)
         if ($Model) {
-            Write-DebugInfo "  Drawing model line: model: $Model" -Color Green
+            Write-DebugInfo "  Drawing Line 5: model: $Model" -Color Green
             $graphics.DrawString("model: $Model", $fontSmall, $textBrush, $xPosition, $yPosition)
-            $yPosition += 60
+            $yPosition += $lineSpacing
         } else {
-            Write-DebugInfo "  Skipping model line (Model is null or empty)" -Color Yellow
+            Write-DebugInfo "  Skipping Line 5 (no Model)" -Color Yellow
         }
+
+        # Line 6: Directory Path (always shown)
+        Write-DebugInfo "  Drawing Line 6: $DirectoryPath" -Color Green
+        $graphics.DrawString($DirectoryPath, $fontSmall, $textBrush, $xPosition, $yPosition)
 
         # Ensure output directory exists
-        $outputDir = Join-Path $Global:MenuPath $NewName
+        $outputDir = Split-Path $OutputPath -Parent
         if (-not (Test-Path $outputDir)) {
             New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
         }
 
         # Save PNG
-        $outputPath = Join-Path $outputDir "background.png"
-        $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        $bitmap.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        Write-DebugInfo "  Image saved to: $OutputPath" -Color Green
 
         # Cleanup
         $graphics.Dispose()
@@ -4676,16 +4868,77 @@ function New-SessionBackgroundImage {
         $fontSmall.Dispose()
         $textBrush.Dispose()
 
+        Write-ColorText "Background image created: $OutputPath" -Color Green
+        return $OutputPath
+
+    } catch {
+        Write-ColorText "Failed to generate background image: $_" -Color Red
+        Write-ErrorLog "New-UniformBackgroundImage error: $_"
+        throw
+    }
+}
+
+function New-SessionBackgroundImage {
+    <#
+    .SYNOPSIS
+        Wrapper for creating session background images (new sessions and forks)
+    .PARAMETER NewName
+        The new session name
+    .PARAMETER OldName
+        The old/parent session name (used for forks)
+    .PARAMETER IsFork
+        If true, displays "Forked from:" text
+    .PARAMETER GitBranch
+        Optional git branch name to display
+    .PARAMETER Model
+        Optional model name to display
+    .PARAMETER ProjectPath
+        The project directory path
+    #>
+    param(
+        [string]$NewName,
+        [string]$OldName,
+        [switch]$IsFork,
+        [string]$GitBranch = $null,
+        [string]$Model = $null,
+        [string]$ProjectPath = ""
+    )
+
+    try {
+        Write-DebugInfo "=== New-SessionBackgroundImage ===" -Color Cyan
+        Write-DebugInfo "  NewName: $NewName"
+        Write-DebugInfo "  OldName: $OldName"
+        Write-DebugInfo "  IsFork: $IsFork"
+        Write-DebugInfo "  GitBranch: $GitBranch"
+        Write-DebugInfo "  Model: $Model"
+        Write-DebugInfo "  ProjectPath: $ProjectPath"
+
+        # Prepare output path
+        $outputDir = Join-Path $Global:MenuPath $NewName
+        $outputPath = Join-Path $outputDir "background.png"
+
+        # Prepare parameters for uniform function
+        $computerUser = "$env:COMPUTERNAME`:$env:USERNAME"
+        $forkedFromParam = if ($IsFork -and $OldName) { $OldName } else { $null }
+
+        # Call the common uniform function
+        $result = New-UniformBackgroundImage `
+            -SessionName $NewName `
+            -ForkedFrom $forkedFromParam `
+            -ComputerUser $computerUser `
+            -GitBranch $GitBranch `
+            -Model $Model `
+            -DirectoryPath $ProjectPath `
+            -OutputPath $outputPath
+
         # Save tracking
         if ($IsFork) {
-            Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent "forked from: $OldName" -ImageType "fork"
+            Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent "Forked from: $OldName" -ImageType "fork"
         } else {
-            Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent $OldName -ImageType "new"
+            Save-BackgroundTracking -SessionName $NewName -BackgroundPath $outputPath -TextContent $NewName -ImageType "new"
         }
 
-        Write-ColorText "Background image created: $outputPath" -Color Green
-
-        return $outputPath
+        return $result
 
     } catch {
         Write-ColorText "Failed to generate background image: $_" -Color Red
@@ -4696,91 +4949,51 @@ function New-SessionBackgroundImage {
 function New-ContinueSessionBackgroundImage {
     <#
     .SYNOPSIS
-        Generates a PNG background image for a continued session (not a fork)
+        Wrapper for creating background images for continued sessions
+    .PARAMETER SessionName
+        The session name
     .PARAMETER GitBranch
         Optional git branch name to display
     .PARAMETER Model
         Optional model name to display
+    .PARAMETER ProjectPath
+        The project directory path
     #>
     param(
         [string]$SessionName,
         [string]$GitBranch = $null,
-        [string]$Model = $null
+        [string]$Model = $null,
+        [string]$ProjectPath = ""
     )
 
     try {
-        Add-Type -AssemblyName System.Drawing
+        Write-DebugInfo "=== New-ContinueSessionBackgroundImage ===" -Color Cyan
+        Write-DebugInfo "  SessionName: $SessionName"
+        Write-DebugInfo "  GitBranch: $GitBranch"
+        Write-DebugInfo "  Model: $Model"
+        Write-DebugInfo "  ProjectPath: $ProjectPath"
 
-        # Create bitmap: 1920x1080px (full screen)
-        $bitmap = New-Object System.Drawing.Bitmap(1920, 1080)
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-
-        # Enable anti-aliasing for smooth text
-        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
-
-        # Darker, more visible background (semi-transparent dark blue)
-        $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180, 20, 20, 40))
-        $graphics.FillRectangle($bgBrush, 0, 0, 1920, 1080)
-
-        # Fonts - larger and more visible
-        $fontBig = New-Object System.Drawing.Font("Consolas", 48, [System.Drawing.FontStyle]::Bold)
-        $fontLabel = New-Object System.Drawing.Font("Consolas", 36, [System.Drawing.FontStyle]::Italic)
-        $textBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-
-        # Draw text right of center (position at 60% of width, centered vertically)
-        $xPosition = 1920 * 0.6  # 60% of width = 1152
-        $yPosition = 400
-        $fontSmall = New-Object System.Drawing.Font("Consolas", 32, [System.Drawing.FontStyle]::Italic)
-
-        # Line 1: Session label and name
-        $graphics.DrawString("Session:", $fontLabel, $textBrush, $xPosition, $yPosition)
-        $yPosition += 60
-        $graphics.DrawString($SessionName, $fontBig, $textBrush, $xPosition, $yPosition)
-        $yPosition += 80
-
-        # Line 2: Computer and username
-        $computerUser = "$env:COMPUTERNAME`:$env:USERNAME"
-        $graphics.DrawString($computerUser, $fontSmall, $textBrush, $xPosition, $yPosition)
-        $yPosition += 60
-
-        # Line 3: Show git branch if detected
-        if ($GitBranch) {
-            $graphics.DrawString("branch: $GitBranch", $fontSmall, $textBrush, $xPosition, $yPosition)
-            $yPosition += 60
-        }
-
-        # Line 4: Show model if provided
-        if ($Model) {
-            $graphics.DrawString("model: $Model", $fontSmall, $textBrush, $xPosition, $yPosition)
-            $yPosition += 60
-        }
-
-        # Ensure output directory exists
+        # Prepare output path
         $outputDir = Join-Path $Global:MenuPath $SessionName
-        if (-not (Test-Path $outputDir)) {
-            New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-        }
-
-        # Save PNG
         $outputPath = Join-Path $outputDir "background.png"
-        $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
 
-        # Cleanup
-        $graphics.Dispose()
-        $bitmap.Dispose()
-        $bgBrush.Dispose()
-        $fontBig.Dispose()
-        $fontSmall.Dispose()
-        $fontLabel.Dispose()
-        $textBrush.Dispose()
+        # Prepare parameters for uniform function
+        $computerUser = "$env:COMPUTERNAME`:$env:USERNAME"
+
+        # Call the common uniform function
+        $result = New-UniformBackgroundImage `
+            -SessionName $SessionName `
+            -ForkedFrom $null `
+            -ComputerUser $computerUser `
+            -GitBranch $GitBranch `
+            -Model $Model `
+            -DirectoryPath $ProjectPath `
+            -OutputPath $outputPath
 
         # Save tracking
-        Save-BackgroundTracking -SessionName $SessionName -BackgroundPath $outputPath -TextContent "Session:`n$SessionName" -ImageType "continue"
+        Save-BackgroundTracking -SessionName $SessionName -BackgroundPath $outputPath -TextContent $SessionName -ImageType "continue"
 
-        Write-ColorText "Background image created: $outputPath" -Color Green
-
-        return $outputPath
+        return $result
 
     } catch {
         Write-ColorText "Failed to generate background image: $_" -Color Red
@@ -4825,7 +5038,7 @@ function Update-SessionBackgroundImage {
             $sessionEntry = Get-SessionMappingEntry -SessionId $Session.sessionId
             $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
 
-            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $modelName
+            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
         } else {
             # Not a fork - generate simple continue-style background
             Write-ColorText "Generating session background..." -Color Cyan
@@ -4837,7 +5050,7 @@ function Update-SessionBackgroundImage {
             $sessionEntry = Get-SessionMappingEntry -SessionId $Session.sessionId
             $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
 
-            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $gitBranch -Model $modelName
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
         }
 
         # Update Windows Terminal profile with new image path
@@ -5141,6 +5354,127 @@ function Get-ModelFromSession {
 
 #endregion
 
+#region Session Renaming
+
+function Rename-ClaudeSession {
+    <#
+    .SYNOPSIS
+        Renames a Claude Code session and updates all related metadata
+    .DESCRIPTION
+        Updates customTitle in sessions-index.json and Windows Terminal profile name if exists
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [object]$Session
+    )
+
+    try {
+        $sessionId = $Session.sessionId
+        $projectPath = $Session.projectPath
+        $oldTitle = if ($Session.customTitle) { $Session.customTitle } elseif ($Session.trackedName) { $Session.trackedName } else { "(unnamed)" }
+
+        Write-Host ""
+        Write-ColorText "Renaming session: $oldTitle" -Color Cyan
+        Write-Host ""
+
+        # Prompt for new name
+        Write-ColorText "Enter new session name (or [Enter] to cancel): " -Color Yellow -NoNewline
+        $newName = Read-Host
+
+        # Check for cancellation
+        if ([string]::IsNullOrWhiteSpace($newName)) {
+            Write-ColorText "Rename cancelled." -Color Yellow
+            Start-Sleep -Seconds 1
+            return $false
+        }
+
+        # Sanitize for filesystem
+        $safeName = $newName -replace '[\\/:*?"<>|]', '_'
+
+        if ($newName -ne $safeName) {
+            Write-ColorText "Name contains invalid characters. Using: $safeName" -Color Yellow
+            Write-Host ""
+        }
+
+        # 1. Update Claude's sessions-index.json
+        Write-ColorText "Updating Claude session index..." -Color Cyan
+        $encodedPath = ConvertTo-ClaudeProjectPath -Path $projectPath
+        $indexPath = Join-Path $Global:ClaudeProjectsPath "$encodedPath\sessions-index.json"
+
+        if (Test-Path $indexPath) {
+            try {
+                $index = Get-Content $indexPath -Raw | ConvertFrom-Json
+                $entry = $index.entries | Where-Object { $_.sessionId -eq $sessionId }
+                if ($entry) {
+                    $entry.customTitle = $safeName
+                    $index | ConvertTo-Json -Depth 10 | Set-Content $indexPath -Encoding UTF8
+                    Write-ColorText "  Updated session title in Claude index" -Color Green
+                } else {
+                    Write-ColorText "  Warning: Session not found in index" -Color Yellow
+                }
+            } catch {
+                Write-ColorText "  Error updating index: $_" -Color Red
+                return $false
+            }
+        } else {
+            Write-ColorText "  Warning: sessions-index.json not found at $indexPath" -Color Yellow
+        }
+
+        # 2. Update Windows Terminal profile if it exists
+        $oldWTProfile = Get-WTProfileName -SessionTitle $oldTitle -SessionId $sessionId
+        if ($oldWTProfile) {
+            Write-ColorText "Updating Windows Terminal profile..." -Color Cyan
+            $newWTProfile = "Claude-$safeName"
+
+            # Read Windows Terminal settings
+            $wtSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+            if (Test-Path $wtSettingsPath) {
+                try {
+                    $settings = Get-Content $wtSettingsPath -Raw | ConvertFrom-Json
+                    $profile = $settings.profiles.list | Where-Object { $_.name -eq $oldWTProfile }
+                    if ($profile) {
+                        $profile.name = $newWTProfile
+                        $settings | ConvertTo-Json -Depth 10 | Set-Content $wtSettingsPath -Encoding UTF8
+                        Write-ColorText "  Renamed Windows Terminal profile: $oldWTProfile -> $newWTProfile" -Color Green
+                    }
+                } catch {
+                    Write-ColorText "  Warning: Could not update Windows Terminal profile - $_" -Color Yellow
+                }
+            }
+
+            # Update session-mapping.json with new profile name
+            if (Test-Path $Global:SessionMappingPath) {
+                try {
+                    $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+                    $mappedSession = $mapping.sessions | Where-Object { $_.sessionId -eq $sessionId }
+                    if ($mappedSession) {
+                        $mappedSession.wtProfileName = $newWTProfile
+                        $mappedSession.updated = (Get-Date).ToString('o')
+                        $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+                        Write-ColorText "  Updated session mapping" -Color Green
+                    }
+                } catch {
+                    Write-ColorText "  Warning: Could not update session mapping - $_" -Color Yellow
+                }
+            }
+        }
+
+        Write-Host ""
+        Write-ColorText "Session renamed successfully: '$oldTitle' -> '$safeName'" -Color Green
+        Start-Sleep -Seconds 2
+        return $true
+
+    } catch {
+        Write-Host ""
+        Write-ColorText "Error renaming session: $_" -Color Red
+        Write-DebugInfo "Rename error details: $_" -Color Red
+        Start-Sleep -Seconds 3
+        return $false
+    }
+}
+
+#endregion
+
 #region Session Deletion
 
 function Remove-Session {
@@ -5374,59 +5708,48 @@ function Get-BackgroundTracking {
 function New-CustomTextBackgroundImage {
     <#
     .SYNOPSIS
-        Generates a PNG background image with custom text
+        Wrapper for creating background images with custom text
+    .PARAMETER SessionName
+        The session name
+    .PARAMETER CustomText
+        Custom text to display as Line 1
+    .PARAMETER ProjectPath
+        The project directory path
     #>
     param(
         [string]$SessionName,
-        [string]$CustomText
+        [string]$CustomText,
+        [string]$ProjectPath = ""
     )
 
     try {
-        Add-Type -AssemblyName System.Drawing
+        Write-DebugInfo "=== New-CustomTextBackgroundImage ===" -Color Cyan
+        Write-DebugInfo "  SessionName: $SessionName"
+        Write-DebugInfo "  CustomText: $CustomText"
+        Write-DebugInfo "  ProjectPath: $ProjectPath"
 
-        # Create bitmap: 1920x1080px (full screen)
-        $bitmap = New-Object System.Drawing.Bitmap(1920, 1080)
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-
-        # Enable anti-aliasing for smooth text
-        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-        $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
-
-        # Darker, more visible background (semi-transparent dark blue)
-        $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(180, 20, 20, 40))
-        $graphics.FillRectangle($bgBrush, 0, 0, 1920, 1080)
-
-        # Fonts - larger and more visible
-        $fontBig = New-Object System.Drawing.Font("Consolas", 48, [System.Drawing.FontStyle]::Bold)
-        $textBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-
-        # Draw text right of center (position at 60% of width, centered vertically)
-        $xPosition = 1920 * 0.6  # 60% of width = 1152
-        $graphics.DrawString($CustomText, $fontBig, $textBrush, $xPosition, 450)
-
-        # Ensure output directory exists
+        # Prepare output path
         $outputDir = Join-Path $Global:MenuPath $SessionName
-        if (-not (Test-Path $outputDir)) {
-            New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-        }
-
-        # Save PNG
         $outputPath = Join-Path $outputDir "background.png"
-        $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
 
-        # Cleanup
-        $graphics.Dispose()
-        $bitmap.Dispose()
-        $bgBrush.Dispose()
-        $fontBig.Dispose()
-        $textBrush.Dispose()
+        # Prepare parameters for uniform function
+        # Custom text goes in Line 1, everything else follows the standard format
+        $computerUser = "$env:COMPUTERNAME`:$env:USERNAME"
+
+        # Call the common uniform function
+        $result = New-UniformBackgroundImage `
+            -SessionName $CustomText `
+            -ForkedFrom $null `
+            -ComputerUser $computerUser `
+            -GitBranch $null `
+            -Model $null `
+            -DirectoryPath $ProjectPath `
+            -OutputPath $outputPath
 
         # Save tracking
         Save-BackgroundTracking -SessionName $SessionName -BackgroundPath $outputPath -TextContent $CustomText -ImageType "custom-text"
 
-        Write-ColorText "Custom background image created: $outputPath" -Color Green
-
-        return $outputPath
+        return $result
 
     } catch {
         Write-ColorText "Failed to generate background image: $_" -Color Red
@@ -5977,7 +6300,7 @@ function Start-MainMenu {
                                         Write-ColorText "Generating custom background image..." -Color Cyan
 
                                         try {
-                                            $bgPath = New-CustomTextBackgroundImage -SessionName $sessionName -CustomText $customText
+                                            $bgPath = New-CustomTextBackgroundImage -SessionName $sessionName -CustomText $customText -ProjectPath $session.projectPath
 
                                             # Update Windows Terminal profile
                                             $backupPath = Backup-WTSettings
@@ -6018,11 +6341,22 @@ function Start-MainMenu {
                             'delete' {
                                 # Delete Windows Terminal profile
                                 Write-Host ""
-                                Write-ColorText "Are you sure you want to delete profile: $wtProfileName? (Y/N): " -Color Yellow -NoNewline
+                                Write-ColorText "Are you sure you want to delete profile: $wtProfileName?" -Color Yellow
+                                Write-Host ""
+                                Write-Host "Y" -NoNewline -ForegroundColor Yellow
+                                Write-Host "es | " -NoNewline -ForegroundColor Gray
+                                Write-Host "N" -NoNewline -ForegroundColor Yellow
+                                Write-Host "o: " -NoNewline -ForegroundColor Gray
+                                $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                                $confirmed = $key.Character.ToString().ToUpper()
+                                Write-Host $confirmed  # Echo the key
 
-                                $confirmed = Read-Host
+                                # Handle Esc as No
+                                if ($key.VirtualKeyCode -eq 27) {
+                                    $confirmed = 'N'
+                                }
 
-                                if ($confirmed -eq 'Y' -or $confirmed -eq 'y') {
+                                if ($confirmed -eq 'Y') {
                                     $success = Remove-WTProfile -ProfileName $wtProfileName
 
                                     if ($success) {
@@ -6065,11 +6399,22 @@ function Start-MainMenu {
                             'remove-background' {
                                 # Remove background image from profile
                                 Write-Host ""
-                                Write-ColorText "Are you sure you want to remove the background image from: $wtProfileName? (Y/N): " -Color Yellow -NoNewline
+                                Write-ColorText "Are you sure you want to remove the background image from: $wtProfileName?" -Color Yellow
+                                Write-Host ""
+                                Write-Host "Y" -NoNewline -ForegroundColor Yellow
+                                Write-Host "es | " -NoNewline -ForegroundColor Gray
+                                Write-Host "N" -NoNewline -ForegroundColor Yellow
+                                Write-Host "o: " -NoNewline -ForegroundColor Gray
+                                $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                                $confirmed = $key.Character.ToString().ToUpper()
+                                Write-Host $confirmed  # Echo the key
 
-                                $confirmed = Read-Host
+                                # Handle Esc as No
+                                if ($key.VirtualKeyCode -eq 27) {
+                                    $confirmed = 'N'
+                                }
 
-                                if ($confirmed -eq 'Y' -or $confirmed -eq 'y') {
+                                if ($confirmed -eq 'Y') {
                                     $success = Remove-BackgroundFromProfile -WTProfileName $wtProfileName
 
                                     if ($success) {
@@ -6098,10 +6443,22 @@ function Start-MainMenu {
                         Write-Host ""
                         Write-ColorText "This session does not have a Windows Terminal profile." -Color Yellow
                         Write-Host ""
-                        Write-ColorText "Would you like to create one? (Y/N): " -Color Cyan -NoNewline
-                        $createProfile = Read-Host
+                        Write-ColorText "Would you like to create one?" -Color Cyan
+                        Write-Host ""
+                        Write-Host "Y" -NoNewline -ForegroundColor Yellow
+                        Write-Host "es | " -NoNewline -ForegroundColor Gray
+                        Write-Host "N" -NoNewline -ForegroundColor Yellow
+                        Write-Host "o: " -NoNewline -ForegroundColor Gray
+                        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                        $createProfile = $key.Character.ToString().ToUpper()
+                        Write-Host $createProfile  # Echo the key
 
-                        if ($createProfile -eq 'Y' -or $createProfile -eq 'y') {
+                        # Handle Esc as No
+                        if ($key.VirtualKeyCode -eq 27) {
+                            $createProfile = 'N'
+                        }
+
+                        if ($createProfile -eq 'Y') {
                             # Get session name
                             Write-Host ""
                             Write-ColorText "Enter a name for this profile: " -Color Yellow -NoNewline
@@ -6146,7 +6503,7 @@ function Start-MainMenu {
                                 $sessionEntry = Get-SessionMappingEntry -SessionId $session.sessionId
                                 $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
 
-                                $bgImagePath = New-SessionBackgroundImage -NewName $finalProfileName -OldName "" -GitBranch $gitBranch -Model $modelName
+                                $bgImagePath = New-SessionBackgroundImage -NewName $finalProfileName -OldName "" -GitBranch $gitBranch -Model $modelName -ProjectPath $session.projectPath
                             }
 
                             if ($bgImagePath) {
@@ -6223,10 +6580,22 @@ function Start-MainMenu {
                     Write-Host ""
                     Write-ColorText "This action cannot be undone!" -Color Red
                     Write-Host ""
-                    Write-ColorText "Are you sure? (Y/N): " -Color Yellow -NoNewline
-                    $confirmed = Read-Host
+                    Write-ColorText "Are you sure?" -Color Yellow
+                    Write-Host ""
+                    Write-Host "Y" -NoNewline -ForegroundColor Yellow
+                    Write-Host "es | " -NoNewline -ForegroundColor Gray
+                    Write-Host "N" -NoNewline -ForegroundColor Yellow
+                    Write-Host "o: " -NoNewline -ForegroundColor Gray
+                    $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    $confirmed = $key.Character.ToString().ToUpper()
+                    Write-Host $confirmed  # Echo the key
 
-                    if ($confirmed -eq 'Y' -or $confirmed -eq 'y') {
+                    # Handle Esc as No
+                    if ($key.VirtualKeyCode -eq 27) {
+                        $confirmed = 'N'
+                    }
+
+                    if ($confirmed -eq 'Y') {
                         $success = Remove-Session -Session $session -WTProfileName $wtProfile
 
                         if ($success) {
@@ -6243,6 +6612,16 @@ function Start-MainMenu {
                         Read-Host "Press Enter to continue"
                     }
 
+                    continue
+                } elseif ($action -eq 'rename') {
+                    # User chose to rename the session
+                    $renamed = Rename-ClaudeSession -Session $session
+
+                    # Reload sessions to show the new name
+                    if ($renamed) {
+                        $selectedIndex = 0
+                        $reloadSessions = $true
+                    }
                     continue
                 } elseif ($action -eq 'continue') {
                     Start-ContinueSession -Session $session

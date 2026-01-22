@@ -2,6 +2,246 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.7.0] - 2026-01-21
+
+### Major Features
+
+#### Silent Invalid Input Handling
+- **No Error Messages** - Invalid key presses are silently ignored
+- **Cleaner Experience** - No "Invalid choice. Please enter..." messages displayed
+- **Silent Waiting** - Menus simply wait for valid input without feedback
+- **Reduced Clutter** - Less visual noise and interruptions
+
+#### Single Display Menu Prompts
+- **Display Once** - Menu prompts shown once before input loop, not repeatedly
+- **No Redisplay** - Invalid input doesn't trigger prompt redisplay
+- **Persistent Display** - Prompt remains visible on screen while waiting for input
+- **Less Flashing** - Reduces screen flashing and visual clutter
+
+#### Consolidated Single-Line Menus
+- **Inline Descriptions** - All menu options with descriptions on single line
+- **Eliminated Redundancy** - Removed multi-line descriptions followed by summary line
+- **More Compact** - Easier to scan and understand at a glance
+- **Examples:**
+  - `Opus - Most capable | Sonnet - Balanced (Recommended) | Haiku - Fast | Abort`
+  - `Yes - Bypass all permissions (trusted workspace) | No - Use default permission settings | Abort`
+  - `Toggle - Turn Debug On/Off | Notepad - Open Debug Log | Instructions - Show debug mode help | Abort`
+
+#### Improved Navigation Prompt
+- **Arrow Symbols** - Changed from text "UP/DOWN" to actual arrow symbols ▲▼
+- **Visual Enhancement** - Arrows displayed in yellow for easy identification
+- **New Format** - `Choose with ▲▼, then [Enter] to select`
+- **Consistent Colors** - Both arrows and [Enter] in yellow
+
+#### Directory Path Inline Display
+- **Path in Menu** - Shows actual path: `Use Current - C:\repos\Fork | Set different directory | Abort`
+- **Removed Redundancy** - No separate "Current directory: C:\repos\Fork" line above menu
+- **More Compact** - Single-line presentation with all information
+
+#### Win Terminal Config Menu Consistency
+- **Abort Instead of Exit** - Changed "eXit" to "Abort" for consistency
+- **Key Reassignment** - Changed "All Sessions" from 'A' to 'L' key
+- **Consistent Terminology** - All menus now use "Abort" for cancellation
+
+### Bug Fixes
+
+#### Fixed Cursor Jumping During Workflows
+- **Removed Cursor Positioning** - Eliminated cursor positioning code from all dialog functions
+- **Natural Flow** - Dialogs now flow naturally down the screen during workflows
+- **Fixed Model Selection** - Model selection no longer appears above name entry during new session creation
+- **10 Functions Fixed:**
+  - Get-ModelChoice
+  - Get-TrustedSessionChoice
+  - Get-ForkOrContinue
+  - Get-SessionManagementChoice
+  - Get-RegenerateImageChoice
+  - Show-DebugToggle
+  - Show-CostAnalysis
+  - Enable-GlobalBypassPermissions
+  - Disable-GlobalBypassPermissions
+  - Start-NewSession
+
+### Changes
+
+**Menu Format:**
+- Converted 8 menus from multi-line to single-line format
+- Removed all trailing colons after "Abort"
+- All menu options include descriptions inline
+
+**Input Handling:**
+- Removed all "Invalid choice" error messages
+- Removed sleep delays after invalid input
+- Default switch cases now silently continue loop
+- Win Terminal Config 'A' key triggers Abort
+- Win Terminal Config 'L' key triggers "aLl Sessions"
+
+**Navigation:**
+- Arrow symbols use `[char]0x25B2` (▲) and `[char]0x25BC` (▼)
+- Changed from Cyan UP/DOWN to Yellow ▲▼
+- Changed [Enter] from Green to Yellow
+- Updated in 3 menu contexts (Main Menu normal, Main Menu with unnamed, Win Terminal Config)
+
+**Technical:**
+- Cursor positioning code removed from 10 dialog functions
+- `$Global:PromptEndY` no longer used by dialog functions for positioning
+
+---
+
+## [1.6.0] - 2026-01-21
+
+### Major Features
+
+#### Uniform Menu System
+- **Consistent Format** - All menus use consistent prompt format with highlighted key letters in yellow
+- **Single-Keypress Input** - No Enter key needed throughout menus
+- **13+ Menus Updated** - Debug, Session Management, Model Selection, Permission Modes, Confirmations, etc.
+- **Example Format** - `Continue | Fork | Delete | Rename | Abort` (keys in yellow)
+
+#### Universal Escape Key Support
+- **Esc Key Works Everywhere** - Works as Abort/Cancel/No in all menus
+- **Silent Feature** - Not advertised in prompts but always available
+- **Consistent Behavior** - Esc = back one level throughout entire application
+
+#### Unified Background Image Generation
+- **Single Function** - `New-UniformBackgroundImage()` replaces three separate implementations
+- **Consistent 6-Line Format:**
+  1. Session Name (48pt bold)
+  2. "Forked from: [parent]" (32pt italic, optional)
+  3. COMPUTER:USERNAME (32pt italic)
+  4. "branch: [branch]" (32pt italic, optional)
+  5. "model: [model]" (32pt italic, optional)
+  6. Full directory path (32pt italic)
+- **Consistent Styling** - 1920x1080 PNG, semi-transparent dark blue background (ARGB: 180,20,20,40)
+
+#### Fixed "Last Command" Display Clearing
+- **Correct Cursor Position** - Captured BEFORE "Last command" display (not after)
+- **Proper Clearing** - Menu actions properly clear the command display and reposition cursor
+- **ANSI Escape Sequence** - Uses `[0J` to clear from cursor down
+- **Clean Dialogs** - Dialogs appear immediately below sub-menu without blank space
+
+### Bug Fixes
+
+#### Unnamed Session Launch Fixed
+- **Windows Terminal Launch** - Unnamed sessions now launch in Windows Terminal (not broken inline mode)
+- **Command Changed** - From `Start-Process -NoNewWindow -Wait` to `wt.exe -d "$dir" -- "$claudePath" --resume $sessionId`
+- **7 Locations Fixed** - All session launch points updated
+- **Sessions Work** - Sessions without profiles now work correctly
+
+### Changes
+
+**Menu Prompts:**
+- All menus converted to single-keypress with highlighted keys
+- Replaced `Read-Host` with `$host.UI.RawUI.ReadKey()`
+- Added Esc key handling (virtual key code 27)
+- Key echo displays immediately after press
+
+**Background Images:**
+- Created wrapper functions calling unified core
+- All wrappers pass ProjectPath parameter for Line 6 display
+
+**Last Command Fix:**
+- `$Global:PromptEndY` captured at correct position
+- Clearing code in `Get-ArrowKeyNavigation`
+- Removed cursor positioning from individual dialog functions
+
+---
+
+## [1.5.0] - 2026-01-21
+
+### Major Features
+
+#### Dynamic Menu Pagination
+- **Screen-Aware Height Calculation** - Menu automatically adjusts to terminal height with 5-line buffer below sub-menu
+- **Page Navigation** - Navigate large session lists with PgUp/PgDn keys
+- **Page Indicator** - Shows "pg 1/x" in top-right corner when multiple pages exist
+- **Automatic Pagination** - Calculates available rows: window height - 17 (title, headers, borders, prompts, buffer)
+- **Smart Page Resets** - Returns to page 1 when changing sort order
+
+#### Session Rename Feature
+- **Rename Sessions** - Press **[M]** to rename any session directly from the main menu
+- **Complete Updates** - Renames in all locations:
+  - Claude's `sessions-index.json` (updates `customTitle`)
+  - Windows Terminal profile name (from `Claude-OldName` to `Claude-NewName`)
+  - Session mapping file (updates `wtProfileName` and adds `updated` timestamp)
+- **Simple Workflow** - Enter new name or press Enter to cancel
+- **Character Sanitization** - Automatically replaces invalid filesystem characters
+- **Instant Refresh** - Menu updates immediately to show new name
+
+#### Tracked Name Recognition
+- **Bracket Sessions Fixed** - Sessions shown in `[brackets]` (tracked names) now properly recognized
+- **Profile Detection** - Correctly finds Windows Terminal profiles for sessions with tracked names
+- **No Duplicate Prompts** - Sessions like `[Random]` no longer ask to create profiles if they already have them
+- **Display Name Priority** - Uses `customTitle` → `trackedName` → `sessionId` throughout the application
+- **Fork Support** - Properly displays tracked names when forking sessions
+
+#### Simplified Mode Switching
+- **Clean Prompts** - Quiet/Chatty mode switching now shows simple 3-option prompt:
+  - **[Y]** Enable mode directly
+  - **[I]** Show detailed information before proceeding
+  - **[N]** Cancel operation
+- **Hide Information** - All detailed explanations hidden until user presses [I]
+- **Faster Workflow** - Common case (just switching modes) takes one keypress
+
+### Changes
+
+**Navigation:**
+- Added PgUp/PgDn key handlers (virtual key codes 33 and 34)
+- Sub-menu shows "PgUp | PgDn" options when multiple pages exist
+- Menu displays current page slice while maintaining full sort across all data
+
+**Session Rename (M key):**
+- Added `Rename-ClaudeSession()` function with complete metadata updates
+- Integrated into main loop with automatic menu refresh
+- Added "renaMe" to all three sub-menu prompt variations
+
+**Tracked Name Support:**
+- Modified `Start-ContinueSession()` to check both `customTitle` and `trackedName`
+- Updated `Show-SessionMenu()` to pass tracked names to `Get-WTProfileName()`
+- Fixed `Start-ForkSession()` to display tracked names correctly
+- Enhanced display name resolution in 4+ locations
+
+**Mode Switching:**
+- Simplified `Enable-GlobalBypassPermissions()` with [Y/I/N] prompt
+- Simplified `Disable-GlobalBypassPermissions()` with [Y/I/N] prompt
+- Detailed information only shown when user requests it with [I]
+
+### Technical Details
+
+**New Functions:**
+- `Rename-ClaudeSession()` - Handles complete session rename workflow with all updates
+
+**Modified Functions:**
+- `Show-SessionMenu()` - Added pagination logic with page calculation and row slicing
+- `Get-ArrowKeyNavigation()` - Added PgUp/PgDn handlers, added `$TotalPages` parameter
+- `Start-ContinueSession()` - Checks both `customTitle` and `trackedName` for named sessions
+- `Start-ForkSession()` - Enhanced display name resolution with tracked names
+- `Enable-GlobalBypassPermissions()` - Redesigned with [Y/I/N] prompt structure
+- `Disable-GlobalBypassPermissions()` - Redesigned with [Y/I/N] prompt structure
+- Main loop - Added PageUp/PageDown/Rename handlers
+
+**New Global Variables:**
+- `$Global:CurrentPage` - Tracks current page for pagination
+
+**Pagination Logic:**
+1. Calculate available rows based on window height
+2. Determine if pagination needed (total rows > available rows)
+3. Calculate total pages and validate current page
+4. Slice sorted data for current page display
+5. Show page indicator when multiple pages exist
+6. Reset to page 1 on sort changes
+
+**Return Values Enhanced:**
+- `Show-SessionMenu()` now returns `TotalPages`, `CurrentPage`, and `AllRows`
+- Enables main loop to handle pagination without reloading sessions
+
+### Bug Fixes
+
+- Fixed sessions with tracked names asking to create profiles they already have
+- Fixed display name inconsistencies across continue/fork workflows
+- Fixed mode switching headers (now say "ENABLING" instead of "YOU ARE IN")
+
+---
+
 ## [1.4.0] - 2026-01-20
 
 ### Major Features

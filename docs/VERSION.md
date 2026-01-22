@@ -1,94 +1,316 @@
 # Version Information
 
-## Current Version: 1.3.0 (2026-01-20)
+## Current Version: 1.7.0 (2026-01-21)
 
 ### Release Notes
 
-This release focuses on Windows Terminal profile management, session discovery improvements, and user experience enhancements.
+This release refines the user interface with silent error handling, consolidated single-line menus, improved navigation prompts, and fixes cursor positioning issues during workflows.
 
 #### Major Features
 
-**Windows Terminal Profile Management**
-- Automatic duplicate name handling (appends integers: Claude-Name1, Claude-Name2, etc.)
-- Profile validation on menu load removes invalid references
-- Session mapping cleanup when profiles are deleted
-- All profile references remain consistent across operations
+**Silent Invalid Input Handling**
+- Invalid key presses no longer display error messages
+- Menus silently wait for valid input without feedback
+- Cleaner, less intrusive user experience
+- No "Invalid choice. Please enter..." messages
 
-**Enhanced Session Discovery**
-- Reads first 10 lines of .jsonl files to find project path (not just first line)
-- Supports sessions where first line is queue-operation
-- Discovers sessions in non-standard paths
+**Single Display Menu Prompts**
+- Menu prompts displayed once before input loop
+- No repeated redisplay after invalid input
+- Prompt remains visible on screen
+- Reduces visual clutter and screen flashing
 
-**User Interface Improvements**
-- Path truncation from front instead of back (end is most informational)
-- Dynamic continue option text based on profile existence
-- Redesigned debug menu with 4 clear options
-- Better visual hierarchy and information display
+**Consolidated Single-Line Menus**
+- All menu options now shown on single line with descriptions
+- Example: `Opus - Most capable | Sonnet - Balanced (Recommended) | Haiku - Fast | Abort`
+- Eliminates redundant multi-line descriptions followed by summary line
+- More compact, easier to scan
+- Applies to: Model selection, Directory choice, Debug menu, Session management, Image regeneration, Fork/Continue, Trusted session, Background conflict
 
-**Win Terminal Config Menu Enhancement**
-- Toggle between "Profiles Only" and "Show All" modes (A/P keys)
-- Create Windows Terminal profiles for sessions that don't have them
-- Integrated background image generation workflow
+**Improved Navigation Prompt**
+- Changed from `Use UP/DOWN arrows, Enter to select` to `Choose with ▲▼, then [Enter] to select`
+- Arrow symbols (▲▼) displayed in yellow
+- [Enter] displayed in yellow
+- More visual, easier to understand at a glance
+
+**Directory Path Inline Display**
+- Directory selection now shows actual path in menu: `Use Current - C:\repos\Fork | Set different directory | Abort`
+- Removed redundant "Current directory: C:\repos\Fork" line above prompt
+- More compact presentation
+
+**Win Terminal Config Menu Consistency**
+- Changed "eXit" to "Abort" to match other menus
+- Changed "All Sessions" key from 'A' to 'L' to free up 'A' for Abort
+- Consistent terminology across all menus
+
+#### Bug Fixes
+
+**Fixed Cursor Jumping During Workflows**
+- Removed cursor positioning code from all dialog functions
+- Dialogs no longer jump back to main menu position during workflows
+- Fixed issue where model selection appeared above name entry during new session creation
+- Workflows now flow naturally down the screen
+- Affected functions: Get-ModelChoice, Get-TrustedSessionChoice, Get-ForkOrContinue, Get-SessionManagementChoice, Get-RegenerateImageChoice, Show-DebugToggle, Show-CostAnalysis, Enable-GlobalBypassPermissions, Disable-GlobalBypassPermissions, Start-NewSession
 
 #### Changes
 
-**Profile Management:**
-- `Add-WTProfile` checks for duplicate names and appends integers automatically
-- `Remove-WTProfile` cleans up all session mapping references to deleted profile
-- `Validate-SessionMappings` runs on startup to verify profile existence
-- All functions that create profiles use the actual returned profile name
+**Menu Format Updates:**
+- All menus converted from multi-line to single-line format
+- All trailing colons after "Abort" removed
+- All menu options include descriptions inline
 
-**Session Discovery:**
-- Extended .jsonl parsing from 1 line to 10 lines when searching for cwd field
-- Handles sessions in unconventional directory structures
-- Better support for unindexed sessions
+**Input Handling:**
+- Removed all "Invalid choice" error messages and sleep delays
+- Default switch cases now just continue loop silently
+- Win Terminal Config menu 'A' key now triggers Abort
+- Win Terminal Config menu 'L' key now triggers "aLl Sessions"
 
-**User Experience:**
-- Continue option shows different text: "Resume Claude Session with Windows Profile" vs "Create Windows Terminal Profile and Resume Claude Session"
-- Path display truncates from left, keeping the informative end visible
-- Debug menu replaced verbose screen with clean 4-option submenu
-- Program returns to menu instead of exiting after validation errors
+**Navigation:**
+- Arrow symbols use `[char]0x25B2` (▲) and `[char]0x25BC` (▼)
+- All arrow and [Enter] text displayed in yellow color
+
+---
+
+## Previous Version: 1.6.0 (2026-01-21)
+
+### Release Notes
+
+This release standardizes the user interface with uniform menu prompts, single-keypress input, consolidated background image generation, and critical bug fixes.
+
+#### Major Features
+
+**Uniform Menu System**
+- All menus now use consistent prompt format with highlighted key letters in yellow
+- Single-keypress input throughout - no Enter key needed
+- Example: `1 Continue | 2 Fork | 3 Delete | 4 Rename | Abort` (keys in yellow)
+- Applies to all 13+ menus: Debug, Session Management, Model Selection, Permission Modes, Confirmations, etc.
+- Cleaner, more intuitive interface with reduced keystrokes
+
+**Universal Escape Key Support**
+- Esc key works as Abort/Cancel/No in all menus
+- Silent feature - not advertised but always available
+- Consistent behavior: Esc = back one level throughout entire application
+
+**Unified Background Image Generation**
+- Single `New-UniformBackgroundImage()` function replaces three separate implementations
+- All background images now display identical 6-line format:
+  1. Session Name (48pt bold)
+  2. "Forked from: [parent]" (32pt italic, optional)
+  3. COMPUTER:USERNAME (32pt italic)
+  4. "branch: [branch]" (32pt italic, optional)
+  5. "model: [model]" (32pt italic, optional)
+  6. Full directory path (32pt italic)
+- 1920x1080 PNG, semi-transparent dark blue background (ARGB: 180,20,20,40)
+- Consistent across new sessions, forks, continued sessions, and custom text
+
+**Fixed "Last Command" Display Clearing**
+- Cursor position captured BEFORE "Last command" display (not after)
+- Menu actions properly clear the command display and reposition cursor
+- ANSI escape sequence clears screen from cursor down
+- Dialogs now appear immediately below sub-menu without blank space
+
+#### Bug Fixes
+
+**Unnamed Session Launch Fixed**
+- Unnamed sessions now launch in Windows Terminal (not broken inline mode)
+- Changed from `Start-Process -NoNewWindow -Wait` to `wt.exe -d "$dir" -- "$claudePath" --resume $sessionId`
+- Fixed 7 locations where this bug occurred
+- Sessions without profiles now work correctly
+
+#### Changes
+
+**Menu Prompt Updates:**
+- `Enable-GlobalBypassPermissions`: `Switch to Quiet Mode | Show Info | Abort` (Q, S, A in yellow)
+- `Disable-GlobalBypassPermissions`: `Switch to Chatty Mode | Show Info | Abort` (C, S, A in yellow)
+- `Show-DebugToggle`: `1 Toggle | 2 Notepad | 3 Instructions | 4 Abort`
+- `Get-SessionManagementChoice`: `1 Regenerate | 2 Delete | 3 Remove | Abort`
+- `Get-RegenerateImageChoice`: `1 Refresh | 2 File | 3 Text | Abort`
+- `Get-ForkOrContinue`: `1 Continue | 2 Fork | 3 Delete | 4 Rename | Abort`
+- `Get-ModelChoice`: `1 Opus | 2 Sonnet | 3 Haiku | Abort`
+- `Get-TrustedSessionChoice`: `Yes | No | Abort`
+- All Y/N confirmations: `Yes | No` (Y, N in yellow)
+
+**Input Handling:**
+- Replaced `Read-Host` with `$host.UI.RawUI.ReadKey()` for single-keypress
+- Added Esc key handling (virtual key code 27) to all prompt loops
+- Key echo displays immediately after press
+
+**Background Image Functions:**
+- `New-UniformBackgroundImage()` - Core generation function (lines 4781-4918)
+- `New-SessionBackgroundImage()` - Wrapper for new/fork sessions
+- `New-ContinueSessionBackgroundImage()` - Wrapper for continued sessions
+- `New-CustomTextBackgroundImage()` - Wrapper for custom text
+- All wrappers now pass ProjectPath parameter for Line 6 display
+
+**"Last Command" Fix:**
+- `$Global:PromptEndY` captured at line 2107 (before "Last command" display)
+- Previously captured at line 2146 (after display with padding)
+- Clearing code in `Get-ArrowKeyNavigation` at lines 2252-2301
+- Removes cursor positioning from individual dialog functions
+
+---
+
+## Previous Version: 1.5.0 (2026-01-21)
+
+### Release Notes
+
+This release adds dynamic pagination, session renaming, improved tracked name handling, and simplified mode switching.
+
+#### Major Features
+
+**Dynamic Menu Pagination**
+- Screen-aware height calculation adjusts to terminal size automatically
+- Maintains 5-line buffer below sub-menu for readability
+- Page navigation with PgUp/PgDn keys
+- Page indicator shows "pg 1/x" when multiple pages exist
+- Automatic page reset when changing sort order
+- Sorts all data, displays current page slice
+
+**Session Rename (M Key)**
+- Rename sessions directly from main menu
+- Updates all references automatically:
+  - Claude's sessions-index.json (customTitle field)
+  - Windows Terminal profile name
+  - Session mapping file (wtProfileName + timestamp)
+- Character sanitization for filesystem safety
+- Instant menu refresh to show new name
+- Cancel option (press Enter with empty name)
+
+**Tracked Name Support**
+- Sessions in [brackets] now properly recognized as having names
+- Windows Terminal profile detection works for tracked names
+- No duplicate "create profile" prompts for sessions with tracked names
+- Display name priority: customTitle → trackedName → sessionId
+- Fork workflow displays tracked names correctly
+
+**Simplified Mode Switching**
+- Clean [Y/I/N] prompt for Quiet/Chatty mode
+- [Y] enables mode immediately (one keypress)
+- [I] shows detailed information on demand
+- [N] cancels operation
+- Detailed explanations hidden by default to reduce information overload
+
+#### Changes
+
+**Pagination:**
+- Added `$Global:CurrentPage` variable to track current page
+- `Show-SessionMenu()` calculates available rows dynamically
+- Window height calculation: height - 17 (title + headers + borders + prompts + buffer)
+- Page indicator displayed when totalPages > 1
+- Returns `TotalPages`, `CurrentPage`, and `AllRows` in menu result
+- PgUp/PgDn handlers added to `Get-ArrowKeyNavigation()` (virtual key codes 33/34)
+- Main loop handles PageUp/PageDown actions
+
+**Session Rename:**
+- New `Rename-ClaudeSession()` function handles complete rename workflow
+- Updates Claude's sessions-index.json customTitle
+- Renames Windows Terminal profile if exists
+- Updates session-mapping.json wtProfileName and timestamp
+- Added 'M' key handler in `Get-ArrowKeyNavigation()`
+- Added Rename action handler in main loop
+- Sub-menu shows "renaMe" option (M highlighted)
+
+**Tracked Name Support:**
+- `Start-ContinueSession()` checks both customTitle AND trackedName
+- `Show-SessionMenu()` passes trackedName to `Get-WTProfileName()` if customTitle empty
+- `Start-ForkSession()` uses tracked names for display
+- Display name resolution updated in 4+ locations: customTitle → trackedName → sessionId
+
+**Mode Switching:**
+- `Enable-GlobalBypassPermissions()` uses [Y/I/N] prompt structure
+- `Disable-GlobalBypassPermissions()` uses [Y/I/N] prompt structure
+- Detailed information shown only when user presses [I]
+- Faster common case (Y for enable, N for cancel)
 
 **Bug Fixes:**
-- Fixed function name: Generate-BackgroundImage → New-SessionBackgroundImage
-- Fixed function name: Add-SessionMappingEntry → Add-SessionMapping
-- Fixed exit 0 issues causing premature program termination
-- Fixed Add-WTProfile parameter names in Win Terminal Config menu
+- Fixed sessions with tracked names incorrectly prompting to create profiles
+- Fixed mode switching headers saying "YOU ARE IN" instead of "ENABLING"
 
 #### Technical Details
 
 **New Functions:**
-- `Validate-SessionMappings()` - Validates profile references and removes invalid ones
+- `Rename-ClaudeSession()` - Comprehensive session rename with all metadata updates
+
+**New Global Variables:**
+- `$Global:CurrentPage` - Tracks current page number for pagination
 
 **Modified Functions:**
-- `Add-WTProfile()` - Added duplicate name detection with integer appending
-- `Remove-WTProfile()` - Added session mapping cleanup
-- `Get-AllClaudeSessions()` - Reads first 10 lines for cwd field
-- `Get-ForkOrContinue()` - Dynamic text based on profile existence
-- `Show-DebugToggle()` - Redesigned as 4-option submenu
-- `Truncate-String()` - Added -FromLeft switch parameter
-- `Start-MainMenu()` - Calls Validate-SessionMappings on startup
-- `Start-ContinueSession()` - Added extensive debug logging, uses actual profile names
-- `Start-NewSession()` - Uses actual profile name from Add-WTProfile
-- `Start-ForkSession()` - Uses actual profile name from Add-WTProfile
+- `Show-SessionMenu()` - Added pagination logic with dynamic row calculation and page slicing
+- `Get-ArrowKeyNavigation()` - Added PgUp/PgDn key handlers, added $TotalPages parameter
+- `Start-ContinueSession()` - Checks both customTitle AND trackedName for named sessions
+- `Start-ForkSession()` - Enhanced display name resolution with tracked name support
+- `Enable-GlobalBypassPermissions()` - Redesigned with [Y/I/N] prompt structure
+- `Disable-GlobalBypassPermissions()` - Redesigned with [Y/I/N] prompt structure
+- Main loop - Added PageUp/PageDown/Rename action handlers
 
-**Profile Management Flow:**
-1. Startup validates all profile references
-2. Creating profiles checks for duplicates and appends integers
-3. Deleting profiles removes all session references
-4. All operations maintain consistency in session-mapping.json
+**Pagination Implementation:**
+1. Calculate available rows: `windowHeight - 17`
+2. Determine if pagination needed: `totalRows > availableRows`
+3. Calculate total pages: `Ceiling(totalRows / rowsPerPage)`
+4. Validate current page is within bounds
+5. Slice sorted data: `$rows[$startIndex..$endIndex]`
+6. Display page indicator when `totalPages > 1`
+7. Reset to page 1 on sort changes
+
+**Rename Workflow:**
+1. Prompt for new name (or cancel with empty input)
+2. Sanitize filesystem characters
+3. Update Claude's sessions-index.json
+4. Rename Windows Terminal profile if exists
+5. Update session-mapping.json
+6. Refresh menu to show changes
+
+**Sub-menu Updates:**
+- "renaMe" option added to all three prompt variations (DeleteMode, ShowUnnamed, Normal)
+- "PgUp | PgDn" shown when $TotalPages > 1
 
 #### Breaking Changes
 
-None - fully backward compatible with v1.2.0
+None - fully backward compatible with v1.4.0
 
 #### Migration Notes
 
-No manual migration required. Profile validation runs automatically on first launch of v1.3.0.
+No manual migration required. All new features work automatically:
+- Pagination activates automatically when session count exceeds screen capacity
+- Rename functionality available immediately (press M on any session)
+- Tracked name recognition works for existing sessions
+- Mode switching prompts updated automatically
 
 ---
 
-## Previous Version: 1.2.0 (2026-01-20)
+## Previous Version: 1.4.0 (2026-01-20)
+
+### Release Notes
+
+This release focuses on Git integration, model tracking, smart image management, and directory selection.
+
+#### Major Features
+
+**Git Branch Integration**
+- Automatically detects git branch in session directories
+- Displays branch on background images (third line)
+- Shows git branch in session options menu
+
+**Model Information Display**
+- Shows model name (Opus/Sonnet/Haiku) on background images (fourth line)
+- Model-first workflow (select before generating background)
+- Model tracking in session-mapping.json
+
+**Smart Background Image Management**
+- Conflict resolution with 4 options: Overwrite, Use, Create New Name, Abort
+- Auto-overwrites orphaned backgrounds (0 profiles using it)
+- Shows profile usage before prompting
+- Auto-numbering for unique names (Name1, Name2, etc.)
+
+**Directory Selection**
+- Shows current directory in main menu header
+- Prompts for directory when creating new sessions
+- Directory validation with reprompting
+- Multiple abort points during session creation
+
+---
+
+## Previous Version: 1.3.0 (2026-01-20)
 
 ### Release Notes
 
