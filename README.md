@@ -1,3 +1,5 @@
+# Windows Claude Code Forker v1.9.5
+
 # Quick Start Guide:
 
 [Download WinClaudeForker.exe Installer Here](https://github.com/srives/WinClaudeCodeForker/releases/tag/name)

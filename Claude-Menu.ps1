@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.9.0"
+$Global:ScriptVersion = "1.9.5"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -1415,6 +1415,251 @@ function Get-WTProfileDetails {
     return $null
 }
 
+function PlaceHeaderRightHandBorder {
+    <#
+    .SYNOPSIS
+        Places the right border for header rows based on actual cursor position
+    .DESCRIPTION
+        Calculates spacing needed and places border at correct position
+    #>
+    param(
+        [int]$RowWidth
+    )
+
+    # Get current cursor position
+    $currentPos = $host.UI.RawUI.CursorPosition
+    $currentX = $currentPos.X
+
+    # Target position for |
+    $targetX = $RowWidth - 1
+
+    # If we've gone past the target, we need to backtrack
+    if ($currentX > $targetX) {
+        # Move cursor back to target position
+        $currentPos.X = $targetX
+        $host.UI.RawUI.CursorPosition = $currentPos
+        Write-Host "|" -ForegroundColor DarkGray
+    } else {
+        # Calculate spaces needed
+        $spacesNeeded = [Math]::Max(0, $targetX - $currentX)
+        Write-Host (" " * $spacesNeeded) -NoNewline
+        Write-Host "|" -ForegroundColor DarkGray
+    }
+}
+
+function Write-SessionMenuHeader {
+    <#
+    .SYNOPSIS
+        Writes the header box for the session menu
+    .DESCRIPTION
+        Displays column headers in a separate box above the main menu
+    #>
+    param(
+        [int]$BoxWidth,
+        [bool]$OnlyWithProfiles = $false
+    )
+
+    if ($OnlyWithProfiles) {
+        # Profile mode headers
+        $pathWidth = [Math]::Max(15, $BoxWidth - 121)
+        $headers = @("Session", "Messages", "Created", "Modified", "Cost", "WT Profile", "Color Scheme", "Path")
+        $headerWidths = @(30, 8, 12, 12, 8, 20, 20, $pathWidth)
+
+        # Map header index to global column number: Session=3, Messages=5, Created=6, Modified=7, Cost=8, WTProfile=9, ColorScheme=none, Path=11
+        $headerToColumn = @(3, 5, 6, 7, 8, 9, 0, 11)
+
+        # Top border
+        Write-Host ("+" + ("-" * ($BoxWidth - 2)) + "+") -ForegroundColor DarkGray
+
+        # Header row with color coding for sorted column
+        Write-Host "|" -NoNewline -ForegroundColor DarkGray
+        Write-Host " " -NoNewline
+
+        $targetX = $BoxWidth - 1
+        for ($i = 0; $i -lt $headers.Count; $i++) {
+            $currentPos = $host.UI.RawUI.CursorPosition
+            $currentX = $currentPos.X
+
+            # Calculate available space
+            $availableSpace = $targetX - $currentX
+            if ($availableSpace -le 0) { break }  # No room left
+
+            # Truncate if needed
+            $actualWidth = [Math]::Min($headerWidths[$i], $availableSpace)
+            $headerText = $headers[$i]
+            if ($headerText.Length -gt $actualWidth) {
+                $headerText = $headerText.Substring(0, $actualWidth)
+            }
+
+            $color = if ($headerToColumn[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
+            Write-Host ("{0,-$actualWidth}" -f $headerText) -NoNewline -ForegroundColor $color
+
+            # Add space separator if not last column and room available
+            if ($i -lt $headers.Count - 1) {
+                $currentPos = $host.UI.RawUI.CursorPosition
+                if ($currentPos.X -lt $targetX) {
+                    Write-Host " " -NoNewline
+                }
+            }
+        }
+        PlaceHeaderRightHandBorder -RowWidth $BoxWidth
+
+        # Bottom border
+        Write-Host ("+" + ("-" * ($BoxWidth - 2)) + "+") -ForegroundColor DarkGray
+
+    } else {
+        # Get column configuration
+        $columnConfig = Get-ColumnConfiguration
+
+        # Calculate path width
+        $pathWidth = Get-DynamicPathWidth -BoxWidth $BoxWidth -ColumnConfig $columnConfig
+
+        # Build dynamic headers and track sort column mapping
+        $headers = @()
+        $headerWidths = @()
+        $headerToColumn = @()
+
+        if ($columnConfig.Active) {
+            $headers += "Active"
+            $headerWidths += 6
+            $headerToColumn += 1
+        }
+        if ($columnConfig.Model) {
+            $headers += "Model"
+            $headerWidths += 8
+            $headerToColumn += 2
+        }
+        if ($columnConfig.Session) {
+            $headers += "Session"
+            $headerWidths += 30
+            $headerToColumn += 3
+        }
+        if ($columnConfig.Notes) {
+            $headers += "Notes"
+            $headerWidths += 10
+            $headerToColumn += 4
+        }
+        if ($columnConfig.Messages) {
+            $headers += "Messages"
+            $headerWidths += 8
+            $headerToColumn += 5
+        }
+        if ($columnConfig.Created) {
+            $headers += "Created"
+            $headerWidths += 12
+            $headerToColumn += 6
+        }
+        if ($columnConfig.Modified) {
+            $headers += "Modified"
+            $headerWidths += 12
+            $headerToColumn += 7
+        }
+        if ($columnConfig.Cost) {
+            $headers += "Cost"
+            $headerWidths += 8
+            $headerToColumn += 8
+        }
+        if ($columnConfig.WinTerminal) {
+            $headers += "Win Terminal"
+            $headerWidths += 25
+            $headerToColumn += 9
+        }
+        if ($columnConfig.ForkedFrom) {
+            $headers += "Forked From"
+            $headerWidths += 25
+            $headerToColumn += 10
+        }
+        if ($columnConfig.Path) {
+            $headers += "Path"
+            $headerWidths += $pathWidth
+            $headerToColumn += 11
+        }
+
+        # Top border
+        Write-Host ("+" + ("-" * ($BoxWidth - 2)) + "+") -ForegroundColor DarkGray
+
+        # Header row with color coding for sorted column
+        Write-Host "|" -NoNewline -ForegroundColor DarkGray
+        Write-Host " " -NoNewline
+
+        $targetX = $BoxWidth - 1
+        for ($i = 0; $i -lt $headers.Count; $i++) {
+            $currentPos = $host.UI.RawUI.CursorPosition
+            $currentX = $currentPos.X
+
+            # Calculate available space
+            $availableSpace = $targetX - $currentX
+            if ($availableSpace -le 0) { break }  # No room left
+
+            # Truncate if needed
+            $actualWidth = [Math]::Min($headerWidths[$i], $availableSpace)
+            $headerText = $headers[$i]
+            if ($headerText.Length -gt $actualWidth) {
+                $headerText = $headerText.Substring(0, $actualWidth)
+            }
+
+            $color = if ($headerToColumn[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
+            Write-Host ("{0,-$actualWidth}" -f $headerText) -NoNewline -ForegroundColor $color
+
+            # Add space separator if not last column and room available
+            if ($i -lt $headers.Count - 1) {
+                $currentPos = $host.UI.RawUI.CursorPosition
+                if ($currentPos.X -lt $targetX) {
+                    Write-Host " " -NoNewline
+                }
+            }
+        }
+        PlaceHeaderRightHandBorder -RowWidth $BoxWidth
+
+        # Bottom border
+        Write-Host ("+" + ("-" * ($BoxWidth - 2)) + "+") -ForegroundColor DarkGray
+    }
+}
+
+function Get-DynamicPathWidth {
+    <#
+    .SYNOPSIS
+        Calculates the dynamic path column width based on visible columns
+    .DESCRIPTION
+        Centralized calculation for path width to ensure consistency across menu rendering
+    #>
+    param(
+        [int]$BoxWidth,
+        [hashtable]$ColumnConfig
+    )
+
+    # Calculate total width of all non-Path columns
+    $fixedWidth = 0
+    $nonPathColumns = 0
+
+    if ($ColumnConfig.Active) { $fixedWidth += 6; $nonPathColumns++ }
+    if ($ColumnConfig.Model) { $fixedWidth += 8; $nonPathColumns++ }
+    if ($ColumnConfig.Session) { $fixedWidth += 30; $nonPathColumns++ }
+    if ($ColumnConfig.Notes) { $fixedWidth += 10; $nonPathColumns++ }
+    if ($ColumnConfig.Messages) { $fixedWidth += 8; $nonPathColumns++ }
+    if ($ColumnConfig.Created) { $fixedWidth += 12; $nonPathColumns++ }
+    if ($ColumnConfig.Modified) { $fixedWidth += 12; $nonPathColumns++ }
+    if ($ColumnConfig.Cost) { $fixedWidth += 8; $nonPathColumns++ }
+    if ($ColumnConfig.WinTerminal) { $fixedWidth += 25; $nonPathColumns++ }
+    if ($ColumnConfig.ForkedFrom) { $fixedWidth += 25; $nonPathColumns++ }
+
+    # Calculate spaces between columns
+    # If Path is visible: we have (nonPathColumns) + Path = total columns, need (nonPathColumns) spaces
+    # If Path not visible: we have nonPathColumns, need (nonPathColumns - 1) spaces
+    if ($ColumnConfig.Path) {
+        $spacesBetweenColumns = $nonPathColumns
+    } else {
+        $spacesBetweenColumns = [Math]::Max(0, $nonPathColumns - 1)
+    }
+
+    # Row structure: "|" (1) + " " (1) + content + " " (1) + "|" (1) = BoxWidth
+    # Content = fixedWidth + spacesBetweenColumns + pathWidth
+    # Therefore: pathWidth = BoxWidth - 4 - fixedWidth - spacesBetweenColumns
+    $pathWidth = $BoxWidth - 4 - $fixedWidth - $spacesBetweenColumns
+
+    return [Math]::Max(15, $pathWidth)
+}
+
 function Show-SessionMenu {
     <#
     .SYNOPSIS
@@ -1696,154 +1941,15 @@ function Show-SessionMenu {
         Write-Host "$padding$pageIndicator" -ForegroundColor DarkGray
     }
 
-    Write-Host ("+" + ("-" * ($boxWidth - 2)) + "+") -ForegroundColor DarkGray
+    # Display header in separate box
+    Write-SessionMenuHeader -BoxWidth $boxWidth -OnlyWithProfiles $OnlyWithProfiles
 
-    # Display header - different format for profile mode
-    # Calculate dynamic path width to match row formatting
-    if ($OnlyWithProfiles) {
-        $pathWidth = [Math]::Max(15, $boxWidth - 121)
-
-        # Column headers with color highlighting for sorted column
-        $headers = @("Session", "Messages", "Created", "Modified", "Cost", "WT Profile", "Color Scheme", "Path")
-        $headerLines = @("-------", "--------", "-------", "--------", "----", "----------", "------------", "----")
-        $headerWidths = @(30, 8, 12, 12, 8, 20, 20, ($pathWidth - 1))
-        $widths = @(30, 8, 12, 12, 8, 20, 20, $pathWidth)
-
-        # Map header index to global column number: Session=3, Messages=4, Created=5, Modified=6, Cost=7, WTProfile=8, ColorScheme=none, Path=10
-        $headerToColumn = @(3, 4, 5, 6, 7, 8, 0, 10)
-
-        # Write header row
-        Write-Host "| " -NoNewline -ForegroundColor DarkGray
-        for ($i = 0; $i -lt $headers.Count; $i++) {
-            $color = if ($headerToColumn[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
-            Write-Host ("{0,-$($headerWidths[$i])}" -f $headers[$i]) -NoNewline -ForegroundColor $color
-            if ($i -lt $headers.Count - 1) { Write-Host " " -NoNewline }
-        }
-        Write-Host "  |" -ForegroundColor DarkGray
-
-        # Write separator line
-        Write-Host "| " -NoNewline -ForegroundColor DarkGray
-        for ($i = 0; $i -lt $headerLines.Count; $i++) {
-            $color = if ($headerToColumn[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
-            Write-Host ("{0,-$($headerWidths[$i])}" -f $headerLines[$i]) -NoNewline -ForegroundColor $color
-            if ($i -lt $headerLines.Count - 1) { Write-Host " " -NoNewline }
-        }
-        Write-Host "  |" -ForegroundColor DarkGray
-    } else {
-        # Get column configuration
+    # Get column configuration for non-profile mode
+    if (-not $OnlyWithProfiles) {
         $columnConfig = Get-ColumnConfiguration
-
-        # Calculate path width: boxWidth - borders(4) - fixed columns
-        # Base: Active(6) + Model(8) + Session(30) + Notes(10) + Messages(8) + Created(12) + Modified(12) + Cost(8) + WinTerminal(25) + ForkedFrom(25) + spaces(10) = 154
-        # Adjust based on hidden columns
-        $fixedWidth = 4  # borders
-        $columnSpaces = 0
-
-        if ($columnConfig.Active) { $fixedWidth += 6; $columnSpaces++ }
-        if ($columnConfig.Model) { $fixedWidth += 8; $columnSpaces++ }
-        if ($columnConfig.Session) { $fixedWidth += 30; $columnSpaces++ }
-        if ($columnConfig.Notes) { $fixedWidth += 10; $columnSpaces++ }
-        if ($columnConfig.Messages) { $fixedWidth += 8; $columnSpaces++ }
-        if ($columnConfig.Created) { $fixedWidth += 12; $columnSpaces++ }
-        if ($columnConfig.Modified) { $fixedWidth += 12; $columnSpaces++ }
-        if ($columnConfig.Cost) { $fixedWidth += 8; $columnSpaces++ }
-        if ($columnConfig.WinTerminal) { $fixedWidth += 25; $columnSpaces++ }
-        if ($columnConfig.ForkedFrom) { $fixedWidth += 25; $columnSpaces++ }
-        $fixedWidth += $columnSpaces  # space between columns
-
-        $pathWidth = [Math]::Max(15, $boxWidth - $fixedWidth)
-
-        # Build dynamic headers based on configuration
-        $headers = @()
-        $headerLines = @()
-        $headerWidths = @()
-        $widths = @()
-        $colNum = 1
-
-        if ($columnConfig.Active) {
-            $headers += "Active"
-            $headerLines += "------"
-            $headerWidths += 6
-            $widths += 6
-        }
-        if ($columnConfig.Model) {
-            $headers += "Model"
-            $headerLines += "-----"
-            $headerWidths += 8
-            $widths += 8
-        }
-        if ($columnConfig.Session) {
-            $headers += "Session"
-            $headerLines += "-------"
-            $headerWidths += 30
-            $widths += 30
-        }
-        if ($columnConfig.Notes) {
-            $headers += "Notes"
-            $headerLines += "-----"
-            $headerWidths += 10
-            $widths += 10
-        }
-        if ($columnConfig.Messages) {
-            $headers += "Messages"
-            $headerLines += "--------"
-            $headerWidths += 8
-            $widths += 8
-        }
-        if ($columnConfig.Created) {
-            $headers += "Created"
-            $headerLines += "-------"
-            $headerWidths += 12
-            $widths += 12
-        }
-        if ($columnConfig.Modified) {
-            $headers += "Modified"
-            $headerLines += "--------"
-            $headerWidths += 12
-            $widths += 12
-        }
-        if ($columnConfig.Cost) {
-            $headers += "Cost"
-            $headerLines += "----"
-            $headerWidths += 8
-            $widths += 8
-        }
-        if ($columnConfig.WinTerminal) {
-            $headers += "Win Terminal"
-            $headerLines += "------------"
-            $headerWidths += 25
-            $widths += 25
-        }
-        if ($columnConfig.ForkedFrom) {
-            $headers += "Forked From"
-            $headerLines += "-----------"
-            $headerWidths += 25
-            $widths += 25
-        }
-        if ($columnConfig.Path) {
-            $headers += "Path"
-            $headerLines += "----"
-            $headerWidths += ($pathWidth - 1)
-            $widths += $pathWidth
-        }
-
-        # Write header row
-        Write-Host "| " -NoNewline -ForegroundColor DarkGray
-        for ($i = 0; $i -lt $headers.Count; $i++) {
-            $color = if ($Global:SortColumn -eq ($i + 1)) { "Yellow" } else { "Cyan" }
-            Write-Host ("{0,-$($headerWidths[$i])}" -f $headers[$i]) -NoNewline -ForegroundColor $color
-            if ($i -lt $headers.Count - 1) { Write-Host " " -NoNewline }
-        }
-        Write-Host "  |" -ForegroundColor DarkGray
-
-        # Write separator line
-        Write-Host "| " -NoNewline -ForegroundColor DarkGray
-        for ($i = 0; $i -lt $headerLines.Count; $i++) {
-            $color = if ($Global:SortColumn -eq ($i + 1)) { "Yellow" } else { "Cyan" }
-            Write-Host ("{0,-$($headerWidths[$i])}" -f $headerLines[$i]) -NoNewline -ForegroundColor $color
-            if ($i -lt $headerLines.Count - 1) { Write-Host " " -NoNewline }
-        }
-        Write-Host "  |" -ForegroundColor DarkGray
+        $pathWidth = Get-DynamicPathWidth -BoxWidth $boxWidth -ColumnConfig $columnConfig
+    } else {
+        $pathWidth = [Math]::Max(15, $boxWidth - 121)
     }
 
     # Capture first row Y position for arrow key navigation
@@ -1867,10 +1973,19 @@ function Show-SessionMenu {
             $colorScheme = Truncate-String $row.ColorScheme 20
             $path = Truncate-String $row.Path $pathWidth -FromLeft
             $rowText = ("{0,-30} {1,-8} {2,-12} {3,-12} {4,-8} {5,-20} {6,-20} {7,-$pathWidth}" -f $title, $row.Messages, $row.Created, $row.Modified, $cost, $profile, $colorScheme, $path)
-            Write-Host "| " -NoNewline -ForegroundColor DarkGray
-            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor $rowColor
-            Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
-            Write-Host "  |" -ForegroundColor DarkGray
+
+            # Calculate actual content width
+            $contentWidth = $boxWidth - 4
+            $truncated = Truncate-String $rowText $contentWidth
+            $truncatedLength = $truncated.Length
+            $paddingNeeded = [Math]::Max(0, $contentWidth - $truncatedLength)
+
+            Write-Host "|" -NoNewline -ForegroundColor DarkGray
+            Write-Host " " -NoNewline
+            Write-Host $truncated -NoNewline -ForegroundColor $rowColor
+            Write-Host (" " * $paddingNeeded) -NoNewline
+            Write-Host " " -NoNewline
+            Write-Host "|" -ForegroundColor DarkGray
         } else {
             # Build row dynamically based on column configuration
             $rowParts = @()
@@ -1927,10 +2042,18 @@ function Show-SessionMenu {
             $formatString = $formatParts -join " "
             $rowText = $formatString -f $rowParts
 
-            Write-Host "| " -NoNewline -ForegroundColor DarkGray
-            Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor $rowColor
-            Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
-            Write-Host "  |" -ForegroundColor DarkGray
+            # Calculate actual content width
+            $contentWidth = $boxWidth - 4
+            $truncated = Truncate-String $rowText $contentWidth
+            $truncatedLength = $truncated.Length
+            $paddingNeeded = [Math]::Max(0, $contentWidth - $truncatedLength)
+
+            Write-Host "|" -NoNewline -ForegroundColor DarkGray
+            Write-Host " " -NoNewline
+            Write-Host $truncated -NoNewline -ForegroundColor $rowColor
+            Write-Host (" " * $paddingNeeded) -NoNewline
+            Write-Host " " -NoNewline
+            Write-Host "|" -ForegroundColor DarkGray
         }
         $rowIndex++
     }
@@ -2019,21 +2142,8 @@ function Write-SingleMenuRow {
         # Get column configuration
         $columnConfig = Get-ColumnConfiguration
 
-        # Calculate path width dynamically based on visible columns
-        $fixedWidth = 4
-        $columnSpaces = 0
-        if ($columnConfig.Active) { $fixedWidth += 6; $columnSpaces++ }
-        if ($columnConfig.Model) { $fixedWidth += 8; $columnSpaces++ }
-        if ($columnConfig.Session) { $fixedWidth += 30; $columnSpaces++ }
-        if ($columnConfig.Notes) { $fixedWidth += 10; $columnSpaces++ }
-        if ($columnConfig.Messages) { $fixedWidth += 8; $columnSpaces++ }
-        if ($columnConfig.Created) { $fixedWidth += 12; $columnSpaces++ }
-        if ($columnConfig.Modified) { $fixedWidth += 12; $columnSpaces++ }
-        if ($columnConfig.Cost) { $fixedWidth += 8; $columnSpaces++ }
-        if ($columnConfig.WinTerminal) { $fixedWidth += 25; $columnSpaces++ }
-        if ($columnConfig.ForkedFrom) { $fixedWidth += 25; $columnSpaces++ }
-        $fixedWidth += $columnSpaces
-        $pathWidth = [Math]::Max(15, $BoxWidth - $fixedWidth)
+        # Calculate path width using shared function
+        $pathWidth = Get-DynamicPathWidth -BoxWidth $BoxWidth -ColumnConfig $columnConfig
 
         # Build row dynamically based on column configuration
         $rowParts = @()
@@ -2069,10 +2179,17 @@ function Write-SingleMenuRow {
     }
 
     # Draw the row
-    Write-Host "| " -NoNewline -ForegroundColor DarkGray
-    Write-Host (Truncate-String $rowText ($BoxWidth - 4)) -NoNewline -ForegroundColor $rowColor
-    Write-Host (" " * [Math]::Max(0, $BoxWidth - 4 - $rowText.Length)) -NoNewline
-    Write-Host "  |" -ForegroundColor DarkGray
+    $contentWidth = $BoxWidth - 4
+    $truncated = Truncate-String $rowText $contentWidth
+    $truncatedLength = $truncated.Length
+    $paddingNeeded = [Math]::Max(0, $contentWidth - $truncatedLength)
+
+    Write-Host "|" -NoNewline -ForegroundColor DarkGray
+    Write-Host " " -NoNewline
+    Write-Host $truncated -NoNewline -ForegroundColor $rowColor
+    Write-Host (" " * $paddingNeeded) -NoNewline
+    Write-Host " " -NoNewline
+    Write-Host "|" -ForegroundColor DarkGray
 }
 
 function Get-ArrowKeyNavigation {
@@ -5811,6 +5928,11 @@ function Show-ColumnConfigMenu {
         Write-Host " or " -NoNewline -ForegroundColor Gray
         Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
         Write-Host " to toggle" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "TIP: " -NoNewline -ForegroundColor Yellow
+        Write-Host "In the main menu, press " -NoNewline -ForegroundColor Gray
+        Write-Host "1-11" -NoNewline -ForegroundColor Yellow
+        Write-Host " to sort by column number" -ForegroundColor Gray
         Write-Host ""
 
         # Display column checkboxes

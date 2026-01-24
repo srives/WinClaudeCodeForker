@@ -2,6 +2,333 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.9.5] - 2026-01-24
+
+### Major Features
+
+#### Separated Header Box
+- **Visual Separation** - Headers now display in separate box above main menu
+- **Professional Layout** - Header box and data box clearly distinguished
+- **Clean Design** - Matches professional UI design patterns with boxed sections
+- **Both Menus** - Applied to main menu and Win Terminal Config menu
+
+#### Sorted Column Highlighting
+- **Yellow Highlight** - Active sort column highlighted in yellow in headers
+- **Visual Feedback** - Immediate visual indication of current sort order
+- **Both Modes** - Works for main menu (dynamic columns) and Win Terminal Config menu
+- **Color Coding** - Sorted column in yellow, all others in cyan
+
+#### Intelligent Header Truncation
+- **Auto-Truncation** - Headers truncate when screen width insufficient
+- **No Wrapping** - Prevents text wrapping that breaks menu layout
+- **Graceful Degradation** - Columns drop when space unavailable
+- **Perfect Borders** - Border placement accurate regardless of window size
+
+### Bug Fixes
+
+#### Border Alignment Fixed (Critical)
+- **Off-by-One Error** - Fixed menu box right border misalignment
+- **Shared Calculation** - Created `Get-DynamicPathWidth()` for consistent path width calculation
+- **Eliminated Duplication** - Removed duplicate math logic between functions
+- **Perfect Alignment** - Border now aligns perfectly with top/bottom borders in all scenarios
+
+#### Precise Header Positioning
+- **Cursor-Based** - Border position calculated from actual cursor position, not estimated
+- **Edge Case Handling** - Handles overflow where columns exceed available space
+- **Truncation** - Truncates overflowing text rather than allowing wrapping
+- **Measured Placement** - Reads actual cursor X position to determine spacing needed
+
+### Changes
+
+**New Functions:**
+- `Get-DynamicPathWidth($BoxWidth, $ColumnConfig)` - Lines 1470-1503: Centralized path width calculation with consistent math
+- `Write-SessionMenuHeader($BoxWidth, $OnlyWithProfiles)` - Lines 1433-1553: Dedicated header rendering function
+- `PlaceHeaderRightHandBorder($RowWidth)` - Lines 1418-1431: Cursor-based border placement function
+
+**Refactored Functions:**
+- `Show-SessionMenu()` - Removed inline header rendering, now calls `Write-SessionMenuHeader()`
+- `Show-SessionMenu()` - Now uses shared `Get-DynamicPathWidth()` for path calculation
+- `Write-SingleMenuRow()` - Now uses shared `Get-DynamicPathWidth()` for path calculation
+
+**Header Rendering:**
+- Headers check available space before printing each column
+- Columns truncate if exceeding available space
+- Stop printing columns if no room remains
+- Only add space separators when room available
+- Call `PlaceHeaderRightHandBorder()` to place `|` at measured position
+
+**Border Calculation Math:**
+- Row structure: `|` (1) + ` ` (1) + content + ` ` (1) + `|` (1) = BoxWidth
+- Content width: BoxWidth - 4
+- Non-Path column count: 10 columns = 144 characters (when all visible)
+- Spaces between N columns: N - 1 spaces
+- Path width: BoxWidth - 4 - (sum of visible column widths) - (visible columns - 1)
+
+**Menu Structure:**
+- Removed redundant border line between header and data boxes
+- Header box: `+---+` | headers | `+---+`
+- Data box: `+---+` | data rows | `+---+`
+
+### Technical Details
+
+**Border Placement Algorithm:**
+1. Write left border: `|`
+2. Write padding: ` `
+3. Write columns with spaces between
+4. Read actual cursor X position
+5. Calculate: `spacesNeeded = (BoxWidth - 1) - currentX`
+6. Write spacing: `" " * spacesNeeded`
+7. Write right border: `|`
+
+**Header Truncation Logic:**
+```powershell
+for each column:
+    get current cursor X position
+    calculate available space = targetX - currentX
+    if availableSpace <= 0: break (no room)
+    truncate column text to fit available space
+    write column with color coding
+    add space separator if not last column and room available
+```
+
+**Path Width Calculation:**
+- Count visible non-Path columns and their widths
+- Count spaces needed (N visible columns including Path = N-1 spaces)
+- Path width = BoxWidth - 4 - column widths - spaces
+- Minimum path width: 15 characters
+
+**Sort Column Highlighting:**
+- Profile mode: Maps header index to global column numbers (Session=3, Messages=5, etc.)
+- Dynamic mode: Tracks column numbers as columns are built (Active=1, Model=2, etc.)
+- Compare column number to `$Global:SortColumn`
+- Yellow if match, Cyan if no match
+
+---
+
+## [1.9.0] - 2026-01-24
+
+### Major Features
+
+#### Column Configuration System
+- **Interactive Column Management** - Press G key in main menu to access column configuration
+- **11 Configurable Columns** - Active, Model, Session, Notes, Messages, Created, Modified, Cost, Win Terminal, Forked From, Path
+- **Checkbox Interface** - Visual checkboxes show enabled/disabled state for each column
+- **Arrow Key Navigation** - Navigate through column list with UP/DOWN arrows
+- **Yellow Highlighting** - Current selection highlighted in yellow for easy identification
+- **Toggle with Space/Enter** - Press Space or Enter to toggle checkbox state
+- **Save and Exit** - Saves configuration and reloads menu with new column layout
+- **Abort Option** - Cancel changes without saving
+- **Persistent Configuration** - Settings saved to `~/.claude-menu/column-config.json`
+- **Automatic Restoration** - Configuration restored on program restart
+
+#### Notes Column Integration
+- **10-Character Column** - Notes column added to main menu display
+- **Hidden by Default** - Notes column disabled in default configuration (can be enabled via confiG menu)
+- **Full Sorting Support** - Press 4 key to sort by Notes column
+- **Integrated with Existing Notes** - Works seamlessly with v1.8.0 notes functionality
+- **Column 4 Position** - Positioned between Session and Messages columns
+
+#### Dynamic Display System
+- **Dynamic Headers** - Column headers built at runtime based on configuration
+- **Dynamic Rows** - Row data rendered based on enabled columns
+- **Automatic Width Adjustment** - Column widths adjust when columns hidden/shown
+- **Variable Path Column** - Path column adjusts to fill remaining space
+- **Navigation Consistency** - Arrow key navigation respects column configuration
+- **Sort Mapping Updated** - All 11 columns can be sorted (1=Active, 2=Model, 3=Session, 4=Notes, 5=Messages, etc.)
+
+### Changes
+
+**Column Configuration:**
+- New `Get-ColumnConfiguration()` function loads settings from JSON file
+- New `Set-ColumnConfiguration()` function saves settings to JSON file
+- New `Show-ColumnConfigMenu()` function provides interactive configuration UI
+- Default configuration: All columns visible except Notes
+
+**Menu Updates:**
+- Added "confiG" option to main menu prompt (G key highlighted in yellow)
+- confiG option only shown in main menu, not Win Terminal Config mode
+- Updated menu prompt format: `...Refresh | confiG | PgUp | PgDn | eXit`
+
+**Display Updates:**
+- `Show-SessionMenu()` builds headers dynamically based on column configuration
+- `Show-SessionMenu()` builds rows dynamically based on column configuration
+- `Write-SingleMenuRow()` respects column configuration during arrow navigation
+- Column sort mapping updated to include Notes as column 4
+- All subsequent columns shifted: Messages (4→5), Created (5→6), Modified (6→7), Cost (7→8), Win Terminal (8→9), Forked From (9→10), Path (10→11)
+
+**Technical Implementation:**
+- Configuration file path: `$Global:ColumnConfigPath = "$Global:MenuPath\column-config.json"`
+- Configuration structure: Hashtable with column names as keys, boolean visibility as values
+- Configuration persists across program restarts automatically
+- Error handling with automatic fallback to default configuration
+- Added G key handler in `Get-ArrowKeyNavigation()` function
+- Added ColumnConfig action handler in main loop
+
+### Technical Details
+
+**New Functions:**
+- `Get-ColumnConfiguration()` - Lines 5512-5563: Loads configuration from JSON, returns default if missing
+- `Set-ColumnConfiguration($Config)` - Lines 5565-5598: Saves configuration hashtable to JSON
+- `Show-ColumnConfigMenu()` - Lines 5600-5702: Interactive menu with arrow navigation and checkboxes
+
+**Modified Functions:**
+- `Show-SessionMenu()` - Lines 1593-1600: Added notes field to row data
+- `Show-SessionMenu()` - Lines 1621-1633: Updated sort column mapping to include Notes
+- `Show-SessionMenu()` - Lines 1733-1828: Dynamic header building based on configuration
+- `Show-SessionMenu()` - Lines 1874-1936: Dynamic row building based on configuration
+- `Write-SingleMenuRow()` - Lines 2009-2068: Respects column configuration during navigation
+- `Get-ArrowKeyNavigation()` - Lines 2463-2466: Added G key handler for column configuration
+- Main loop - Lines 6901-6914: Added ColumnConfig action handler with reload logic
+
+**Configuration File Format:**
+```json
+{
+  "Active": true,
+  "Model": true,
+  "Session": true,
+  "Notes": false,
+  "Messages": true,
+  "Created": true,
+  "Modified": true,
+  "Cost": true,
+  "WinTerminal": true,
+  "ForkedFrom": true,
+  "Path": true
+}
+```
+
+**Menu Workflow:**
+1. User presses G key in main menu
+2. `Show-ColumnConfigMenu()` displays interactive menu
+3. User navigates with arrow keys (yellow highlight on current item)
+4. User toggles checkboxes with Space or Enter
+5. User selects "Save and Exit" to save configuration
+6. Menu reloads with new column layout applied
+7. Configuration persists to next program start
+
+---
+
+## [1.8.0] - 2026-01-24
+
+### Major Features
+
+#### Session Notes Functionality
+- **Add Notes to Sessions** - Press N key in session options menu to add/edit notes
+- **Persistent Storage** - Notes stored in session-mapping.json file
+- **Works with Any Session** - Add notes to both archived and active sessions
+- **Current Notes Display** - Shows existing notes when adding/editing
+- **Clear Notes** - Press Enter with empty input to remove notes
+- **Notes Display** - Shows notes under "Session options" when viewing session details
+- **Integration Ready** - Notes field available for future display enhancements
+
+#### Menu Key Handling Improvements
+- **Silent Invalid Input** - Invalid key presses no longer echo to screen
+- **No Visual Feedback** - Invalid keys silently ignored without error messages
+- **Valid Keys No Echo** - Valid key presses also don't echo (key-activated menus)
+- **Cleaner Experience** - More professional, less intrusive user interface
+- **15+ Menus Updated** - Applies to all menu functions throughout application
+
+#### Debug Menu Enhancements
+- **Simplified Toggle Text** - Changed from "Toggle - Turn Debug Off" to just "Debug Off" (when on)
+- **Dynamic Text** - Shows "Debug On" when debug is off, "Debug Off" when debug is on
+- **Centered Header** - "DEBUG MODE" text centered in 40-character wide separator lines
+- **Hotkey Change** - Changed from T (Toggle) to D (Debug) for consistency
+- **Professional Appearance** - More concise and intuitive menu layout
+
+### Bug Fixes
+
+#### Rename Feature Parameter Error
+- **Fixed Background Generation** - Corrected function call in `Rename-ClaudeSession()`
+- **Error Message** - Was: "A parameter cannot be found that matches parameter name 'ProjectPath'"
+- **Root Cause** - Direct call to `New-UniformBackgroundImage` with wrong parameter name
+- **Solution** - Changed to use `New-SessionBackgroundImage` wrapper function
+- **Location** - Line 5804 in Claude-Menu.ps1
+- **Impact** - Rename feature now correctly generates new background images
+- **Related Functions** - `Rename-ClaudeSession()` now uses proper wrapper with correct parameter names
+
+### Changes
+
+**Notes Implementation:**
+- Added `Get-SessionNotes($SessionId)` function - retrieves notes from session-mapping.json
+- Added `Set-SessionNotes($SessionId, $Notes)` function - stores notes with proper property handling
+- Updated `Get-ForkOrContinue()` to accept and display Notes parameter
+- Added N key handler for both archived and normal session menus (lines 3490-3493, 3519-3522)
+- Added notes action handler in main loop (lines 7060-7085)
+- Notes displayed under "Session options" line when viewing session details
+- Empty string stored if notes cleared
+
+**Menu Echo Removal:**
+- Removed all `Write-Host $choice` statements from menu functions
+- Affected functions (15+ locations):
+  - `Get-ForkOrContinue()` - Removed key echo for C/F/N/D/R/V/A keys
+  - `Get-SessionManagementChoice()` - Removed key echo for 1/2/3/A keys
+  - `Get-RegenerateImageChoice()` - Removed key echo for 1/2/3/A keys
+  - `Get-ModelChoice()` - Removed key echo for 1/2/3/A keys
+  - `Get-TrustedSessionChoice()` - Removed key echo for Y/N/A keys
+  - Directory selection menu - Removed key echo
+  - `Enable-GlobalBypassPermissions()` - Removed key echo (2 prompts)
+  - `Disable-GlobalBypassPermissions()` - Removed key echo (2 prompts)
+  - `Resolve-BackgroundImageConflict()` - Removed key echo
+  - `Show-DebugToggle()` - Removed key echo
+  - Y/N confirmation prompts (5 locations) - Removed key echo
+  - Create profile prompts (2 locations) - Removed key echo
+- Debug logging still captures key presses for troubleshooting
+
+**Debug Menu Updates:**
+- Menu text updated: `Debug Off | Notepad - Open Debug Log | Instructions - Show debug mode help | Abort`
+- Header separator: `========================================`
+- Header text: `               DEBUG MODE               ` (centered in 40 chars)
+- Hotkey changed from 'T' to 'D' in switch case (line ~496)
+- Toggle text simplified: removed "Toggle - Turn" prefix
+- More professional and concise appearance
+
+### Technical Details
+
+**New Functions:**
+- `Get-SessionNotes($SessionId)` - Lines 5430-5456: Returns notes string from session-mapping.json
+- `Set-SessionNotes($SessionId, $Notes)` - Lines 5458-5510: Stores notes, creates entry if needed
+
+**Modified Functions:**
+- `Get-ForkOrContinue()` - Added Notes parameter (line ~3471), displays notes under session options (line ~3489)
+- `Rename-ClaudeSession()` - Line 5804: Fixed to use `New-SessionBackgroundImage` instead of `New-UniformBackgroundImage`
+- `Show-DebugToggle()` - Lines 481-498: Simplified toggle text, centered header, changed hotkey to D
+- All menu functions - Removed key echo statements (15+ functions affected)
+- Main loop - Lines 7060-7085: Added notes action handler with current notes display and save functionality
+
+**Session Mapping Schema Update:**
+- Added `notes` field to session entries in session-mapping.json
+- Notes stored as string value
+- Empty string when no notes set
+- Property added dynamically with `Add-Member -Force` if doesn't exist
+- Example entry:
+```json
+{
+  "projectPath": "C:\\repos",
+  "sessionId": "f6a0dbbf-18b7-4728-b44a-4d352a152ec1",
+  "created": "2026-01-19T21:58:54.3807879-06:00",
+  "wtProfileName": "Claude-DLLMonitor",
+  "notes": "Trying to see when the DLLs load and the AppNameSpace"
+}
+```
+
+**Notes Workflow:**
+1. User selects session and presses N key in options menu
+2. System retrieves current notes from session-mapping.json
+3. Current notes displayed in dark gray if they exist
+4. User prompted to enter new notes (or press Enter to clear)
+5. Notes saved to session-mapping.json with proper property handling
+6. Success message displayed in green
+7. Menu returns after 1 second delay
+
+**Key Echo Removal Rationale:**
+- Key-activated menus should not echo input (consistent with terminal best practices)
+- Invalid keys should be silently ignored (no visual clutter)
+- Valid keys should trigger actions immediately without visual confirmation
+- Debug logging preserves key press information for troubleshooting
+- More professional appearance similar to commercial terminal applications
+
+---
+
 ## [1.7.0] - 2026-01-21
 
 ### Major Features

@@ -1,6 +1,89 @@
 # Version Information
 
-## Current Version: 1.9.0 (2026-01-24)
+## Current Version: 1.9.5 (2026-01-24)
+
+### Release Notes
+
+This release fixes critical menu border alignment issues and refactors header rendering for improved reliability and visual consistency.
+
+#### Major Features
+
+**Separated Header Box**
+- Headers now display in separate box above main menu
+- Clean visual separation between column headers and data rows
+- Header box format: `+---+` border, headers, `+---+` border
+- Data box format: `+---+` border, data rows, `+---+` border
+- Consistent with professional UI design patterns
+
+**Sorted Column Highlighting**
+- Active sort column now highlighted in yellow in headers
+- Non-sorted columns display in cyan
+- Visual indicator of current sort order
+- Works for both main menu and Win Terminal Config menu
+
+**Intelligent Header Truncation**
+- Headers automatically truncate when screen width is insufficient
+- Prevents text wrapping that breaks menu layout
+- Columns drop gracefully when space unavailable
+- Border placement always accurate regardless of window size
+
+#### Bug Fixes
+
+**Border Alignment Fixed**
+- Fixed off-by-one error in menu box right border placement
+- Border now aligns perfectly with top/bottom borders
+- Created shared `Get-DynamicPathWidth()` function for consistent calculations
+- Eliminated duplicate math logic between `Show-SessionMenu()` and `Write-SingleMenuRow()`
+
+**Precise Header Positioning**
+- Created `PlaceHeaderRightHandBorder()` function for cursor-based border placement
+- Border position calculated from actual cursor position, not estimated width
+- Handles edge cases where columns overflow available space
+- Truncates overflowing text rather than allowing wrapping
+
+#### Technical Details
+
+**New Functions:**
+- `Get-DynamicPathWidth($BoxWidth, $ColumnConfig)` - Centralized path width calculation
+- `Write-SessionMenuHeader($BoxWidth, $OnlyWithProfiles)` - Dedicated header rendering function
+- `PlaceHeaderRightHandBorder($RowWidth)` - Cursor-based border placement
+
+**Refactored Logic:**
+- Header rendering completely isolated from data row rendering
+- Both `Show-SessionMenu()` and `Write-SingleMenuRow()` now call shared `Get-DynamicPathWidth()`
+- Header truncation logic prevents text from exceeding `$BoxWidth - 1` position
+- Space calculation based on actual cursor position rather than predicted width
+
+**Border Calculation:**
+- Row structure: `|` (1) + ` ` (1) + content + ` ` (1) + `|` (1) = BoxWidth
+- Content width: BoxWidth - 4
+- Path width: BoxWidth - 4 - (column widths) - (spaces between columns)
+- Right border placement: Read cursor X position, calculate spaces needed to reach BoxWidth - 1
+
+**Header Rendering Flow:**
+1. Write top border: `+----...----+`
+2. Write left border and padding: `| `
+3. Loop through visible columns, checking available space before each
+4. Truncate column text if exceeds available space
+5. Stop printing columns if no space remains
+6. Call `PlaceHeaderRightHandBorder()` to place `|` at exact position
+7. Write bottom border: `+----...----+`
+
+#### Changes
+
+**Menu Structure:**
+- Removed redundant border line between header and data sections
+- Header box and data box are now visually distinct
+- Header respects column configuration (hidden columns don't show)
+
+**Border Logic:**
+- Eliminated all hardcoded border width assumptions
+- Border placement now measured, not calculated
+- Handles window resize gracefully
+
+---
+
+## Previous Version: 1.9.0 (2026-01-24)
 
 ### Release Notes
 
