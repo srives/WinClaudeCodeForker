@@ -1715,7 +1715,7 @@ function Show-SessionMenu {
         Write-Host ""
     }
 
-    Write-Host "Claude Code Session Forker, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
+    Write-Host "Claude Code Session Manager with Win Terminal Forking, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
     Write-Host "Current directory: $PWD" -ForegroundColor DarkGray
     Write-Host "* A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it." -ForegroundColor DarkGray
 
@@ -2244,7 +2244,6 @@ function Get-ArrowKeyNavigation {
     $debugEnabled = Get-DebugState
     $debugColor = if ($debugEnabled) { "Red" } else { "Yellow" }
 
-    Write-Host ""
     if ($DeleteMode) {
         Write-Host "Choose with " -NoNewline -ForegroundColor Gray
         Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow

@@ -79,7 +79,7 @@ $Shortcut.Save()
 
 ### Main Menu
 ```
-Claude Code Session Forker, S. Rives, v.2026.1.20
+Claude Code Session Manager with Win Terminal Forking, S. Rives, v.2026.1.20
 Current directory: C:\repos\myproject
 
 +------------------------------------------------------------------------------+

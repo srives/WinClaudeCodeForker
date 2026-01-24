@@ -136,7 +136,7 @@ Then you can run it from any terminal by typing `claude-fork`.
 When you launch the script, you'll see an interactive menu showing all your Claude sessions:
 
 ```
-Claude Code Session Forker, S. Rives, v.2026.1.20
+Claude Code Session Manager with Win Terminal Forking, S. Rives, v.2026.1.20
 Current directory: C:\repos\myproject
 * A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it.
 Claude Sessions: 14 (Named: 0, Unnamed: 14) | Debug: OFF | Permissions: Quiet | Total Cost: $235.57
