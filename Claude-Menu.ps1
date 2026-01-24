@@ -480,15 +480,16 @@ function Show-DebugToggle {
 
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
-    Write-ColorText "  DEBUG MODE" -Color Cyan
+    Write-ColorText "               DEBUG MODE               " -Color Cyan
     Write-ColorText "========================================" -Color Cyan
     Write-Host ""
     Write-Host "Current state: " -NoNewline
     Write-Host $stateText -ForegroundColor $stateColor
     Write-Host ""
-    $toggleText = if ($currentState) { "Turn Debug Off" } else { "Turn Debug On" }
-    Write-Host "T" -NoNewline -ForegroundColor Yellow
-    Write-Host "oggle - $toggleText | " -NoNewline -ForegroundColor Gray
+    $toggleText = if ($currentState) { "ebug Off" } else { "ebug On" }
+    Write-Host "D" -NoNewline -ForegroundColor Yellow
+    Write-Host $toggleText -NoNewline -ForegroundColor Gray
+    Write-Host " | " -NoNewline -ForegroundColor Gray
     Write-Host "N" -NoNewline -ForegroundColor Yellow
     Write-Host "otepad - Open Debug Log | " -NoNewline -ForegroundColor Gray
     Write-Host "I" -NoNewline -ForegroundColor Yellow
@@ -499,7 +500,6 @@ function Show-DebugToggle {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $response = $key.Character.ToString().ToUpper()
-        Write-Host " $response"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -507,7 +507,7 @@ function Show-DebugToggle {
         }
 
         switch ($response) {
-            'T' {
+            'D' {
                 # Toggle debug flag
                 $newState = -not $currentState
                 Set-DebugState -Enabled $newState
@@ -552,7 +552,7 @@ function Show-DebugToggle {
                 return
             }
             default {
-                # Invalid choice - just continue loop
+                # Invalid choice - silently ignore
             }
         }
     }
@@ -1288,6 +1288,12 @@ function Get-SessionActivityMarker {
     }
 
     try {
+        # Check if session is archived first
+        $archiveStatus = Get-SessionArchiveStatus -SessionId $SessionId
+        if ($archiveStatus.Archived) {
+            return "Arch"
+        }
+
         # Get the session .jsonl file path
         $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
         $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
@@ -2563,7 +2569,6 @@ function Start-NewSession {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -2820,7 +2825,6 @@ function Start-ContinueSession {
         Write-Host "o: " -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $deleteChoice = $key.Character.ToString().ToUpper()
-        Write-Host $deleteChoice  # Echo the key
 
         # Handle Esc as No
         if ($key.VirtualKeyCode -eq 27) {
@@ -3041,7 +3045,6 @@ function Start-ContinueSession {
         Write-Host "o: " -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $createProfile = $key.Character.ToString().ToUpper()
-        Write-Host $createProfile  # Echo the key
 
         # Handle Esc as No
         if ($key.VirtualKeyCode -eq 27) {
@@ -3292,7 +3295,6 @@ function Get-SessionManagementChoice {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -3306,7 +3308,7 @@ function Get-SessionManagementChoice {
             'B' { Write-Host ""; return 'remove-background' }
             'A' { Write-Host ""; return 'abort' }
             default {
-                # Invalid choice - just continue loop
+                # Invalid choice - silently ignore
             }
         }
     }
@@ -3334,7 +3336,6 @@ function Get-RegenerateImageChoice {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -3348,7 +3349,7 @@ function Get-RegenerateImageChoice {
             'T' { Write-Host ""; return 'text' }
             'A' { Write-Host ""; return 'abort' }
             default {
-                # Invalid choice - just continue loop
+                # Invalid choice - silently ignore
             }
         }
     }
@@ -3362,10 +3363,33 @@ function Get-ForkOrContinue {
     param(
         [string]$SessionId = "",
         [string]$SessionTitle = "",
-        [string]$ProjectPath = ""
+        [string]$ProjectPath = "",
+        [bool]$IsArchived = $false,
+        [string]$ArchivedDate = $null,
+        [string]$Notes = ""
     )
 
     Write-Host ""
+
+    # Display archive banner if session is archived
+    if ($IsArchived) {
+        $dateDisplay = if ($ArchivedDate) {
+            try {
+                $dt = [DateTime]::Parse($ArchivedDate)
+                $dt.ToString("yyyy-MM-dd HH:mm:ss")
+            } catch {
+                $ArchivedDate
+            }
+        } else {
+            "Unknown"
+        }
+
+        Write-Host "========================================" -ForegroundColor Red
+        Write-Host "  ARCHIVED ON $dateDisplay" -ForegroundColor Red
+        Write-Host "========================================" -ForegroundColor Red
+        Write-Host ""
+    }
+
     Write-ColorText "Session options" -Color Cyan
     if ($SessionTitle) {
         Write-ColorText "Session: $SessionTitle" -Color DarkGray
@@ -3380,67 +3404,135 @@ function Get-ForkOrContinue {
             Write-ColorText "Git Branch: $gitBranch" -Color DarkGray
         }
     }
+
+    # Display notes if they exist
+    if ($Notes -and $Notes -ne "") {
+        Write-ColorText "Notes: $Notes" -Color DarkGray
+    }
+
     Write-Host ""
 
-    # Check if session has a Windows Terminal profile
-    $hasProfile = $false
-    if ($SessionTitle) {
-        $profileName = Get-WTProfileName -SessionTitle $SessionTitle -SessionId $SessionId
-        if ($profileName) {
-            $hasProfile = $true
-        }
+    if ($IsArchived) {
+        # Archived session menu - no Continue or Fork options
+        Write-Host "U" -NoNewline -ForegroundColor Yellow
+        Write-Host "narchive | " -NoNewline -ForegroundColor Gray
+        Write-Host "N" -NoNewline -ForegroundColor Yellow
+        Write-Host "otes | " -NoNewline -ForegroundColor Gray
+        Write-Host "D" -NoNewline -ForegroundColor Yellow
+        Write-Host "elete | " -NoNewline -ForegroundColor Gray
+        Write-Host "R" -NoNewline -ForegroundColor Yellow
+        Write-Host "ename | " -NoNewline -ForegroundColor Gray
+        Write-Host "A" -NoNewline -ForegroundColor Yellow
+        Write-Host "bort" -NoNewline -ForegroundColor Gray
     } else {
-        # For unnamed sessions, check session mapping
-        $mappedProfile = Get-SessionMapping -SessionId $SessionId
-        if ($mappedProfile) {
-            $hasProfile = $true
+        # Normal session menu
+        # Check if session has a Windows Terminal profile
+        $hasProfile = $false
+        if ($SessionTitle) {
+            $profileName = Get-WTProfileName -SessionTitle $SessionTitle -SessionId $SessionId
+            if ($profileName) {
+                $hasProfile = $true
+            }
+        } else {
+            # For unnamed sessions, check session mapping
+            $mappedProfile = Get-SessionMapping -SessionId $SessionId
+            if ($mappedProfile) {
+                $hasProfile = $true
+            }
         }
-    }
 
-    # Display appropriate continue option based on profile existence
-    Write-Host "C" -NoNewline -ForegroundColor Yellow
-    if ($hasProfile) {
-        Write-Host "ontinue - Resume Claude Session | " -NoNewline -ForegroundColor Gray
-    } else {
-        Write-Host "ontinue - Create profile and resume | " -NoNewline -ForegroundColor Gray
+        # Display appropriate continue option based on profile existence
+        Write-Host "C" -NoNewline -ForegroundColor Yellow
+        if ($hasProfile) {
+            Write-Host "ontinue - Resume Claude Session | " -NoNewline -ForegroundColor Gray
+        } else {
+            Write-Host "ontinue - Create profile and resume | " -NoNewline -ForegroundColor Gray
+        }
+        Write-Host "F" -NoNewline -ForegroundColor Yellow
+        Write-Host "ork - Create new branch | " -NoNewline -ForegroundColor Gray
+        Write-Host "N" -NoNewline -ForegroundColor Yellow
+        Write-Host "otes | " -NoNewline -ForegroundColor Gray
+        Write-Host "D" -NoNewline -ForegroundColor Yellow
+        Write-Host "elete | " -NoNewline -ForegroundColor Gray
+        Write-Host "R" -NoNewline -ForegroundColor Yellow
+        Write-Host "ename | " -NoNewline -ForegroundColor Gray
+        Write-Host "archi" -NoNewline -ForegroundColor Gray
+        Write-Host "V" -NoNewline -ForegroundColor Yellow
+        Write-Host "e | " -NoNewline -ForegroundColor Gray
+        Write-Host "A" -NoNewline -ForegroundColor Yellow
+        Write-Host "bort" -NoNewline -ForegroundColor Gray
     }
-    Write-Host "F" -NoNewline -ForegroundColor Yellow
-    Write-Host "ork - Create new branch | " -NoNewline -ForegroundColor Gray
-    Write-Host "D" -NoNewline -ForegroundColor Yellow
-    Write-Host "elete | " -NoNewline -ForegroundColor Gray
-    Write-Host "R" -NoNewline -ForegroundColor Yellow
-    Write-Host "ename | " -NoNewline -ForegroundColor Gray
-    Write-Host "A" -NoNewline -ForegroundColor Yellow
-    Write-Host "bort" -NoNewline -ForegroundColor Gray
 
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
+        Write-DebugInfo "Get-ForkOrContinue: User pressed key: '$choice' (VirtualKeyCode: $($key.VirtualKeyCode))"
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
+            Write-DebugInfo "  Esc pressed - returning 'abort'"
             Write-Host ""
             return 'abort'
         }
 
-        if ($choice -eq 'C') {
-            Write-Host ""
-            return 'continue'
-        } elseif ($choice -eq 'F') {
-            Write-Host ""
-            return 'fork'
-        } elseif ($choice -eq 'D') {
-            Write-Host ""
-            return 'delete'
-        } elseif ($choice -eq 'R') {
-            Write-Host ""
-            return 'rename'
-        } elseif ($choice -eq 'A') {
-            Write-Host ""
-            return 'abort'
+        if ($IsArchived) {
+            # Archived session options: Unarchive, Notes, Delete, Rename, Abort
+            if ($choice -eq 'U') {
+                Write-DebugInfo "  'U' pressed - returning 'unarchive'"
+                Write-Host ""
+                return 'unarchive'
+            } elseif ($choice -eq 'N') {
+                Write-DebugInfo "  'N' pressed - returning 'notes'"
+                Write-Host ""
+                return 'notes'
+            } elseif ($choice -eq 'D') {
+                Write-DebugInfo "  'D' pressed - returning 'delete'"
+                Write-Host ""
+                return 'delete'
+            } elseif ($choice -eq 'R') {
+                Write-DebugInfo "  'R' pressed - returning 'rename'"
+                Write-Host ""
+                return 'rename'
+            } elseif ($choice -eq 'A') {
+                Write-DebugInfo "  'A' pressed - returning 'abort'"
+                Write-Host ""
+                return 'abort'
+            } else {
+                Write-DebugInfo "  Invalid choice for archived session - ignoring silently"
+            }
         } else {
-            # Invalid choice - just continue loop
+            # Normal session options: Continue, Fork, Notes, Delete, Rename, Archive, Abort
+            if ($choice -eq 'C') {
+                Write-DebugInfo "  'C' pressed - returning 'continue'"
+                Write-Host ""
+                return 'continue'
+            } elseif ($choice -eq 'F') {
+                Write-DebugInfo "  'F' pressed - returning 'fork'"
+                Write-Host ""
+                return 'fork'
+            } elseif ($choice -eq 'N') {
+                Write-DebugInfo "  'N' pressed - returning 'notes'"
+                Write-Host ""
+                return 'notes'
+            } elseif ($choice -eq 'D') {
+                Write-DebugInfo "  'D' pressed - returning 'delete'"
+                Write-Host ""
+                return 'delete'
+            } elseif ($choice -eq 'R') {
+                Write-DebugInfo "  'R' pressed - returning 'rename'"
+                Write-Host ""
+                return 'rename'
+            } elseif ($choice -eq 'V') {
+                Write-DebugInfo "  'V' pressed - returning 'archive'"
+                Write-Host ""
+                return 'archive'
+            } elseif ($choice -eq 'A') {
+                Write-DebugInfo "  'A' pressed - returning 'abort'"
+                Write-Host ""
+                return 'abort'
+            } else {
+                Write-DebugInfo "  Invalid choice - ignoring silently"
+            }
         }
     }
 }
@@ -3532,7 +3624,6 @@ function Get-ModelChoice {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -3546,7 +3637,7 @@ function Get-ModelChoice {
             'H' { Write-Host ""; return 'haiku' }
             'A' { Write-Host ""; return 'abort' }
             default {
-                # Invalid choice - just continue loop
+                # Invalid choice - silently ignore
             }
         }
     }
@@ -3572,7 +3663,6 @@ function Get-TrustedSessionChoice {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -3740,7 +3830,6 @@ function Enable-GlobalBypassPermissions {
     Write-Host "bort: " -NoNewline -ForegroundColor Gray
     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     $choice = $key.Character.ToString().ToUpper()
-    Write-Host $choice  # Echo the key
 
     # Handle Esc as abort
     if ($key.VirtualKeyCode -eq 27) {
@@ -3786,7 +3875,6 @@ function Enable-GlobalBypassPermissions {
         Write-Host "bort" -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host $choice  # Echo the key
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -3870,7 +3958,6 @@ function Disable-GlobalBypassPermissions {
     Write-Host "bort: " -NoNewline -ForegroundColor Gray
     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     $choice = $key.Character.ToString().ToUpper()
-    Write-Host $choice  # Echo the key
 
     # Handle Esc as abort
     if ($key.VirtualKeyCode -eq 27) {
@@ -3931,7 +4018,6 @@ function Disable-GlobalBypassPermissions {
         Write-Host "bort" -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host $choice  # Echo the key
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -4088,7 +4174,6 @@ function Start-ForkSession {
         Write-Host "o: " -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $deleteChoice = $key.Character.ToString().ToUpper()
-        Write-Host $deleteChoice  # Echo the key
 
         # Handle Esc as No
         if ($key.VirtualKeyCode -eq 27) {
@@ -4690,7 +4775,6 @@ function Resolve-BackgroundImageConflict {
     while ($true) {
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $choice = $key.Character.ToString().ToUpper()
-        Write-Host " $choice"  # Echo the key with space
 
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
@@ -4727,7 +4811,7 @@ function Resolve-BackgroundImageConflict {
                 return @{ action = 'abort'; name = $SessionName }
             }
             default {
-                # Invalid choice - just continue loop
+                # Invalid choice - silently ignore
             }
         }
     }
@@ -5209,6 +5293,221 @@ function Add-SessionMapping {
     }
 }
 
+function Set-SessionArchiveStatus {
+    <#
+    .SYNOPSIS
+        Archives or unarchives a session
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SessionId,
+        [Parameter(Mandatory=$true)]
+        [bool]$Archived
+    )
+
+    Write-DebugInfo "=== Set-SessionArchiveStatus ===" -Color Cyan
+    Write-DebugInfo "  Session ID: $SessionId"
+    Write-DebugInfo "  Archived: $Archived"
+
+    if (-not (Test-Path $Global:SessionMappingPath)) {
+        Write-DebugInfo "  Session mapping file does not exist - initializing" -Color Yellow
+        Initialize-SessionMapping
+    }
+
+    try {
+        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+
+        # Find the session
+        $session = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
+
+        if ($session) {
+            Write-DebugInfo "  Session found in mapping" -Color Green
+
+            if ($Archived) {
+                # Archive the session
+                $archiveDate = (Get-Date).ToString('o')
+                Write-DebugInfo "  Archiving session with date: $archiveDate" -Color Yellow
+
+                # Add or update archived property
+                if ($null -eq $session.PSObject.Properties['archived']) {
+                    $session | Add-Member -NotePropertyName 'archived' -NotePropertyValue $true -Force
+                } else {
+                    $session.archived = $true
+                }
+
+                # Add or update archivedDate property
+                if ($null -eq $session.PSObject.Properties['archivedDate']) {
+                    $session | Add-Member -NotePropertyName 'archivedDate' -NotePropertyValue $archiveDate -Force
+                } else {
+                    $session.archivedDate = $archiveDate
+                }
+            } else {
+                # Unarchive the session
+                Write-DebugInfo "  Unarchiving session" -Color Yellow
+
+                if ($null -ne $session.PSObject.Properties['archived']) {
+                    $session.archived = $false
+                }
+                # Keep archivedDate for history but mark as unarchived
+            }
+
+            # Save the updated mapping
+            $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+            Write-DebugInfo "  Session mapping updated successfully" -Color Green
+            return $true
+
+        } else {
+            Write-DebugInfo "  Session NOT found in mapping - creating entry" -Color Yellow
+
+            # Session not in mapping yet - create entry
+            $newEntry = @{
+                sessionId = $SessionId
+                archived = $Archived
+            }
+
+            if ($Archived) {
+                $newEntry.archivedDate = (Get-Date).ToString('o')
+            }
+
+            $mapping.sessions = @($mapping.sessions) + $newEntry
+            $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+            Write-DebugInfo "  New session entry created with archive status" -Color Green
+            return $true
+        }
+
+    } catch {
+        Write-DebugInfo "  ERROR setting archive status: $_" -Color Red
+        Write-ErrorLog "Error setting archive status: $_"
+        return $false
+    }
+}
+
+function Get-SessionArchiveStatus {
+    <#
+    .SYNOPSIS
+        Gets the archive status of a session
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SessionId
+    )
+
+    if (-not (Test-Path $Global:SessionMappingPath)) {
+        return @{ Archived = $false; ArchivedDate = $null }
+    }
+
+    try {
+        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        $session = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
+
+        if ($session -and $session.archived -eq $true) {
+            return @{
+                Archived = $true
+                ArchivedDate = $session.archivedDate
+            }
+        }
+    } catch {
+        Write-DebugInfo "Error checking archive status: $_" -Color Red
+    }
+
+    return @{ Archived = $false; ArchivedDate = $null }
+}
+
+function Get-SessionNotes {
+    <#
+    .SYNOPSIS
+        Gets the notes for a session
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SessionId
+    )
+
+    if (-not (Test-Path $Global:SessionMappingPath)) {
+        return ""
+    }
+
+    try {
+        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        $session = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
+
+        if ($session -and $session.notes) {
+            return $session.notes
+        }
+    } catch {
+        Write-DebugInfo "Error getting session notes: $_" -Color Red
+    }
+
+    return ""
+}
+
+function Set-SessionNotes {
+    <#
+    .SYNOPSIS
+        Sets the notes for a session
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SessionId,
+        [Parameter(Mandatory=$true)]
+        [AllowEmptyString()]
+        [string]$Notes
+    )
+
+    Write-DebugInfo "=== Set-SessionNotes ===" -Color Cyan
+    Write-DebugInfo "  Session ID: $SessionId"
+    Write-DebugInfo "  Notes: $Notes"
+
+    if (-not (Test-Path $Global:SessionMappingPath)) {
+        Write-DebugInfo "  Session mapping file does not exist - initializing" -Color Yellow
+        Initialize-SessionMapping
+    }
+
+    try {
+        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+
+        # Find the session
+        $session = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
+
+        if ($session) {
+            Write-DebugInfo "  Session found in mapping" -Color Green
+
+            # Add or update notes property
+            if ($null -eq $session.PSObject.Properties['notes']) {
+                $session | Add-Member -NotePropertyName 'notes' -NotePropertyValue $Notes -Force
+                Write-DebugInfo "  Added notes property" -Color Green
+            } else {
+                $session.notes = $Notes
+                Write-DebugInfo "  Updated notes property" -Color Green
+            }
+
+            # Save the updated mapping
+            $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+            Write-DebugInfo "  Session mapping updated successfully" -Color Green
+            return $true
+
+        } else {
+            Write-DebugInfo "  Session NOT found in mapping - creating entry" -Color Yellow
+
+            # Session not in mapping yet - create entry
+            $newEntry = @{
+                sessionId = $SessionId
+                notes = $Notes
+            }
+
+            $mapping.sessions = @($mapping.sessions) + $newEntry
+            $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+            Write-DebugInfo "  New session entry created with notes" -Color Green
+            return $true
+        }
+
+    } catch {
+        Write-DebugInfo "  ERROR setting notes: $_" -Color Red
+        Write-ErrorLog "Error setting session notes: $_"
+        return $false
+    }
+}
+
 #endregion
 
 #region Profile Registry
@@ -5368,10 +5667,37 @@ function Rename-ClaudeSession {
         [object]$Session
     )
 
+    Write-DebugInfo "=== Rename-ClaudeSession Started ===" -Color Cyan
+    Write-DebugInfo "  Session ID: $($Session.sessionId)"
+    Write-DebugInfo "  Custom Title: $($Session.customTitle)"
+    Write-DebugInfo "  Tracked Name: $($Session.trackedName)"
+    Write-DebugInfo "  Project Path: $($Session.projectPath)"
+
     try {
         $sessionId = $Session.sessionId
         $projectPath = $Session.projectPath
         $oldTitle = if ($Session.customTitle) { $Session.customTitle } elseif ($Session.trackedName) { $Session.trackedName } else { "(unnamed)" }
+
+        Write-DebugInfo "  Old Title (resolved): $oldTitle"
+
+        # Get old Windows Terminal profile name and background if they exist
+        $oldWTProfile = Get-WTProfileName -SessionTitle $oldTitle -SessionId $sessionId
+        Write-DebugInfo "  Old WT Profile: $oldWTProfile"
+
+        $oldBackgroundPath = $null
+        if ($oldWTProfile) {
+            # Try to get background path from Windows Terminal settings
+            try {
+                $settings = Get-Content $Global:WTSettingsPath -Raw | ConvertFrom-Json
+                $oldProfile = $settings.profiles.list | Where-Object { $_.name -eq $oldWTProfile }
+                if ($oldProfile -and $oldProfile.backgroundImage) {
+                    $oldBackgroundPath = $oldProfile.backgroundImage
+                    Write-DebugInfo "  Old Background Image: $oldBackgroundPath"
+                }
+            } catch {
+                Write-DebugInfo "  Could not get old background path: $_" -Color Yellow
+            }
+        }
 
         Write-Host ""
         Write-ColorText "Renaming session: $oldTitle" -Color Cyan
@@ -5381,8 +5707,11 @@ function Rename-ClaudeSession {
         Write-ColorText "Enter new session name (or [Enter] to cancel): " -Color Yellow -NoNewline
         $newName = Read-Host
 
+        Write-DebugInfo "  User entered: '$newName'"
+
         # Check for cancellation
         if ([string]::IsNullOrWhiteSpace($newName)) {
+            Write-DebugInfo "  User cancelled - empty name" -Color Yellow
             Write-ColorText "Rename cancelled." -Color Yellow
             Start-Sleep -Seconds 1
             return $false
@@ -5390,84 +5719,187 @@ function Rename-ClaudeSession {
 
         # Sanitize for filesystem
         $safeName = $newName -replace '[\\/:*?"<>|]', '_'
+        Write-DebugInfo "  Safe name: '$safeName'"
 
         if ($newName -ne $safeName) {
+            Write-DebugInfo "  Name was sanitized (contained invalid characters)"
             Write-ColorText "Name contains invalid characters. Using: $safeName" -Color Yellow
             Write-Host ""
         }
 
         # 1. Update Claude's sessions-index.json
         Write-ColorText "Updating Claude session index..." -Color Cyan
+        Write-DebugInfo "  Updating Claude's sessions-index.json..." -Color Yellow
         $encodedPath = ConvertTo-ClaudeProjectPath -Path $projectPath
+        Write-DebugInfo "    Encoded path: $encodedPath"
         $indexPath = Join-Path $Global:ClaudeProjectsPath "$encodedPath\sessions-index.json"
+        Write-DebugInfo "    Index path: $indexPath"
 
         if (Test-Path $indexPath) {
+            Write-DebugInfo "    Index file EXISTS" -Color Green
             try {
                 $index = Get-Content $indexPath -Raw | ConvertFrom-Json
+                Write-DebugInfo "    Index file loaded, searching for session ID: $sessionId"
                 $entry = $index.entries | Where-Object { $_.sessionId -eq $sessionId }
                 if ($entry) {
-                    $entry.customTitle = $safeName
+                    Write-DebugInfo "    Entry FOUND - updating customTitle to: $safeName" -Color Green
+
+                    # Check if customTitle property exists
+                    if ($null -eq $entry.PSObject.Properties['customTitle']) {
+                        Write-DebugInfo "    customTitle property does not exist - adding it" -Color Yellow
+                        $entry | Add-Member -NotePropertyName 'customTitle' -NotePropertyValue $safeName -Force
+                    } else {
+                        Write-DebugInfo "    customTitle property exists - updating it" -Color Green
+                        $entry.customTitle = $safeName
+                    }
+
                     $index | ConvertTo-Json -Depth 10 | Set-Content $indexPath -Encoding UTF8
+                    Write-DebugInfo "    Index file saved successfully" -Color Green
                     Write-ColorText "  Updated session title in Claude index" -Color Green
                 } else {
+                    Write-DebugInfo "    Entry NOT FOUND in index" -Color Red
                     Write-ColorText "  Warning: Session not found in index" -Color Yellow
                 }
             } catch {
+                Write-DebugInfo "    ERROR updating index: $_" -Color Red
                 Write-ColorText "  Error updating index: $_" -Color Red
                 return $false
             }
         } else {
+            Write-DebugInfo "    Index file DOES NOT EXIST" -Color Red
             Write-ColorText "  Warning: sessions-index.json not found at $indexPath" -Color Yellow
         }
 
-        # 2. Update Windows Terminal profile if it exists
-        $oldWTProfile = Get-WTProfileName -SessionTitle $oldTitle -SessionId $sessionId
+        # 2. Generate new background image and create new Windows Terminal profile
         if ($oldWTProfile) {
-            Write-ColorText "Updating Windows Terminal profile..." -Color Cyan
-            $newWTProfile = "Claude-$safeName"
+            Write-DebugInfo "  Session has Windows Terminal profile - creating new profile" -Color Green
+            Write-ColorText "Creating new Windows Terminal profile..." -Color Cyan
 
-            # Read Windows Terminal settings
-            $wtSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-            if (Test-Path $wtSettingsPath) {
+            # Get git branch
+            $gitBranch = Get-GitBranch -Path $projectPath
+            Write-DebugInfo "    Git branch: $gitBranch"
+
+            # Get model from session mapping
+            $sessionEntry = Get-SessionMappingEntry -SessionId $sessionId
+            $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
+            Write-DebugInfo "    Model: $modelName"
+
+            # Generate new background image
+            Write-ColorText "  Generating new background image..." -Color Cyan
+            Write-DebugInfo "    Creating background for: $safeName"
+            $newBackgroundPath = New-SessionBackgroundImage -NewName $safeName -ProjectPath $projectPath -GitBranch $gitBranch -Model $modelName
+            Write-DebugInfo "    New background path: $newBackgroundPath" -Color Green
+
+            if ($newBackgroundPath) {
+                # Create new Windows Terminal profile
+                $newWTProfile = "Claude-$safeName"
+                Write-DebugInfo "    Creating new WT profile: $newWTProfile"
+
                 try {
-                    $settings = Get-Content $wtSettingsPath -Raw | ConvertFrom-Json
-                    $profile = $settings.profiles.list | Where-Object { $_.name -eq $oldWTProfile }
-                    if ($profile) {
-                        $profile.name = $newWTProfile
-                        $settings | ConvertTo-Json -Depth 10 | Set-Content $wtSettingsPath -Encoding UTF8
-                        Write-ColorText "  Renamed Windows Terminal profile: $oldWTProfile -> $newWTProfile" -Color Green
+                    $newProfile = Add-WTProfile -Name $newWTProfile -StartingDirectory $projectPath -BackgroundImage $newBackgroundPath
+                    if ($newProfile) {
+                        Write-DebugInfo "    New profile created successfully" -Color Green
+                        Write-ColorText "  Created new Windows Terminal profile: $newWTProfile" -Color Green
+
+                        # Update session-mapping.json with new profile name
+                        Write-DebugInfo "  Updating session-mapping.json..." -Color Yellow
+                        if (Test-Path $Global:SessionMappingPath) {
+                            try {
+                                $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+                                $mappedSession = $mapping.sessions | Where-Object { $_.sessionId -eq $sessionId }
+                                if ($mappedSession) {
+                                    $mappedSession.wtProfileName = $newProfile.name
+                                    $mappedSession.updated = (Get-Date).ToString('o')
+                                    $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+                                    Write-DebugInfo "    Session mapping updated" -Color Green
+                                    Write-ColorText "  Updated session mapping" -Color Green
+                                }
+                            } catch {
+                                Write-DebugInfo "    ERROR updating session mapping: $_" -Color Red
+                            }
+                        }
+
+                        # 3. Check if old profile is used by any other sessions and remove if not
+                        Write-DebugInfo "  Checking if old profile is used by other sessions..." -Color Yellow
+                        Write-DebugInfo "    Old profile: $oldWTProfile"
+
+                        $otherSessionsUsingOldProfile = $false
+                        try {
+                            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+                            foreach ($sess in $mapping.sessions) {
+                                if ($sess.sessionId -ne $sessionId -and $sess.wtProfileName -eq $oldWTProfile) {
+                                    $otherSessionsUsingOldProfile = $true
+                                    Write-DebugInfo "    Found other session using old profile: $($sess.sessionId)" -Color Yellow
+                                    break
+                                }
+                            }
+                        } catch {
+                            Write-DebugInfo "    ERROR checking profile usage: $_" -Color Red
+                        }
+
+                        if (-not $otherSessionsUsingOldProfile) {
+                            Write-DebugInfo "    No other sessions use old profile - removing it" -Color Green
+                            Write-ColorText "  Removing old Windows Terminal profile..." -Color Cyan
+                            $removed = Remove-WTProfile -ProfileName $oldWTProfile
+                            if ($removed) {
+                                Write-DebugInfo "    Old profile removed successfully" -Color Green
+                                Write-ColorText "  Removed old profile: $oldWTProfile" -Color Green
+                            }
+                        } else {
+                            Write-DebugInfo "    Other sessions still use old profile - keeping it" -Color Yellow
+                            Write-ColorText "  Keeping old profile (used by other sessions)" -Color Yellow
+                        }
+
+                        # 4. Check if old background is used by any other profiles and delete if not
+                        if ($oldBackgroundPath) {
+                            Write-DebugInfo "  Checking if old background is used by other profiles..." -Color Yellow
+                            Write-DebugInfo "    Old background: $oldBackgroundPath"
+
+                            $sessionsUsingOldBackground = Get-SessionsUsingBackground -BackgroundPath $oldBackgroundPath
+                            if ($sessionsUsingOldBackground.Count -eq 0) {
+                                Write-DebugInfo "    No other profiles use old background - deleting it" -Color Green
+                                Write-ColorText "  Deleting old background image..." -Color Cyan
+                                try {
+                                    Remove-Item -Path $oldBackgroundPath -Force -ErrorAction Stop
+                                    Write-DebugInfo "    Old background deleted successfully" -Color Green
+                                    Write-ColorText "  Deleted old background image" -Color Green
+                                } catch {
+                                    Write-DebugInfo "    ERROR deleting old background: $_" -Color Red
+                                    Write-ColorText "  Warning: Could not delete old background image" -Color Yellow
+                                }
+                            } else {
+                                Write-DebugInfo "    Other profiles still use old background - keeping it" -Color Yellow
+                                Write-ColorText "  Keeping old background (used by other profiles)" -Color Yellow
+                            }
+                        }
+                    } else {
+                        Write-DebugInfo "    ERROR: Add-WTProfile returned null" -Color Red
+                        Write-ColorText "  Error: Failed to create new profile" -Color Red
                     }
                 } catch {
-                    Write-ColorText "  Warning: Could not update Windows Terminal profile - $_" -Color Yellow
+                    Write-DebugInfo "    EXCEPTION creating new profile: $_" -Color Red
+                    Write-ColorText "  Error: Failed to create new profile - $_" -Color Red
                 }
+            } else {
+                Write-DebugInfo "    ERROR: Background image generation failed" -Color Red
+                Write-ColorText "  Error: Failed to generate new background image" -Color Red
             }
-
-            # Update session-mapping.json with new profile name
-            if (Test-Path $Global:SessionMappingPath) {
-                try {
-                    $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
-                    $mappedSession = $mapping.sessions | Where-Object { $_.sessionId -eq $sessionId }
-                    if ($mappedSession) {
-                        $mappedSession.wtProfileName = $newWTProfile
-                        $mappedSession.updated = (Get-Date).ToString('o')
-                        $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
-                        Write-ColorText "  Updated session mapping" -Color Green
-                    }
-                } catch {
-                    Write-ColorText "  Warning: Could not update session mapping - $_" -Color Yellow
-                }
-            }
+        } else {
+            Write-DebugInfo "  NO Windows Terminal profile found for this session - no profile changes needed" -Color Yellow
         }
 
         Write-Host ""
+        Write-DebugInfo "=== Rename Complete ===" -Color Green
         Write-ColorText "Session renamed successfully: '$oldTitle' -> '$safeName'" -Color Green
         Start-Sleep -Seconds 2
         return $true
 
     } catch {
         Write-Host ""
+        Write-DebugInfo "=== Rename FAILED ===" -Color Red
+        Write-DebugInfo "Exception: $_" -Color Red
+        Write-DebugInfo "Stack trace: $($_.ScriptStackTrace)" -Color Red
         Write-ColorText "Error renaming session: $_" -Color Red
-        Write-DebugInfo "Rename error details: $_" -Color Red
         Start-Sleep -Seconds 3
         return $false
     }
@@ -6349,7 +6781,6 @@ function Start-MainMenu {
                                 Write-Host "o: " -NoNewline -ForegroundColor Gray
                                 $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                                 $confirmed = $key.Character.ToString().ToUpper()
-                                Write-Host $confirmed  # Echo the key
 
                                 # Handle Esc as No
                                 if ($key.VirtualKeyCode -eq 27) {
@@ -6407,7 +6838,6 @@ function Start-MainMenu {
                                 Write-Host "o: " -NoNewline -ForegroundColor Gray
                                 $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                                 $confirmed = $key.Character.ToString().ToUpper()
-                                Write-Host $confirmed  # Echo the key
 
                                 # Handle Esc as No
                                 if ($key.VirtualKeyCode -eq 27) {
@@ -6556,11 +6986,94 @@ function Start-MainMenu {
                     "(unnamed)"
                 }
 
-                # Ask: Fork, Continue, or Delete?
-                $action = Get-ForkOrContinue -SessionId $session.sessionId -SessionTitle $sessionTitle -ProjectPath $session.projectPath
+                Write-DebugInfo "Main loop: Session selected, displaying options" -Color Cyan
+                Write-DebugInfo "  Session ID: $($session.sessionId)"
+                Write-DebugInfo "  Session Title: $sessionTitle"
+                Write-DebugInfo "  Custom Title: $($session.customTitle)"
+                Write-DebugInfo "  Tracked Name: $($session.trackedName)"
+
+                # Check if session is archived
+                $archiveStatus = Get-SessionArchiveStatus -SessionId $session.sessionId
+                Write-DebugInfo "  Archive Status: Archived=$($archiveStatus.Archived), Date=$($archiveStatus.ArchivedDate)" -Color Cyan
+
+                # Get session notes
+                $notes = Get-SessionNotes -SessionId $session.sessionId
+                Write-DebugInfo "  Session Notes: '$notes'" -Color Cyan
+
+                # Ask: Fork, Continue, or Delete? (or Unarchive if archived)
+                Write-DebugInfo "  Calling Get-ForkOrContinue..." -Color Yellow
+                $action = Get-ForkOrContinue -SessionId $session.sessionId -SessionTitle $sessionTitle -ProjectPath $session.projectPath -IsArchived $archiveStatus.Archived -ArchivedDate $archiveStatus.ArchivedDate -Notes $notes
+                Write-DebugInfo "  Get-ForkOrContinue returned: '$action'" -Color Green
 
                 if ($action -eq 'abort') {
+                    Write-DebugInfo "  Action is 'abort' - returning to menu" -Color Yellow
                     # User aborted, go back to menu
+                    continue
+                } elseif ($action -eq 'archive') {
+                    # User chose to archive the session
+                    Write-DebugInfo "Main loop: User chose 'archive' action" -Color Cyan
+                    $success = Set-SessionArchiveStatus -SessionId $session.sessionId -Archived $true
+                    if ($success) {
+                        Write-Host ""
+                        Write-ColorText "Session archived successfully." -Color Green
+                        Start-Sleep -Seconds 1
+                        # Reload sessions to show archive status
+                        $selectedIndex = 0
+                        $reloadSessions = $true
+                    } else {
+                        Write-Host ""
+                        Write-ColorText "Failed to archive session." -Color Red
+                        Start-Sleep -Seconds 2
+                    }
+                    continue
+                } elseif ($action -eq 'unarchive') {
+                    # User chose to unarchive the session
+                    Write-DebugInfo "Main loop: User chose 'unarchive' action" -Color Cyan
+                    $success = Set-SessionArchiveStatus -SessionId $session.sessionId -Archived $false
+                    if ($success) {
+                        Write-Host ""
+                        Write-ColorText "Session unarchived successfully." -Color Green
+                        Start-Sleep -Seconds 1
+                        # Reload sessions to show updated status
+                        $selectedIndex = 0
+                        $reloadSessions = $true
+                    } else {
+                        Write-Host ""
+                        Write-ColorText "Failed to unarchive session." -Color Red
+                        Start-Sleep -Seconds 2
+                    }
+                    continue
+                } elseif ($action -eq 'notes') {
+                    # User chose to edit notes
+                    Write-DebugInfo "Main loop: User chose 'notes' action" -Color Cyan
+
+                    # Get current notes
+                    $currentNotes = Get-SessionNotes -SessionId $session.sessionId
+
+                    # Prompt for new notes
+                    Write-Host ""
+                    if ($currentNotes) {
+                        Write-ColorText "Current notes: $currentNotes" -Color DarkGray
+                        Write-Host ""
+                    }
+                    Write-ColorText "Enter notes (or press Enter to clear): " -Color Yellow -NoNewline
+                    $newNotes = Read-Host
+
+                    # Save notes
+                    $success = Set-SessionNotes -SessionId $session.sessionId -Notes $newNotes
+                    if ($success) {
+                        Write-Host ""
+                        if ($newNotes) {
+                            Write-ColorText "Notes saved successfully." -Color Green
+                        } else {
+                            Write-ColorText "Notes cleared." -Color Green
+                        }
+                        Start-Sleep -Seconds 1
+                    } else {
+                        Write-Host ""
+                        Write-ColorText "Failed to save notes." -Color Red
+                        Start-Sleep -Seconds 2
+                    }
                     continue
                 } elseif ($action -eq 'delete') {
                     # User chose to delete the session
@@ -6588,7 +7101,6 @@ function Start-MainMenu {
                     Write-Host "o: " -NoNewline -ForegroundColor Gray
                     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                     $confirmed = $key.Character.ToString().ToUpper()
-                    Write-Host $confirmed  # Echo the key
 
                     # Handle Esc as No
                     if ($key.VirtualKeyCode -eq 27) {
@@ -6615,12 +7127,18 @@ function Start-MainMenu {
                     continue
                 } elseif ($action -eq 'rename') {
                     # User chose to rename the session
+                    Write-DebugInfo "Main loop: User chose 'rename' action" -Color Cyan
+                    Write-DebugInfo "  Calling Rename-ClaudeSession..." -Color Yellow
                     $renamed = Rename-ClaudeSession -Session $session
+                    Write-DebugInfo "  Rename-ClaudeSession returned: $renamed" -Color $(if ($renamed) { "Green" } else { "Red" })
 
                     # Reload sessions to show the new name
                     if ($renamed) {
+                        Write-DebugInfo "  Reloading sessions to show new name" -Color Green
                         $selectedIndex = 0
                         $reloadSessions = $true
+                    } else {
+                        Write-DebugInfo "  Rename failed - not reloading sessions" -Color Yellow
                     }
                     continue
                 } elseif ($action -eq 'continue') {

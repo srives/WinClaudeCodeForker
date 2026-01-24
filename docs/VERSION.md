@@ -1,6 +1,84 @@
 # Version Information
 
-## Current Version: 1.7.0 (2026-01-21)
+## Current Version: 1.8.0 (2026-01-24)
+
+### Release Notes
+
+This release adds session notes functionality, fixes the rename feature, and improves menu UX by removing all key echoing and streamlining the debug menu.
+
+#### Major Features
+
+**Session Notes**
+- Add notes to any session (archived or active)
+- Press N key in session options menu to add/edit notes
+- Notes displayed under session options: "Notes: your text here"
+- Notes stored persistently in session-mapping.json
+- Press Enter with empty input to clear notes
+
+**Menu Key Handling Improvements**
+- Invalid key presses no longer echo to screen
+- All menus silently ignore invalid input without visual feedback
+- Only valid keys trigger actions - cleaner, more professional UX
+- Applies to all 15+ menus throughout application
+
+**Debug Menu Enhancements**
+- Simplified toggle text: "Debug Off" (when on) or "Debug On" (when off)
+- Removed redundant "Toggle - Turn Debug" prefix
+- Centered "DEBUG MODE" header text in separator lines
+- Changed hotkey from T (Toggle) to D (Debug)
+
+#### Bug Fixes
+
+**Rename Feature Fixed**
+- Fixed parameter name error when calling New-SessionBackgroundImage
+- Changed from incorrect `-ProjectPath` to use proper wrapper function
+- Rename now correctly generates new background images and profiles
+- Error was: "A parameter cannot be found that matches parameter name 'ProjectPath'"
+
+#### Changes
+
+**Notes Implementation:**
+- Added `Get-SessionNotes()` function - retrieves notes from session-mapping.json
+- Added `Set-SessionNotes()` function - stores notes with proper property handling
+- Updated `Get-ForkOrContinue()` to accept and display Notes parameter
+- Added N key handler for both archived and normal session menus
+- Added notes action handler in main loop with current notes display
+- Notes integrated into session display: shown under "Session options"
+
+**Menu Echo Removal:**
+- Removed `Write-Host $choice` statements from all menu functions
+- Removed echo from: Get-ForkOrContinue, Get-SessionManagementChoice, Get-RegenerateImageChoice
+- Removed echo from: Get-ModelChoice, Get-TrustedSessionChoice, directory selection
+- Removed echo from: Enable/Disable-GlobalBypassPermissions, Resolve-BackgroundImageConflict
+- Removed echo from: Show-DebugToggle, all Y/N confirmation prompts
+- Debug logging still captures key presses for troubleshooting
+
+**Debug Menu Updates:**
+- Menu text: `Debug Off | Notepad - Open Debug Log | Instructions - Show debug mode help | Abort`
+- Header centered in 40-character wide separator lines
+- Switch case changed from 'T' to 'D' for consistency with menu text
+- More concise and professional appearance
+
+#### Technical Details
+
+**New Functions:**
+- `Get-SessionNotes($SessionId)` - Returns notes string from session-mapping.json
+- `Set-SessionNotes($SessionId, $Notes)` - Stores notes, creating entry if needed
+
+**Modified Functions:**
+- `Get-ForkOrContinue()` - Added Notes parameter, displays notes under session options
+- `Rename-ClaudeSession()` - Fixed to use `New-SessionBackgroundImage` wrapper instead of direct call
+- `Show-DebugToggle()` - Simplified toggle text, centered header, changed hotkey to D
+- All menu functions - Removed key echo statements, silently ignore invalid input
+
+**Session Mapping Schema:**
+- Added `notes` field to session entries in session-mapping.json
+- Notes stored as string, empty string if no notes
+- Property added dynamically with Add-Member if doesn't exist
+
+---
+
+## Previous Version: 1.7.0 (2026-01-21)
 
 ### Release Notes
 
