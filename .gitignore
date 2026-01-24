@@ -1,6 +1,5 @@
 # User-specific files
 *.lnk
-*.cmd
 
 # Testing files
 test-*.ps1

@@ -14,14 +14,14 @@
 
 .NOTES
     Author: S. Rives
-    Version: 1.7.0
-    Date: 2026-01-21
+    Version: 1.10.1
+    Date: 2026-01-24
     Requires: PowerShell 5.1+, Windows Terminal, Claude CLI
 #>
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.9.5"
+$Global:ScriptVersion = "1.10.1"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -411,6 +411,7 @@ function Set-DebugState {
     param([bool]$Enabled)
 
     $state = if ($Enabled) { "on" } else { "off" }
+    Write-DebugFileOperation -FilePath $Global:DebugStatePath -Content $state -Operation "Set-DebugState"  # FILE-DEBUG
     $state | Set-Content $Global:DebugStatePath -NoNewline
 }
 
@@ -469,6 +470,59 @@ function Write-ErrorLog {
     }
 }
 
+function Write-DebugFileOperation {
+    <#
+    .SYNOPSIS
+        FILE-DEBUG: Logs file write operations to help track down mysterious file creation
+    .DESCRIPTION
+        This is a special debug function that can be disabled by removing FILE-DEBUG tagged code
+    #>
+    param(
+        [string]$FilePath,
+        [string]$Content,
+        [string]$Operation = "Write"
+    )
+
+    # FILE-DEBUG: Check for suspicious file paths (numeric names, single chars, etc.)
+    $fileName = Split-Path -Leaf $FilePath
+    $isSuspicious = $false
+
+    # Check if filename is purely numeric
+    if ($fileName -match '^\d+$') {
+        $isSuspicious = $true
+    }
+    # Check if filename is very short and in current directory
+    if ($fileName.Length -le 3 -and -not $FilePath.Contains('\') -and -not $FilePath.Contains('/')) {
+        $isSuspicious = $true
+    }
+
+    # FILE-DEBUG: Always log suspicious files, only log others when debug is enabled
+    if ($isSuspicious -or (Get-DebugState)) {
+        $contentPreview = if ($Content.Length -gt 10) { $Content.Substring(0, 10) + "..." } else { $Content }
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $suspiciousTag = if ($isSuspicious) { " [SUSPICIOUS!]" } else { "" }
+        $logMessage = "[$timestamp] [FILE-DEBUG]$suspiciousTag $Operation to file: '$FilePath' | Content: '$contentPreview'"
+
+        try {
+            $logMessage | Add-Content -Path $Global:DebugLogPath -Encoding UTF8 -ErrorAction SilentlyContinue
+        } catch {
+            # Silently ignore if we can't log
+        }
+
+        # Also show on console if suspicious or debug mode
+        if ($isSuspicious) {
+            Write-Host "[FILE-DEBUG] " -NoNewline -ForegroundColor Red
+            Write-Host "SUSPICIOUS FILE! " -NoNewline -ForegroundColor Yellow -BackgroundColor Red
+        } else {
+            Write-Host "[FILE-DEBUG] " -NoNewline -ForegroundColor Magenta
+        }
+        Write-Host "$Operation -> " -NoNewline -ForegroundColor Magenta
+        Write-Host "'$FilePath'" -NoNewline -ForegroundColor Yellow
+        Write-Host " | Content: " -NoNewline -ForegroundColor Magenta
+        Write-Host "'$contentPreview'" -ForegroundColor Cyan
+    }
+}
+
 function Show-DebugToggle {
     <#
     .SYNOPSIS
@@ -505,6 +559,11 @@ function Show-DebugToggle {
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
             $response = 'A'
+        }
+
+        # Handle Enter as default (toggle debug)
+        if ($key.VirtualKeyCode -eq 13) {
+            $response = 'D'
         }
 
         switch ($response) {
@@ -1081,7 +1140,7 @@ function Get-WTProfileName {
             $settings = $settingsJson | ConvertFrom-Json
 
             # Check if profile exists
-            $profile = $settings.profiles.list | Where-Object { $_.name -eq $profileName }
+            $profile = $settings.profiles.list | Where-Object { $_.name -eq $profileName } | Select-Object -First 1
 
             if ($profile) {
                 return $profileName
@@ -1260,7 +1319,9 @@ function Validate-SessionMappings {
         # Save updated mappings if any changes were made
         if ($cleanedCount -gt 0) {
             $mapping.sessions = $updatedSessions
-            $mapping | ConvertTo-Json -Depth 10 | Set-Content $Global:SessionMappingPath -Encoding UTF8
+            $jsonContent = $mapping | ConvertTo-Json -Depth 10
+            Write-DebugFileOperation -FilePath $Global:SessionMappingPath -Content $jsonContent -Operation "CleanupMappings"  # FILE-DEBUG
+            $jsonContent | Set-Content $Global:SessionMappingPath -Encoding UTF8
             Write-DebugInfo "  Cleaned up $cleanedCount invalid profile reference(s)" -Color Green
         } else {
             Write-DebugInfo "  All profile references are valid" -Color Green
@@ -1399,7 +1460,7 @@ function Get-WTProfileDetails {
         $settings = $settingsJson | ConvertFrom-Json
 
         # Find the profile
-        $profile = $settings.profiles.list | Where-Object { $_.name -eq $ProfileName }
+        $profile = $settings.profiles.list | Where-Object { $_.name -eq $ProfileName } | Select-Object -First 1
 
         if ($profile) {
             return @{
@@ -2884,6 +2945,11 @@ function Start-NewSession {
             $choice = 'A'
         }
 
+        # Handle Enter as default (use current directory)
+        if ($key.VirtualKeyCode -eq 13) {
+            $choice = 'C'
+        }
+
         if ($choice -eq 'C') {
             Write-Host ""
             # Use current directory
@@ -3139,6 +3205,11 @@ function Start-ContinueSession {
             $deleteChoice = 'N'
         }
 
+        # Handle Enter as default (Yes)
+        if ($key.VirtualKeyCode -eq 13) {
+            $deleteChoice = 'Y'
+        }
+
         if ($deleteChoice -eq 'Y') {
             # Call the delete session function
             try {
@@ -3185,11 +3256,27 @@ function Start-ContinueSession {
                 $settingsJson = Get-Content $Global:WTSettingsPath -Raw
                 $settings = $settingsJson | ConvertFrom-Json
                 Write-DebugInfo "    Searching for profile with name: $wtProfileName"
-                $existingProfile = $settings.profiles.list | Where-Object { $_.name -eq $wtProfileName }
+                $existingProfile = $settings.profiles.list | Where-Object { $_.name -eq $wtProfileName } | Select-Object -First 1
                 if ($existingProfile) {
-                    Write-DebugInfo "    FOUND existing profile: $($existingProfile.name) (GUID: $($existingProfile.guid))" -Color Green
+                    Write-DebugInfo "    FOUND existing profile by name: $($existingProfile.name) (GUID: $($existingProfile.guid))" -Color Green
                 } else {
-                    Write-DebugInfo "    NO matching profile found" -Color Yellow
+                    Write-DebugInfo "    NO matching profile found by name" -Color Yellow
+                    # Try checking session mapping for this session ID
+                    Write-DebugInfo "    Checking session mapping for session ID: $($Session.sessionId)" -Color Yellow
+                    $mappedProfileName = Get-SessionMapping -SessionId $Session.sessionId
+                    if ($mappedProfileName) {
+                        Write-DebugInfo "    Found mapped profile name: $mappedProfileName" -Color Cyan
+                        # Look up the profile by the mapped name
+                        $existingProfile = $settings.profiles.list | Where-Object { $_.name -eq $mappedProfileName } | Select-Object -First 1
+                        if ($existingProfile) {
+                            Write-DebugInfo "    FOUND existing profile by mapping: $($existingProfile.name) (GUID: $($existingProfile.guid))" -Color Green
+                            $wtProfileName = $mappedProfileName  # Update to use the correct name
+                        } else {
+                            Write-DebugInfo "    Mapped profile name not found in WT settings" -Color Yellow
+                        }
+                    } else {
+                        Write-DebugInfo "    No mapping found for this session ID" -Color Yellow
+                    }
                 }
             } else {
                 Write-DebugInfo "    WT Settings file DOES NOT EXIST" -Color Red
@@ -3242,7 +3329,9 @@ function Start-ContinueSession {
                 if ($profileIndex -ge 0) {
                     $imagePath = $bgPath -replace '\\', '/'
                     $settings.profiles.list[$profileIndex].backgroundImage = $imagePath
-                    $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+                    $jsonContent = $settings | ConvertTo-Json -Depth 10
+                    Write-DebugFileOperation -FilePath $Global:WTSettingsPath -Content $jsonContent -Operation "UpdateWTProfile"  # FILE-DEBUG
+                    $jsonContent | Set-Content $Global:WTSettingsPath -Encoding UTF8
                     Write-ColorText "Updated background image for profile" -Color Green
                 }
             } catch {
@@ -3357,6 +3446,11 @@ function Start-ContinueSession {
         # Handle Esc as No
         if ($key.VirtualKeyCode -eq 27) {
             $createProfile = 'N'
+        }
+
+        # Handle Enter as default (Yes)
+        if ($key.VirtualKeyCode -eq 13) {
+            $createProfile = 'Y'
         }
 
         Write-DebugInfo "  User response to create profile: $createProfile"
@@ -3610,6 +3704,12 @@ function Get-SessionManagementChoice {
             return 'abort'
         }
 
+        # Handle Enter as default (regenerate)
+        if ($key.VirtualKeyCode -eq 13) {
+            Write-Host ""
+            return 'regenerate'
+        }
+
         switch ($choice) {
             'R' { Write-Host ""; return 'regenerate' }
             'D' { Write-Host ""; return 'delete' }
@@ -3649,6 +3749,12 @@ function Get-RegenerateImageChoice {
         if ($key.VirtualKeyCode -eq 27) {
             Write-Host ""
             return 'abort'
+        }
+
+        # Handle Enter as default (refresh)
+        if ($key.VirtualKeyCode -eq 13) {
+            Write-Host ""
+            return 'refresh'
         }
 
         switch ($choice) {
@@ -3752,12 +3858,12 @@ function Get-ForkOrContinue {
         # Display appropriate continue option based on profile existence
         Write-Host "C" -NoNewline -ForegroundColor Yellow
         if ($hasProfile) {
-            Write-Host "ontinue - Resume Claude Session | " -NoNewline -ForegroundColor Gray
+            Write-Host "ontinue Claude Session | " -NoNewline -ForegroundColor Gray
         } else {
             Write-Host "ontinue - Create profile and resume | " -NoNewline -ForegroundColor Gray
         }
         Write-Host "F" -NoNewline -ForegroundColor Yellow
-        Write-Host "ork - Create new branch | " -NoNewline -ForegroundColor Gray
+        Write-Host "ork Session | " -NoNewline -ForegroundColor Gray
         Write-Host "N" -NoNewline -ForegroundColor Yellow
         Write-Host "otes | " -NoNewline -ForegroundColor Gray
         Write-Host "D" -NoNewline -ForegroundColor Yellow
@@ -3781,6 +3887,19 @@ function Get-ForkOrContinue {
             Write-DebugInfo "  Esc pressed - returning 'abort'"
             Write-Host ""
             return 'abort'
+        }
+
+        # Handle Enter as default (Continue for normal, Unarchive for archived)
+        if ($key.VirtualKeyCode -eq 13) {
+            if ($IsArchived) {
+                Write-DebugInfo "  Enter pressed - returning 'unarchive' (default for archived)"
+                Write-Host ""
+                return 'unarchive'
+            } else {
+                Write-DebugInfo "  Enter pressed - returning 'continue' (default)"
+                Write-Host ""
+                return 'continue'
+            }
         }
 
         if ($IsArchived) {
@@ -3939,6 +4058,12 @@ function Get-ModelChoice {
             return 'abort'
         }
 
+        # Handle Enter as default (opus)
+        if ($key.VirtualKeyCode -eq 13) {
+            Write-Host ""
+            return 'opus'
+        }
+
         switch ($choice) {
             'O' { Write-Host ""; return 'opus' }
             'S' { Write-Host ""; return 'sonnet' }
@@ -3976,6 +4101,12 @@ function Get-TrustedSessionChoice {
         if ($key.VirtualKeyCode -eq 27) {
             Write-Host ""
             return 'abort'
+        }
+
+        # Handle Enter as default (yes)
+        if ($key.VirtualKeyCode -eq 13) {
+            Write-Host ""
+            return 'yes'
         }
 
         switch ($choice) {
@@ -4144,6 +4275,11 @@ function Enable-GlobalBypassPermissions {
         $choice = 'A'
     }
 
+    # Handle Enter as default (switch to quiet mode)
+    if ($key.VirtualKeyCode -eq 13) {
+        $choice = 'Q'
+    }
+
     # Show detailed information if requested
     if ($choice -eq 'S') {
         Write-Host ""
@@ -4187,6 +4323,11 @@ function Enable-GlobalBypassPermissions {
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
             $choice = 'A'
+        }
+
+        # Handle Enter as default (switch to quiet mode)
+        if ($key.VirtualKeyCode -eq 13) {
+            $choice = 'Q'
         }
     }
 
@@ -4272,6 +4413,11 @@ function Disable-GlobalBypassPermissions {
         $choice = 'A'
     }
 
+    # Handle Enter as default (switch to chatty mode)
+    if ($key.VirtualKeyCode -eq 13) {
+        $choice = 'C'
+    }
+
     # Check if settings file exists
     if (-not (Test-Path $Global:ClaudeSettingsPath)) {
         Write-Host ""
@@ -4330,6 +4476,11 @@ function Disable-GlobalBypassPermissions {
         # Handle Esc as abort
         if ($key.VirtualKeyCode -eq 27) {
             $choice = 'A'
+        }
+
+        # Handle Enter as default (switch to chatty mode)
+        if ($key.VirtualKeyCode -eq 13) {
+            $choice = 'C'
         }
     }
 
@@ -4486,6 +4637,11 @@ function Start-ForkSession {
         # Handle Esc as No
         if ($key.VirtualKeyCode -eq 27) {
             $deleteChoice = 'N'
+        }
+
+        # Handle Enter as default (Yes)
+        if ($key.VirtualKeyCode -eq 13) {
+            $deleteChoice = 'Y'
         }
 
         if ($deleteChoice -eq 'Y') {
@@ -4818,8 +4974,8 @@ function Remove-WTProfile {
         $settingsJson = Get-Content $Global:WTSettingsPath -Raw
         $settings = $settingsJson | ConvertFrom-Json
 
-        # Find the profile
-        $profileToRemove = $settings.profiles.list | Where-Object { $_.name -eq $ProfileName }
+        # Find the profile (select first if duplicates exist)
+        $profileToRemove = $settings.profiles.list | Where-Object { $_.name -eq $ProfileName } | Select-Object -First 1
 
         if (-not $profileToRemove) {
             Write-ColorText "Profile '$ProfileName' not found." -Color Yellow
@@ -4959,7 +5115,7 @@ function Get-GitBranch {
         }
 
         # Get current branch using git command
-        $branch = git rev-parse --abbrev-ref HEAD 2>$null
+        $branch = git rev-parse --abbrev-ref HEAD 2>&1 | Where-Object { $_ -is [string] }
 
         # Restore location
         Set-Location $originalLocation
@@ -5088,6 +5244,12 @@ function Resolve-BackgroundImageConflict {
         if ($key.VirtualKeyCode -eq 27) {
             Write-Host ""
             return @{ action = 'abort'; name = $SessionName }
+        }
+
+        # Handle Enter as default (overwrite)
+        if ($key.VirtualKeyCode -eq 13) {
+            Write-Host ""
+            return @{ action = 'overwrite'; name = $SessionName }
         }
 
         switch ($choice) {
@@ -6182,7 +6344,7 @@ function Rename-ClaudeSession {
             # Try to get background path from Windows Terminal settings
             try {
                 $settings = Get-Content $Global:WTSettingsPath -Raw | ConvertFrom-Json
-                $oldProfile = $settings.profiles.list | Where-Object { $_.name -eq $oldWTProfile }
+                $oldProfile = $settings.profiles.list | Where-Object { $_.name -eq $oldWTProfile } | Select-Object -First 1
                 if ($oldProfile -and $oldProfile.backgroundImage) {
                     $oldBackgroundPath = $oldProfile.backgroundImage
                     Write-DebugInfo "  Old Background Image: $oldBackgroundPath"
@@ -7291,6 +7453,11 @@ function Start-MainMenu {
                                     $confirmed = 'N'
                                 }
 
+                                # Handle Enter as default (Yes)
+                                if ($key.VirtualKeyCode -eq 13) {
+                                    $confirmed = 'Y'
+                                }
+
                                 if ($confirmed -eq 'Y') {
                                     $success = Remove-WTProfile -ProfileName $wtProfileName
 
@@ -7348,6 +7515,11 @@ function Start-MainMenu {
                                     $confirmed = 'N'
                                 }
 
+                                # Handle Enter as default (Yes)
+                                if ($key.VirtualKeyCode -eq 13) {
+                                    $confirmed = 'Y'
+                                }
+
                                 if ($confirmed -eq 'Y') {
                                     $success = Remove-BackgroundFromProfile -WTProfileName $wtProfileName
 
@@ -7390,6 +7562,11 @@ function Start-MainMenu {
                         # Handle Esc as No
                         if ($key.VirtualKeyCode -eq 27) {
                             $createProfile = 'N'
+                        }
+
+                        # Handle Enter as default (Yes)
+                        if ($key.VirtualKeyCode -eq 13) {
+                            $createProfile = 'Y'
                         }
 
                         if ($createProfile -eq 'Y') {
@@ -7609,6 +7786,11 @@ function Start-MainMenu {
                     # Handle Esc as No
                     if ($key.VirtualKeyCode -eq 27) {
                         $confirmed = 'N'
+                    }
+
+                    # Handle Enter as default (Yes)
+                    if ($key.VirtualKeyCode -eq 13) {
+                        $confirmed = 'Y'
                     }
 
                     if ($confirmed -eq 'Y') {

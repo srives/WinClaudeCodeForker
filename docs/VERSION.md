@@ -1,6 +1,74 @@
 # Version Information
 
-## Current Version: 1.9.5 (2026-01-24)
+## Current Version: 1.10.1 (2026-01-24)
+
+### Release Notes
+
+This release implements universal Enter key defaults across all menus for improved UX consistency and removes unnecessary .gitignore restrictions.
+
+#### Major Features
+
+**Universal Enter Key Defaults**
+- All menus now support Enter key to select the first/default option
+- Consistent behavior: Press Enter for the most common action
+- No need to remember specific hotkeys for common operations
+- Applied to 15+ menus throughout the application
+
+**Menu Pattern Consistency**
+- Debug menu: Enter → Toggle Debug (D)
+- Directory selection: Enter → Use Current (C)
+- Chatty/Quiet modes: Enter → Switch to mode (C/Q)
+- Model selection: Enter → Opus (O)
+- Trusted session: Enter → Yes (Y)
+- Profile management: Enter → Regenerate (R)
+- Image regeneration: Enter → Refresh (R)
+- Background conflicts: Enter → Overwrite (O)
+- All Yes/No prompts: Enter → Yes (Y)
+- Fork/Continue menu: Enter → Continue (C) or Unarchive (U) for archived
+- Delete confirmations: Enter → Yes (Y)
+
+**Menu Text Simplification**
+- Fork/Continue menu text simplified
+- Changed from "Continue - Resume Claude Session" to "Continue Claude Session"
+- Changed from "Fork - Create new branch" to "Fork Session"
+- More concise, easier to scan
+
+#### Bug Fixes
+
+**Gitignore Configuration**
+- Removed `*.cmd` rule from .gitignore
+- .cmd files can now be tracked in repository
+- Fixes issue preventing .cmd file commits
+
+#### Changes
+
+**Enter Key Handling:**
+- Added `if ($key.VirtualKeyCode -eq 13)` checks to all menu loops
+- Enter key returns appropriate default action for each menu context
+- Archived sessions: Enter → Unarchive (first option)
+- Normal sessions: Enter → Continue (first option)
+- Consistent with Esc key pattern (always abort/cancel)
+
+**Modified Menus:**
+1. Show-DebugToggle (line 565) - Enter → Toggle Debug
+2. Start-NewSession directory (line 2949) - Enter → Use Current
+3. Disable-GlobalBypassPermissions (lines 4417, 4482) - Enter → Chatty Mode
+4. Enable-GlobalBypassPermissions (lines 4279, 4329) - Enter → Quiet Mode
+5. Get-ModelChoice (line 4062) - Enter → Opus
+6. Get-TrustedSessionChoice (line 4107) - Enter → Yes
+7. Get-SessionManagementChoice (line 3708) - Enter → Regenerate
+8. Get-RegenerateImageChoice (line 3755) - Enter → Refresh
+9. Resolve-BackgroundImageConflict (line 5250) - Enter → Overwrite
+10. Get-ForkOrContinue (line 3893) - Enter → Continue/Unarchive
+11. All Yes/No confirmations (8 locations) - Enter → Yes
+
+**Technical Implementation:**
+- Virtual key code 13 = Enter key
+- Check added after Esc handling, before switch/if logic
+- Sets choice variable to appropriate default letter
+- Preserves existing logic flow and validation
+
+### Previous Version: 1.9.5 (2026-01-24)
 
 ### Release Notes
 

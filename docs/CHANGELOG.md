@@ -2,6 +2,79 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.10.1] - 2026-01-24
+
+### Major Features
+
+#### Universal Enter Key Defaults
+- **Consistent UX** - All menus support Enter key for default/first option
+- **15+ Menus Updated** - Debug, directory, modes, model, confirmations, etc.
+- **Intuitive** - Press Enter for most common action in any context
+- **Reduced Keystrokes** - No need to remember specific hotkeys for defaults
+
+#### Menu Pattern Implementation
+- **Debug Menu** - Enter → Toggle Debug (D key equivalent)
+- **Directory Selection** - Enter → Use Current Directory (C key)
+- **Mode Switching** - Enter → Switch to Chatty/Quiet (C/Q keys)
+- **Model Selection** - Enter → Opus (O key equivalent)
+- **Profile Management** - Enter → Regenerate (R key equivalent)
+- **All Confirmations** - Enter → Yes (Y key equivalent)
+- **Fork/Continue** - Enter → Continue (normal) / Unarchive (archived)
+
+#### Menu Text Simplification
+- **Concise Labels** - Removed verbose descriptions from options
+- **Fork/Continue** - "Continue Claude Session" (was "Continue - Resume Claude Session")
+- **Fork/Continue** - "Fork Session" (was "Fork - Create new branch")
+- **Easier Scanning** - More compact, professional appearance
+
+### Bug Fixes
+
+#### Gitignore Configuration
+- **Removed *.cmd Rule** - .cmd files can now be committed to repository
+- **Fixed Blocking** - Resolves issue preventing .cmd file tracking
+
+### Changes
+
+**Enter Key Implementation:**
+- Added virtual key code 13 (Enter) detection to all menu loops
+- Placed after Esc handling, before main choice logic
+- Sets choice variable to appropriate default action
+- Maintains existing validation and flow
+
+**Modified Functions:**
+- `Show-DebugToggle()` - Line 565
+- `Start-NewSession()` - Line 2949 (directory selection)
+- `Disable-GlobalBypassPermissions()` - Lines 4417, 4482
+- `Enable-GlobalBypassPermissions()` - Lines 4279, 4329
+- `Get-ModelChoice()` - Line 4062
+- `Get-TrustedSessionChoice()` - Line 4107
+- `Get-SessionManagementChoice()` - Line 3708
+- `Get-RegenerateImageChoice()` - Line 3755
+- `Resolve-BackgroundImageConflict()` - Line 5250
+- `Get-ForkOrContinue()` - Line 3893 (with archived session logic)
+- Multiple Yes/No confirmation prompts (8 locations)
+
+**Technical Details:**
+```powershell
+# Pattern used throughout:
+if ($key.VirtualKeyCode -eq 13) {
+    $choice = 'DEFAULT_ACTION'  # Context-specific default
+}
+```
+
+**Gitignore Update:**
+- Removed line 3: `*.cmd`
+- Allows .cmd files in version control
+- User-specific files still ignored via *.lnk
+
+### Breaking Changes
+None - Fully backward compatible
+
+### Migration Notes
+No action required. Enter key defaults work immediately on script reload.
+
+---
+
 ## [1.9.5] - 2026-01-24
 
 ### Major Features

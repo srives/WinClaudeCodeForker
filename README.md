@@ -1,4 +1,4 @@
-# Windows Claude Code Forker v1.9.5
+# Windows Claude Code Forker v1.10.1
 
 # Quick Start Guide:
 
