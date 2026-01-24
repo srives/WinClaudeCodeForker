@@ -1,6 +1,78 @@
 # Version Information
 
-## Current Version: 1.8.0 (2026-01-24)
+## Current Version: 1.9.0 (2026-01-24)
+
+### Release Notes
+
+This release adds dynamic column configuration with persistent settings, allowing users to customize which columns appear in the main menu.
+
+#### Major Features
+
+**Column Configuration System**
+- Press G key in main menu to access column configuration
+- Interactive menu with checkboxes for all 11 columns:
+  - Active, Model, Session, Notes, Messages, Created, Modified, Cost, Win Terminal, Forked From, Path
+- Arrow key navigation with yellow highlighting on current selection
+- Space or Enter to toggle checkboxes
+- Save and Exit / Abort options
+- Configuration persisted to `~/.claude-menu/column-config.json`
+
+**Notes Column (10 characters)**
+- Added Notes column to main menu display
+- Hidden by default, can be enabled via column configuration
+- Integrated with existing notes functionality
+- Full sortable column (press 4 key for notes sort)
+
+**Dynamic Column Display**
+- Headers and rows built dynamically based on user configuration
+- Column widths adjust automatically when columns hidden/shown
+- Path column remains variable width, adjusts to available space
+- Arrow key navigation respects column configuration
+
+#### Changes
+
+**Column Management:**
+- New `Get-ColumnConfiguration()` function - loads settings from JSON
+- New `Set-ColumnConfiguration()` function - saves settings to JSON
+- New `Show-ColumnConfigMenu()` function - interactive configuration UI
+- Default configuration: All columns visible except Notes
+
+**Menu Updates:**
+- Added "confiG" option to main menu prompt (G key)
+- Only shown in main menu, not in Win Terminal Config mode
+- Menu prompt: `...Refresh | confiG | PgUp | PgDn | eXit`
+
+**Display Updates:**
+- `Show-SessionMenu()` builds headers/rows dynamically based on config
+- `Write-SingleMenuRow()` respects column configuration during navigation
+- Column sort mapping updated: 1=Active, 2=Model, 3=Session, 4=Notes, 5=Messages, 6=Created, 7=Modified, 8=Cost, 9=WinTerminal, 10=ForkedFrom, 11=Path
+
+**Technical Details:**
+- Column config file: `$Global:ColumnConfigPath = "$Global:MenuPath\column-config.json"`
+- Configuration structure: Hashtable with column names as keys, boolean visibility as values
+- Config persists across program restarts
+- Error handling with fallback to default configuration
+
+#### Default Column Visibility
+```json
+{
+  "Active": true,
+  "Model": true,
+  "Session": true,
+  "Notes": false,
+  "Messages": true,
+  "Created": true,
+  "Modified": true,
+  "Cost": true,
+  "WinTerminal": true,
+  "ForkedFrom": true,
+  "Path": true
+}
+```
+
+---
+
+## Previous Version: 1.8.0 (2026-01-24)
 
 ### Release Notes
 

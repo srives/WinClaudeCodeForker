@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.7.0"
+$Global:ScriptVersion = "1.9.0"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -29,6 +29,7 @@ $Global:BackgroundTrackingPath = "$Global:MenuPath\background-tracking.json"
 $Global:DebugStatePath = "$Global:MenuPath\debug.txt"
 $Global:DebugLogPath = "$Global:MenuPath\debug.log"
 $Global:QuoteStatePath = "$Global:MenuPath\quote-state.json"
+$Global:ColumnConfigPath = "$Global:MenuPath\column-config.json"
 $Global:WTSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
 $Global:ClaudePath = "$env:USERPROFILE\.claude"
 $Global:LastClaudeCommand = $null
@@ -1594,6 +1595,9 @@ function Show-SessionMenu {
         $cost = if ($usage) { Get-SessionCost -TokenUsage $usage } else { 0.0 }
         $costDisplay = Format-Cost -Cost $cost
 
+        # Get notes
+        $notes = Get-SessionNotes -SessionId $session.sessionId
+
         $rows += [PSCustomObject]@{
             Title = $title
             Path = $session.projectPath
@@ -1607,6 +1611,7 @@ function Show-SessionMenu {
             Active = $activeMarker
             Cost = $costDisplay
             CostValue = [double]$cost  # Ensure numeric for sorting
+            Notes = $notes
             Session = $session
             OriginalIndex = $i
             CreatedDate = $created
@@ -1620,13 +1625,14 @@ function Show-SessionMenu {
             1 { 'Active' }      # Active marker
             2 { 'Model' }       # Model name
             3 { 'Title' }       # Session title
-            4 { 'Messages' }    # Message count
-            5 { 'CreatedDate' } # Created date (use date object for proper sorting)
-            6 { 'ModifiedDate' }# Modified date (use date object for proper sorting)
-            7 { 'CostValue' }   # Cost (numeric value)
-            8 { 'Profile' }     # Win Terminal profile
-            9 { 'ForkTree' }    # Forked from
-            10 { 'Path' }       # Path
+            4 { 'Notes' }       # Notes
+            5 { 'Messages' }    # Message count
+            6 { 'CreatedDate' } # Created date (use date object for proper sorting)
+            7 { 'ModifiedDate' }# Modified date (use date object for proper sorting)
+            8 { 'CostValue' }   # Cost (numeric value)
+            9 { 'Profile' }     # Win Terminal profile
+            10 { 'ForkTree' }   # Forked from
+            11 { 'Path' }       # Path
             default { $null }
         }
 
@@ -1724,13 +1730,102 @@ function Show-SessionMenu {
         }
         Write-Host "  |" -ForegroundColor DarkGray
     } else {
-        $pathWidth = [Math]::Max(15, $boxWidth - 147)
+        # Get column configuration
+        $columnConfig = Get-ColumnConfiguration
 
-        # Column headers with color highlighting for sorted column
-        $headers = @("Active", "Model", "Session", "Messages", "Created", "Modified", "Cost", "Win Terminal", "Forked From", "Path")
-        $headerLines = @("------", "-----", "-------", "--------", "-------", "--------", "----", "------------", "-----------", "----")
-        $headerWidths = @(6, 8, 30, 8, 12, 12, 8, 25, 25, ($pathWidth - 1))
-        $widths = @(6, 8, 30, 8, 12, 12, 8, 25, 25, $pathWidth)
+        # Calculate path width: boxWidth - borders(4) - fixed columns
+        # Base: Active(6) + Model(8) + Session(30) + Notes(10) + Messages(8) + Created(12) + Modified(12) + Cost(8) + WinTerminal(25) + ForkedFrom(25) + spaces(10) = 154
+        # Adjust based on hidden columns
+        $fixedWidth = 4  # borders
+        $columnSpaces = 0
+
+        if ($columnConfig.Active) { $fixedWidth += 6; $columnSpaces++ }
+        if ($columnConfig.Model) { $fixedWidth += 8; $columnSpaces++ }
+        if ($columnConfig.Session) { $fixedWidth += 30; $columnSpaces++ }
+        if ($columnConfig.Notes) { $fixedWidth += 10; $columnSpaces++ }
+        if ($columnConfig.Messages) { $fixedWidth += 8; $columnSpaces++ }
+        if ($columnConfig.Created) { $fixedWidth += 12; $columnSpaces++ }
+        if ($columnConfig.Modified) { $fixedWidth += 12; $columnSpaces++ }
+        if ($columnConfig.Cost) { $fixedWidth += 8; $columnSpaces++ }
+        if ($columnConfig.WinTerminal) { $fixedWidth += 25; $columnSpaces++ }
+        if ($columnConfig.ForkedFrom) { $fixedWidth += 25; $columnSpaces++ }
+        $fixedWidth += $columnSpaces  # space between columns
+
+        $pathWidth = [Math]::Max(15, $boxWidth - $fixedWidth)
+
+        # Build dynamic headers based on configuration
+        $headers = @()
+        $headerLines = @()
+        $headerWidths = @()
+        $widths = @()
+        $colNum = 1
+
+        if ($columnConfig.Active) {
+            $headers += "Active"
+            $headerLines += "------"
+            $headerWidths += 6
+            $widths += 6
+        }
+        if ($columnConfig.Model) {
+            $headers += "Model"
+            $headerLines += "-----"
+            $headerWidths += 8
+            $widths += 8
+        }
+        if ($columnConfig.Session) {
+            $headers += "Session"
+            $headerLines += "-------"
+            $headerWidths += 30
+            $widths += 30
+        }
+        if ($columnConfig.Notes) {
+            $headers += "Notes"
+            $headerLines += "-----"
+            $headerWidths += 10
+            $widths += 10
+        }
+        if ($columnConfig.Messages) {
+            $headers += "Messages"
+            $headerLines += "--------"
+            $headerWidths += 8
+            $widths += 8
+        }
+        if ($columnConfig.Created) {
+            $headers += "Created"
+            $headerLines += "-------"
+            $headerWidths += 12
+            $widths += 12
+        }
+        if ($columnConfig.Modified) {
+            $headers += "Modified"
+            $headerLines += "--------"
+            $headerWidths += 12
+            $widths += 12
+        }
+        if ($columnConfig.Cost) {
+            $headers += "Cost"
+            $headerLines += "----"
+            $headerWidths += 8
+            $widths += 8
+        }
+        if ($columnConfig.WinTerminal) {
+            $headers += "Win Terminal"
+            $headerLines += "------------"
+            $headerWidths += 25
+            $widths += 25
+        }
+        if ($columnConfig.ForkedFrom) {
+            $headers += "Forked From"
+            $headerLines += "-----------"
+            $headerWidths += 25
+            $widths += 25
+        }
+        if ($columnConfig.Path) {
+            $headers += "Path"
+            $headerLines += "----"
+            $headerWidths += ($pathWidth - 1)
+            $widths += $pathWidth
+        }
 
         # Write header row
         Write-Host "| " -NoNewline -ForegroundColor DarkGray
@@ -1777,18 +1872,61 @@ function Show-SessionMenu {
             Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
             Write-Host "  |" -ForegroundColor DarkGray
         } else {
-            # Calculate dynamic path width: boxWidth - borders(4) - fixed columns(143)
-            # Fixed: Active(6) + Model(8) + Session(30) + Messages(8) + Created(12) + Modified(12) + Cost(8) + WinTerminal(25) + ForkedFrom(25) + spaces(9) = 143
-            $pathWidth = [Math]::Max(15, $boxWidth - 147)
+            # Build row dynamically based on column configuration
+            $rowParts = @()
 
-            $active = Truncate-String $row.Active 6
-            $model = Truncate-String $row.Model 8
-            $title = Truncate-String $row.Title 30
-            $cost = Truncate-String $row.Cost 8
-            $profile = Truncate-String $row.Profile 25
-            $forkTree = Truncate-String $row.ForkTree 25
-            $path = Truncate-String $row.Path $pathWidth -FromLeft
-            $rowText = ("{0,-6} {1,-8} {2,-30} {3,-8} {4,-12} {5,-12} {6,-8} {7,-25} {8,-25} {9,-$pathWidth}" -f $active, $model, $title, $row.Messages, $row.Created, $row.Modified, $cost, $profile, $forkTree, $path)
+            if ($columnConfig.Active) {
+                $rowParts += Truncate-String $row.Active 6
+            }
+            if ($columnConfig.Model) {
+                $rowParts += Truncate-String $row.Model 8
+            }
+            if ($columnConfig.Session) {
+                $rowParts += Truncate-String $row.Title 30
+            }
+            if ($columnConfig.Notes) {
+                $rowParts += Truncate-String $row.Notes 10
+            }
+            if ($columnConfig.Messages) {
+                $rowParts += Truncate-String $row.Messages.ToString() 8
+            }
+            if ($columnConfig.Created) {
+                $rowParts += Truncate-String $row.Created 12
+            }
+            if ($columnConfig.Modified) {
+                $rowParts += Truncate-String $row.Modified 12
+            }
+            if ($columnConfig.Cost) {
+                $rowParts += Truncate-String $row.Cost 8
+            }
+            if ($columnConfig.WinTerminal) {
+                $rowParts += Truncate-String $row.Profile 25
+            }
+            if ($columnConfig.ForkedFrom) {
+                $rowParts += Truncate-String $row.ForkTree 25
+            }
+            if ($columnConfig.Path) {
+                $rowParts += Truncate-String $row.Path $pathWidth -FromLeft
+            }
+
+            # Build format string and apply widths
+            $formatParts = @()
+            $valueIndex = 0
+            if ($columnConfig.Active) { $formatParts += "{$valueIndex,-6}"; $valueIndex++ }
+            if ($columnConfig.Model) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
+            if ($columnConfig.Session) { $formatParts += "{$valueIndex,-30}"; $valueIndex++ }
+            if ($columnConfig.Notes) { $formatParts += "{$valueIndex,-10}"; $valueIndex++ }
+            if ($columnConfig.Messages) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
+            if ($columnConfig.Created) { $formatParts += "{$valueIndex,-12}"; $valueIndex++ }
+            if ($columnConfig.Modified) { $formatParts += "{$valueIndex,-12}"; $valueIndex++ }
+            if ($columnConfig.Cost) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
+            if ($columnConfig.WinTerminal) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
+            if ($columnConfig.ForkedFrom) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
+            if ($columnConfig.Path) { $formatParts += "{$valueIndex,-$pathWidth}"; $valueIndex++ }
+
+            $formatString = $formatParts -join " "
+            $rowText = $formatString -f $rowParts
+
             Write-Host "| " -NoNewline -ForegroundColor DarkGray
             Write-Host (Truncate-String $rowText ($boxWidth - 4)) -NoNewline -ForegroundColor $rowColor
             Write-Host (" " * [Math]::Max(0, $boxWidth - 4 - $rowText.Length)) -NoNewline
@@ -1878,15 +2016,56 @@ function Write-SingleMenuRow {
         $path = Truncate-String $RowData.Path $pathWidth -FromLeft
         $rowText = ("{0,-30} {1,-8} {2,-12} {3,-12} {4,-8} {5,-20} {6,-20} {7,-$pathWidth}" -f $title, $RowData.Messages, $RowData.Created, $RowData.Modified, $cost, $profile, $colorScheme, $path)
     } else {
-        $pathWidth = [Math]::Max(15, $BoxWidth - 147)
-        $active = Truncate-String $RowData.Active 6
-        $model = Truncate-String $RowData.Model 8
-        $title = Truncate-String $RowData.Title 30
-        $cost = Truncate-String $RowData.Cost 8
-        $profile = Truncate-String $RowData.Profile 25
-        $forkTree = Truncate-String $RowData.ForkTree 25
-        $path = Truncate-String $RowData.Path $pathWidth -FromLeft
-        $rowText = ("{0,-6} {1,-8} {2,-30} {3,-8} {4,-12} {5,-12} {6,-8} {7,-25} {8,-25} {9,-$pathWidth}" -f $active, $model, $title, $RowData.Messages, $RowData.Created, $RowData.Modified, $cost, $profile, $forkTree, $path)
+        # Get column configuration
+        $columnConfig = Get-ColumnConfiguration
+
+        # Calculate path width dynamically based on visible columns
+        $fixedWidth = 4
+        $columnSpaces = 0
+        if ($columnConfig.Active) { $fixedWidth += 6; $columnSpaces++ }
+        if ($columnConfig.Model) { $fixedWidth += 8; $columnSpaces++ }
+        if ($columnConfig.Session) { $fixedWidth += 30; $columnSpaces++ }
+        if ($columnConfig.Notes) { $fixedWidth += 10; $columnSpaces++ }
+        if ($columnConfig.Messages) { $fixedWidth += 8; $columnSpaces++ }
+        if ($columnConfig.Created) { $fixedWidth += 12; $columnSpaces++ }
+        if ($columnConfig.Modified) { $fixedWidth += 12; $columnSpaces++ }
+        if ($columnConfig.Cost) { $fixedWidth += 8; $columnSpaces++ }
+        if ($columnConfig.WinTerminal) { $fixedWidth += 25; $columnSpaces++ }
+        if ($columnConfig.ForkedFrom) { $fixedWidth += 25; $columnSpaces++ }
+        $fixedWidth += $columnSpaces
+        $pathWidth = [Math]::Max(15, $BoxWidth - $fixedWidth)
+
+        # Build row dynamically based on column configuration
+        $rowParts = @()
+        if ($columnConfig.Active) { $rowParts += Truncate-String $RowData.Active 6 }
+        if ($columnConfig.Model) { $rowParts += Truncate-String $RowData.Model 8 }
+        if ($columnConfig.Session) { $rowParts += Truncate-String $RowData.Title 30 }
+        if ($columnConfig.Notes) { $rowParts += Truncate-String $RowData.Notes 10 }
+        if ($columnConfig.Messages) { $rowParts += Truncate-String $RowData.Messages.ToString() 8 }
+        if ($columnConfig.Created) { $rowParts += Truncate-String $RowData.Created 12 }
+        if ($columnConfig.Modified) { $rowParts += Truncate-String $RowData.Modified 12 }
+        if ($columnConfig.Cost) { $rowParts += Truncate-String $RowData.Cost 8 }
+        if ($columnConfig.WinTerminal) { $rowParts += Truncate-String $RowData.Profile 25 }
+        if ($columnConfig.ForkedFrom) { $rowParts += Truncate-String $RowData.ForkTree 25 }
+        if ($columnConfig.Path) { $rowParts += Truncate-String $RowData.Path $pathWidth -FromLeft }
+
+        # Build format string
+        $formatParts = @()
+        $valueIndex = 0
+        if ($columnConfig.Active) { $formatParts += "{$valueIndex,-6}"; $valueIndex++ }
+        if ($columnConfig.Model) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
+        if ($columnConfig.Session) { $formatParts += "{$valueIndex,-30}"; $valueIndex++ }
+        if ($columnConfig.Notes) { $formatParts += "{$valueIndex,-10}"; $valueIndex++ }
+        if ($columnConfig.Messages) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
+        if ($columnConfig.Created) { $formatParts += "{$valueIndex,-12}"; $valueIndex++ }
+        if ($columnConfig.Modified) { $formatParts += "{$valueIndex,-12}"; $valueIndex++ }
+        if ($columnConfig.Cost) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
+        if ($columnConfig.WinTerminal) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
+        if ($columnConfig.ForkedFrom) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
+        if ($columnConfig.Path) { $formatParts += "{$valueIndex,-$pathWidth}"; $valueIndex++ }
+
+        $formatString = $formatParts -join " "
+        $rowText = $formatString -f $rowParts
     }
 
     # Draw the row
@@ -2012,6 +2191,10 @@ function Get-ArrowKeyNavigation {
         Write-Host 'R' -NoNewline -ForegroundColor Yellow
         Write-Host "efresh" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "confi" -NoNewline -ForegroundColor Gray
+        Write-Host 'G' -NoNewline -ForegroundColor Yellow
+        Write-Host "" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($TotalPages -gt 1) {
             Write-Host "Pg" -NoNewline -ForegroundColor Yellow
             Write-Host "Up" -NoNewline -ForegroundColor Gray
@@ -2057,6 +2240,10 @@ function Get-ArrowKeyNavigation {
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'R' -NoNewline -ForegroundColor Yellow
         Write-Host "efresh" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host "confi" -NoNewline -ForegroundColor Gray
+        Write-Host 'G' -NoNewline -ForegroundColor Yellow
+        Write-Host "" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($TotalPages -gt 1) {
             Write-Host "Pg" -NoNewline -ForegroundColor Yellow
@@ -2312,6 +2499,11 @@ function Get-ArrowKeyNavigation {
                 # Refresh
                 if ($char -eq 'R') {
                     return @{ Type = 'Refresh'; Index = $selectedIndex }
+                }
+
+                # Column configuration
+                if ($char -eq 'G' -and -not $DeleteMode) {
+                    return @{ Type = 'ColumnConfig'; Index = $selectedIndex }
                 }
 
                 # Windows Terminal config
@@ -5508,6 +5700,186 @@ function Set-SessionNotes {
     }
 }
 
+function Get-ColumnConfiguration {
+    <#
+    .SYNOPSIS
+        Gets the column visibility configuration
+    #>
+    if (-not (Test-Path $Global:ColumnConfigPath)) {
+        # Return default configuration (Notes hidden by default)
+        return @{
+            Active = $true
+            Model = $true
+            Session = $true
+            Notes = $false
+            Messages = $true
+            Created = $true
+            Modified = $true
+            Cost = $true
+            WinTerminal = $true
+            ForkedFrom = $true
+            Path = $true
+        }
+    }
+
+    try {
+        $config = Get-Content $Global:ColumnConfigPath -Raw | ConvertFrom-Json
+        # Convert from PSCustomObject to hashtable for easier use
+        $ht = @{}
+        $config.PSObject.Properties | ForEach-Object {
+            $ht[$_.Name] = $_.Value
+        }
+        return $ht
+    } catch {
+        Write-DebugInfo "Error loading column config: $_" -Color Red
+        # Return default on error
+        return @{
+            Active = $true
+            Model = $true
+            Session = $true
+            Notes = $false
+            Messages = $true
+            Created = $true
+            Modified = $true
+            Cost = $true
+            WinTerminal = $true
+            ForkedFrom = $true
+            Path = $true
+        }
+    }
+}
+
+function Set-ColumnConfiguration {
+    <#
+    .SYNOPSIS
+        Saves the column visibility configuration
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [hashtable]$Config
+    )
+
+    try {
+        $Config | ConvertTo-Json | Set-Content $Global:ColumnConfigPath -Encoding UTF8
+        return $true
+    } catch {
+        Write-DebugInfo "Error saving column config: $_" -Color Red
+        return $false
+    }
+}
+
+function Show-ColumnConfigMenu {
+    <#
+    .SYNOPSIS
+        Interactive menu for configuring column visibility
+    #>
+
+    # Load current configuration
+    $config = Get-ColumnConfiguration
+
+    # Define columns in display order
+    $columns = @(
+        @{ Name = "Active"; Label = "Active" }
+        @{ Name = "Model"; Label = "Model" }
+        @{ Name = "Session"; Label = "Session" }
+        @{ Name = "Notes"; Label = "Notes" }
+        @{ Name = "Messages"; Label = "Messages" }
+        @{ Name = "Created"; Label = "Created" }
+        @{ Name = "Modified"; Label = "Modified" }
+        @{ Name = "Cost"; Label = "Cost" }
+        @{ Name = "WinTerminal"; Label = "Win Terminal" }
+        @{ Name = "ForkedFrom"; Label = "Forked From" }
+        @{ Name = "Path"; Label = "Path" }
+    )
+
+    $selectedIndex = 0
+    $saveExitIndex = $columns.Count
+    $abortIndex = $columns.Count + 1
+
+    while ($true) {
+        Clear-Host
+        Write-Host ""
+        Write-ColorText "========================================" -Color Cyan
+        Write-ColorText "          COLUMN CONFIGURATION          " -Color Cyan
+        Write-ColorText "========================================" -Color Cyan
+        Write-Host ""
+        Write-Host "Select columns to display in the main menu:" -ForegroundColor Gray
+        Write-Host "Use " -NoNewline -ForegroundColor Gray
+        Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow
+        Write-Host " to navigate, " -NoNewline -ForegroundColor Gray
+        Write-Host "[Space]" -NoNewline -ForegroundColor Yellow
+        Write-Host " or " -NoNewline -ForegroundColor Gray
+        Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
+        Write-Host " to toggle" -ForegroundColor Gray
+        Write-Host ""
+
+        # Display column checkboxes
+        for ($i = 0; $i -lt $columns.Count; $i++) {
+            $column = $columns[$i]
+            $isChecked = $config[$column.Name]
+            $checkbox = if ($isChecked) { "[x]" } else { "[ ]" }
+            $color = if ($i -eq $selectedIndex) { "Yellow" } else { "Green" }
+
+            Write-Host "  $checkbox " -NoNewline -ForegroundColor $color
+            Write-Host $column.Label -ForegroundColor $color
+        }
+
+        Write-Host ""
+
+        # Display Save and Exit option
+        $color = if ($selectedIndex -eq $saveExitIndex) { "Yellow" } else { "Green" }
+        Write-Host "  Save and Exit" -ForegroundColor $color
+
+        # Display Abort option
+        $color = if ($selectedIndex -eq $abortIndex) { "Yellow" } else { "Green" }
+        Write-Host "  Abort" -ForegroundColor $color
+
+        # Read key
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+        # Handle up arrow
+        if ($key.VirtualKeyCode -eq 38) {
+            $selectedIndex = ($selectedIndex - 1)
+            if ($selectedIndex -lt 0) { $selectedIndex = $abortIndex }
+        }
+        # Handle down arrow
+        elseif ($key.VirtualKeyCode -eq 40) {
+            $selectedIndex = ($selectedIndex + 1)
+            if ($selectedIndex -gt $abortIndex) { $selectedIndex = 0 }
+        }
+        # Handle space or enter
+        elseif ($key.VirtualKeyCode -eq 32 -or $key.VirtualKeyCode -eq 13) {
+            if ($selectedIndex -lt $columns.Count) {
+                # Toggle checkbox
+                $columnName = $columns[$selectedIndex].Name
+                $config[$columnName] = -not $config[$columnName]
+            }
+            elseif ($selectedIndex -eq $saveExitIndex) {
+                # Save and exit
+                if (Set-ColumnConfiguration -Config $config) {
+                    Write-Host ""
+                    Write-ColorText "Column configuration saved." -Color Green
+                    Start-Sleep -Seconds 1
+                    return $true
+                } else {
+                    Write-Host ""
+                    Write-ColorText "Failed to save configuration." -Color Red
+                    Start-Sleep -Seconds 2
+                    return $false
+                }
+            }
+            elseif ($selectedIndex -eq $abortIndex) {
+                # Abort without saving
+                return $false
+            }
+        }
+        # Handle Esc as abort
+        elseif ($key.VirtualKeyCode -eq 27) {
+            return $false
+        }
+    }
+}
+
 #endregion
 
 #region Profile Registry
@@ -6572,6 +6944,17 @@ function Start-MainMenu {
                 Show-DebugToggle
                 $selectedIndex = 0
                 $reloadSessions = $true
+                continue
+            }
+
+            'ColumnConfig' {
+                # Show column configuration menu
+                $saved = Show-ColumnConfigMenu
+                if ($saved) {
+                    # Configuration was saved, reload to apply changes
+                    $selectedIndex = 0
+                    $reloadSessions = $true
+                }
                 continue
             }
 
