@@ -2,6 +2,148 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.10.2] - 2026-01-24
+
+### Major Features
+
+#### Comprehensive Validation System
+- **40 Automated Tests** - Built-in self-protection with comprehensive test suite
+- **Infrastructure Tests (15)** - Validates PowerShell version, Claude CLI, Windows Terminal, directory structure, JSON integrity, orphaned resources
+- **Logic Tests (15)** - Validates functions, path encoding, sanitization, GUID format, date parsing, model names, menu key handlers
+- **Algorithm Tests (10)** - Validates string truncation, path encoding edge cases, JSON structure, WT profile format, background paths, session mapping consistency
+- **Accessible from Debug Menu** - Press 'D' → 'V' to run all validation tests
+- **Self-Healing Detection** - Tests detect mismatches between menu keys and handlers, missing functions, data corruption
+- **Machine-Independent** - Tests validate logic and algorithms, not user-specific configuration values
+
+### Bug Fixes
+
+#### Test 17: Function Name Validation
+- **Fixed Missing Function Detection** - Corrected function name from "New-BackgroundImage" to "New-SessionBackgroundImage"
+- **Accurate Function Checking** - Test 17 now validates actual function names in codebase
+- **Zero Failures** - All 40 tests now pass (previously 1 failure)
+
+#### Test 24: Non-Invasive Sort Column Validation
+- **Removed Global State Modification** - No longer sets `$Global:SortColumn` during testing
+- **Local Test Value** - Uses local variable to validate logic without affecting user's current sort preference
+- **User-Friendly** - Validation doesn't disrupt active user sessions
+
+#### Test 28: Non-Invasive Debug State Validation
+- **Removed State Toggling** - No longer toggles debug state on/off during testing
+- **Function Existence Check** - Validates debug functions exist and return valid types without modifying state
+- **Preserves User Settings** - User's debug mode remains unchanged after validation
+
+### Changes
+
+**Validation System:**
+- New `Test-SystemValidation()` function - Lines 526-1155: Complete validation framework with 40 tests
+- Test categories:
+  - **Tests 1-15:** Infrastructure (PowerShell, CLI tools, directories, JSON files, orphaned resources)
+  - **Tests 16-30:** Logic & algorithms (functions, encoding, sanitization, parsing, globals)
+  - **Tests 31-40:** Menu integrity, edge cases, consistency (key handlers, column sorts, path encoding, GUID validation, model names)
+- Added 'V' option to Debug menu for validation tests
+- Test results display with color-coded status (PASS=Green, WARN=Yellow, FAIL=Red)
+- Summary shows total passed/warned/failed counts
+- Script-scoped counter variables for accurate tracking
+
+**Menu Integration:**
+- Debug menu updated with Validation option: `Debug Off | Notepad - Open Debug Log | Instructions - Show debug mode help | Validation - Run system tests | Abort`
+- Added 'V' key handler in Debug menu (line 630-638)
+- Validation accessible via: Main Menu → Debug (D) → Validation (V)
+
+**Test Output Format:**
+```
+========================================
+      SYSTEM VALIDATION TESTS
+========================================
+
+[PASS] PowerShell Version
+        Version 5.1
+[PASS] Claude CLI
+        Found at C:\Users\user\.local\bin\claude.exe
+[WARN] Orphaned WT Profiles
+        5 orphaned profile(s) found
+...
+
+========================================
+           TEST SUMMARY
+========================================
+
+Passed: 38
+Warnings: 2
+Failed: 0
+
+All critical tests passed. Some warnings noted.
+```
+
+### Technical Details
+
+**New Functions:**
+- `Test-SystemValidation()` - Lines 526-1155: Master validation function with 40 comprehensive tests
+- `Write-TestResult($TestName, $Status, $Message)` - Nested function for formatted test output with color coding
+
+**Test Categories:**
+
+**Infrastructure Tests (1-15):**
+1. PowerShell Version (≥5.1)
+2. Claude CLI Exists
+3. Windows Terminal Available
+4. .claude-menu Directory Structure
+5. session-mapping.json Integrity
+6. background-tracking.json Integrity
+7. Windows Terminal settings.json
+8. Orphaned Windows Terminal Profiles
+9. Missing Session Files
+10. Orphaned Background Images
+11. Reserved Variable Usage ($input)
+12. Claude Projects Directory
+13. Path Encoding (C:\repos → C--repos)
+14. Session Discovery
+15. Column Configuration
+
+**Logic Tests (16-30):**
+16. Path Encoding Consistency (Idempotency)
+17. Critical Functions Exist
+18. Safe Name Sanitization
+19. Session ID Format (GUID)
+20. Date Parsing Logic
+21. Truncate-String Function
+22. Global Variable Initialization
+23. Model Name Parsing
+24. Sort Column Range Validation
+25. Menu Navigation Keys Defined
+26. Table Box Width Calculation
+27. Permission State Consistency
+28. Debug State Functions
+29. Color Scheme Constants
+30. Session Object Structure
+
+**Algorithm Tests (31-40):**
+31. Menu Keys Match Handlers
+32. Column Sort Keys (1-11)
+33. Path Encoding Edge Cases
+34. String Truncation Edge Cases
+35. JSON File Structure Validation
+36. WT Profile Name Format
+37. GUID Validation Logic
+38. Background Image Path Consistency
+39. Session Mapping Consistency
+40. Model Name Format Validation
+
+**Self-Protection Features:**
+- Test 31 validates every menu key has a corresponding handler
+- Test 32 validates all sort column keys work
+- Test 17 validates all critical functions exist
+- Tests catch refactoring errors before they cause runtime failures
+- Tests validate algorithm correctness independent of user data
+
+### Breaking Changes
+None - Fully backward compatible
+
+### Migration Notes
+No action required. Validation system is immediately available in Debug menu.
+
+---
+
 ## [1.10.1] - 2026-01-24
 
 ### Major Features

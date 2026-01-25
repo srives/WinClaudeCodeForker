@@ -1,74 +1,68 @@
 # Version Information
 
-## Current Version: 1.10.1 (2026-01-24)
+## Current Version: 1.10.2 (2026-01-24)
 
 ### Release Notes
 
-This release implements universal Enter key defaults across all menus for improved UX consistency and removes unnecessary .gitignore restrictions.
+This release adds a comprehensive validation system with 40 automated tests to protect the program from failures and ensure code integrity.
 
 #### Major Features
 
-**Universal Enter Key Defaults**
-- All menus now support Enter key to select the first/default option
-- Consistent behavior: Press Enter for the most common action
-- No need to remember specific hotkeys for common operations
-- Applied to 15+ menus throughout the application
+**Comprehensive Validation System (40 Tests)**
+- Built-in self-protection with automated test suite
+- Infrastructure validation (15 tests): PowerShell, CLI tools, directories, JSON integrity
+- Logic validation (15 tests): Functions, encoding, sanitization, parsing, globals
+- Algorithm validation (10 tests): Menu integrity, edge cases, consistency
+- Accessible from Debug menu (Press D → V)
+- Self-healing detection catches mismatches before they cause errors
+- Machine-independent tests validate logic, not user configuration
 
-**Menu Pattern Consistency**
-- Debug menu: Enter → Toggle Debug (D)
-- Directory selection: Enter → Use Current (C)
-- Chatty/Quiet modes: Enter → Switch to mode (C/Q)
-- Model selection: Enter → Opus (O)
-- Trusted session: Enter → Yes (Y)
-- Profile management: Enter → Regenerate (R)
-- Image regeneration: Enter → Refresh (R)
-- Background conflicts: Enter → Overwrite (O)
-- All Yes/No prompts: Enter → Yes (Y)
-- Fork/Continue menu: Enter → Continue (C) or Unarchive (U) for archived
-- Delete confirmations: Enter → Yes (Y)
+**Test Categories:**
+- Infrastructure (15 tests): PowerShell version, Claude CLI, Windows Terminal, directories, JSON integrity, orphaned resources
+- Logic (15 tests): Function existence, path encoding, string truncation, GUID format, date parsing, model validation
+- Algorithms (10 tests): Menu key handlers, column sort keys, path edge cases, JSON structure, session consistency
 
-**Menu Text Simplification**
-- Fork/Continue menu text simplified
-- Changed from "Continue - Resume Claude Session" to "Continue Claude Session"
-- Changed from "Fork - Create new branch" to "Fork Session"
-- More concise, easier to scan
+**Self-Protection Features:**
+- Menu keys match handlers (catches refactoring errors)
+- Function existence validation (prevents missing function errors)
+- Path encoding edge cases (validates algorithm correctness)
+- Non-invasive tests (don't modify user state)
 
 #### Bug Fixes
 
-**Gitignore Configuration**
-- Removed `*.cmd` rule from .gitignore
-- .cmd files can now be tracked in repository
-- Fixes issue preventing .cmd file commits
+**Test Accuracy Fixes**
+- Fixed Test 17: Corrected function name from "New-BackgroundImage" to "New-SessionBackgroundImage"
+- Fixed Test 24: Removed global state modification (now uses local test value)
+- Fixed Test 28: Removed debug state toggling (now only checks function existence)
+- All 40 tests now pass with accurate validation
 
 #### Changes
 
-**Enter Key Handling:**
-- Added `if ($key.VirtualKeyCode -eq 13)` checks to all menu loops
-- Enter key returns appropriate default action for each menu context
-- Archived sessions: Enter → Unarchive (first option)
-- Normal sessions: Enter → Continue (first option)
-- Consistent with Esc key pattern (always abort/cancel)
+**Validation System:**
+- New `Test-SystemValidation()` function (lines 526-1155) with 40 comprehensive tests
+- Added 'V' option to Debug menu for running validation tests
+- Test results display with color-coded status (Green/Yellow/Red)
+- Summary shows passed/warned/failed counts with health assessment
+- Script-scoped counter variables for accurate result tracking
 
-**Modified Menus:**
-1. Show-DebugToggle (line 565) - Enter → Toggle Debug
-2. Start-NewSession directory (line 2949) - Enter → Use Current
-3. Disable-GlobalBypassPermissions (lines 4417, 4482) - Enter → Chatty Mode
-4. Enable-GlobalBypassPermissions (lines 4279, 4329) - Enter → Quiet Mode
-5. Get-ModelChoice (line 4062) - Enter → Opus
-6. Get-TrustedSessionChoice (line 4107) - Enter → Yes
-7. Get-SessionManagementChoice (line 3708) - Enter → Regenerate
-8. Get-RegenerateImageChoice (line 3755) - Enter → Refresh
-9. Resolve-BackgroundImageConflict (line 5250) - Enter → Overwrite
-10. Get-ForkOrContinue (line 3893) - Enter → Continue/Unarchive
-11. All Yes/No confirmations (8 locations) - Enter → Yes
+**Test Output:**
+```
+========================================
+      SYSTEM VALIDATION TESTS
+========================================
 
-**Technical Implementation:**
-- Virtual key code 13 = Enter key
-- Check added after Esc handling, before switch/if logic
-- Sets choice variable to appropriate default letter
-- Preserves existing logic flow and validation
+[PASS] PowerShell Version (Version 5.1)
+[PASS] Claude CLI (Found at path)
+[WARN] Orphaned WT Profiles (5 orphaned)
+...
 
-### Previous Version: 1.9.5 (2026-01-24)
+========================================
+           TEST SUMMARY
+========================================
+Passed: 38 | Warnings: 2 | Failed: 0
+```
+
+### Previous Version: 1.10.1 (2026-01-24)
 
 ### Release Notes
 

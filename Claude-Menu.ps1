@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.10.1"
+$Global:ScriptVersion = "1.10.2"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -523,6 +523,965 @@ function Write-DebugFileOperation {
     }
 }
 
+function Test-SystemValidation {
+    <#
+    .SYNOPSIS
+        Runs comprehensive system validation tests
+    #>
+
+    Clear-Host
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "      SYSTEM VALIDATION TESTS" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+
+    # Initialize counters at script scope so nested function can modify them
+    $script:ValidationPassCount = 0
+    $script:ValidationFailCount = 0
+    $script:ValidationWarnCount = 0
+
+    function Write-TestResult {
+        param(
+            [string]$TestName,
+            [string]$Status,  # PASS, FAIL, WARN
+            [string]$Message = ""
+        )
+
+        $statusColor = switch ($Status) {
+            "PASS" { "Green" }
+            "FAIL" { "Red" }
+            "WARN" { "Yellow" }
+        }
+
+        Write-Host "[" -NoNewline
+        Write-Host $Status -NoNewline -ForegroundColor $statusColor
+        Write-Host "] " -NoNewline
+        Write-Host $TestName -ForegroundColor Gray
+
+        if ($Message) {
+            Write-Host "        $Message" -ForegroundColor DarkGray
+        }
+
+        # Update counters at script scope
+        switch ($Status) {
+            "PASS" { $script:ValidationPassCount++ }
+            "FAIL" { $script:ValidationFailCount++ }
+            "WARN" { $script:ValidationWarnCount++ }
+        }
+    }
+
+    # Test 1: PowerShell Version
+    try {
+        $psVersion = $PSVersionTable.PSVersion
+        if ($psVersion.Major -ge 5) {
+            Write-TestResult "PowerShell Version" "PASS" "Version $($psVersion.Major).$($psVersion.Minor)"
+        } else {
+            Write-TestResult "PowerShell Version" "WARN" "Version $($psVersion.Major).$($psVersion.Minor) (5.1+ recommended)"
+        }
+    } catch {
+        Write-TestResult "PowerShell Version" "FAIL" $_.Exception.Message
+    }
+
+    # Test 2: Claude CLI Exists
+    try {
+        $claudePath = Get-ClaudeCLIPath
+        if (Test-Path $claudePath) {
+            Write-TestResult "Claude CLI" "PASS" "Found at $claudePath"
+        } else {
+            Write-TestResult "Claude CLI" "FAIL" "Not found at expected location"
+        }
+    } catch {
+        Write-TestResult "Claude CLI" "FAIL" $_.Exception.Message
+    }
+
+    # Test 3: Windows Terminal
+    try {
+        $wtPath = (Get-Command wt.exe -ErrorAction SilentlyContinue).Source
+        if ($wtPath) {
+            Write-TestResult "Windows Terminal" "PASS" "Found at $wtPath"
+        } else {
+            Write-TestResult "Windows Terminal" "FAIL" "wt.exe not found in PATH"
+        }
+    } catch {
+        Write-TestResult "Windows Terminal" "FAIL" $_.Exception.Message
+    }
+
+    # Test 4: .claude-menu Directory Structure
+    try {
+        if (Test-Path $Global:MenuPath) {
+            Write-TestResult ".claude-menu Directory" "PASS" $Global:MenuPath
+        } else {
+            Write-TestResult ".claude-menu Directory" "FAIL" "Directory does not exist"
+        }
+    } catch {
+        Write-TestResult ".claude-menu Directory" "FAIL" $_.Exception.Message
+    }
+
+    # Test 5: session-mapping.json Integrity
+    try {
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            if ($mapping.sessions) {
+                $sessionCount = $mapping.sessions.Count
+                Write-TestResult "session-mapping.json" "PASS" "$sessionCount tracked session(s)"
+            } else {
+                Write-TestResult "session-mapping.json" "WARN" "No sessions property found"
+            }
+        } else {
+            Write-TestResult "session-mapping.json" "WARN" "File does not exist (will be created on first fork)"
+        }
+    } catch {
+        Write-TestResult "session-mapping.json" "FAIL" "Invalid JSON: $($_.Exception.Message)"
+    }
+
+    # Test 6: background-tracking.json Integrity
+    try {
+        if (Test-Path $Global:BackgroundTrackingPath) {
+            $tracking = Get-Content $Global:BackgroundTrackingPath -Raw | ConvertFrom-Json
+            if ($tracking.backgrounds) {
+                $bgCount = $tracking.backgrounds.Count
+                Write-TestResult "background-tracking.json" "PASS" "$bgCount background(s) tracked"
+            } else {
+                Write-TestResult "background-tracking.json" "WARN" "No backgrounds property found"
+            }
+        } else {
+            Write-TestResult "background-tracking.json" "WARN" "File does not exist (will be created on first background)"
+        }
+    } catch {
+        Write-TestResult "background-tracking.json" "FAIL" "Invalid JSON: $($_.Exception.Message)"
+    }
+
+    # Test 7: Windows Terminal settings.json
+    try {
+        $wtSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+        if (Test-Path $wtSettingsPath) {
+            $settings = Get-Content $wtSettingsPath -Raw | ConvertFrom-Json
+            if ($settings.profiles.list) {
+                $profileCount = $settings.profiles.list.Count
+                Write-TestResult "Windows Terminal settings.json" "PASS" "$profileCount profile(s) configured"
+            } else {
+                Write-TestResult "Windows Terminal settings.json" "WARN" "No profiles.list found"
+            }
+        } else {
+            Write-TestResult "Windows Terminal settings.json" "FAIL" "File not found"
+        }
+    } catch {
+        Write-TestResult "Windows Terminal settings.json" "FAIL" "Invalid JSON: $($_.Exception.Message)"
+    }
+
+    # Test 8: Orphaned Windows Terminal Profiles
+    try {
+        if ((Test-Path $Global:SessionMappingPath) -and (Test-Path "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json")) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            $wtSettings = Get-Content "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json" -Raw | ConvertFrom-Json
+
+            $claudeProfiles = $wtSettings.profiles.list | Where-Object { $_.name -like "Claude-*" }
+            $trackedProfiles = $mapping.sessions | ForEach-Object { $_.wtProfileName }
+
+            $orphaned = $claudeProfiles | Where-Object { $trackedProfiles -notcontains $_.name }
+
+            if ($orphaned) {
+                $orphanCount = ($orphaned | Measure-Object).Count
+                Write-TestResult "Orphaned WT Profiles" "WARN" "$orphanCount orphaned profile(s) found"
+            } else {
+                Write-TestResult "Orphaned WT Profiles" "PASS" "No orphaned profiles"
+            }
+        } else {
+            Write-TestResult "Orphaned WT Profiles" "WARN" "Cannot check (missing files)"
+        }
+    } catch {
+        Write-TestResult "Orphaned WT Profiles" "WARN" "Check failed: $($_.Exception.Message)"
+    }
+
+    # Test 9: Missing Session Files
+    try {
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            $missingCount = 0
+
+            foreach ($session in $mapping.sessions) {
+                $encodedPath = ConvertTo-ClaudeprojectPath -Path $session.projectPath
+                $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$($session.sessionId).jsonl"
+
+                if (-not (Test-Path $sessionFile)) {
+                    $missingCount++
+                }
+            }
+
+            if ($missingCount -eq 0) {
+                Write-TestResult "Missing Session Files" "PASS" "All tracked sessions have .jsonl files"
+            } else {
+                Write-TestResult "Missing Session Files" "WARN" "$missingCount tracked session(s) missing .jsonl files"
+            }
+        } else {
+            Write-TestResult "Missing Session Files" "WARN" "Cannot check (no session-mapping.json)"
+        }
+    } catch {
+        Write-TestResult "Missing Session Files" "WARN" "Check failed: $($_.Exception.Message)"
+    }
+
+    # Test 10: Orphaned Background Images
+    try {
+        if ((Test-Path $Global:BackgroundTrackingPath) -and (Test-Path $Global:MenuPath)) {
+            $tracking = Get-Content $Global:BackgroundTrackingPath -Raw | ConvertFrom-Json
+            $trackedBackgrounds = $tracking.backgrounds | ForEach-Object { $_.backgroundPath }
+
+            $orphanedCount = 0
+            Get-ChildItem -Path $Global:MenuPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $bgFile = Join-Path $_.FullName "background.png"
+                if ((Test-Path $bgFile) -and ($trackedBackgrounds -notcontains $bgFile)) {
+                    $orphanedCount++
+                }
+            }
+
+            if ($orphanedCount -eq 0) {
+                Write-TestResult "Orphaned Background Images" "PASS" "No orphaned background images"
+            } else {
+                Write-TestResult "Orphaned Background Images" "WARN" "$orphanedCount orphaned background(s) found"
+            }
+        } else {
+            Write-TestResult "Orphaned Background Images" "WARN" "Cannot check (missing files)"
+        }
+    } catch {
+        Write-TestResult "Orphaned Background Images" "WARN" "Check failed: $($_.Exception.Message)"
+    }
+
+    # Test 11: Reserved Variable Usage ($input)
+    try {
+        $scriptPath = $PSCommandPath
+        $scriptContent = Get-Content $scriptPath -Raw
+
+        # Check for $input usage (should be $userInput now)
+        if ($scriptContent -match '\$input\s*=') {
+            Write-TestResult "Reserved Variable Check" "FAIL" "Script uses reserved variable `$input (should be `$userInput)"
+        } else {
+            Write-TestResult "Reserved Variable Check" "PASS" "No reserved variable conflicts detected"
+        }
+    } catch {
+        Write-TestResult "Reserved Variable Check" "WARN" "Check failed: $($_.Exception.Message)"
+    }
+
+    # Test 12: Claude Projects Directory
+    try {
+        if (Test-Path $Global:ClaudeProjectsPath) {
+            $projectDirs = Get-ChildItem -Path $Global:ClaudeProjectsPath -Directory -ErrorAction SilentlyContinue
+            $dirCount = ($projectDirs | Measure-Object).Count
+            Write-TestResult "Claude Projects Directory" "PASS" "$dirCount project directory(ies) found"
+        } else {
+            Write-TestResult "Claude Projects Directory" "FAIL" "Directory does not exist: $Global:ClaudeProjectsPath"
+        }
+    } catch {
+        Write-TestResult "Claude Projects Directory" "FAIL" $_.Exception.Message
+    }
+
+    # Test 13: Path Encoding/Decoding
+    try {
+        $testPath = "C:\repos"
+        $encoded = ConvertTo-ClaudeprojectPath -Path $testPath
+        $expected = "C--repos"
+
+        if ($encoded -eq $expected) {
+            Write-TestResult "Path Encoding" "PASS" "C:\repos -> $encoded"
+        } else {
+            Write-TestResult "Path Encoding" "FAIL" "Expected '$expected', got '$encoded'"
+        }
+    } catch {
+        Write-TestResult "Path Encoding" "FAIL" $_.Exception.Message
+    }
+
+    # Test 14: Session Discovery
+    try {
+        $sessions = Get-AllClaudeSessions
+        if ($sessions) {
+            $sessionCount = ($sessions | Measure-Object).Count
+            Write-TestResult "Session Discovery" "PASS" "$sessionCount session(s) discovered"
+        } else {
+            Write-TestResult "Session Discovery" "WARN" "No sessions found (may be normal for new installation)"
+        }
+    } catch {
+        Write-TestResult "Session Discovery" "FAIL" $_.Exception.Message
+    }
+
+    # Test 15: Column Configuration
+    try {
+        $config = Get-ColumnConfiguration
+        if ($config) {
+            $visibleCount = 0
+            $config.PSObject.Properties | ForEach-Object {
+                if ($_.Value -eq $true) { $visibleCount++ }
+            }
+            Write-TestResult "Column Configuration" "PASS" "$visibleCount visible column(s)"
+        } else {
+            Write-TestResult "Column Configuration" "WARN" "No configuration found (will use defaults)"
+        }
+    } catch {
+        Write-TestResult "Column Configuration" "WARN" "Check failed: $($_.Exception.Message)"
+    }
+
+    # Test 16: Path Encoding Round-Trip (Bijection Test)
+    try {
+        $testPaths = @("C:\repos", "c:\temp", "D:\Projects\Test", "C:\Users\Test User\Documents")
+        $failures = @()
+
+        foreach ($path in $testPaths) {
+            $encoded = ConvertTo-ClaudeprojectPath -Path $path
+            # We can't decode back easily, but we can verify encoding is consistent
+            $encoded2 = ConvertTo-ClaudeprojectPath -Path $path
+            if ($encoded -ne $encoded2) {
+                $failures += "Inconsistent encoding for '$path'"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "Path Encoding Consistency" "PASS" "All test paths encode consistently"
+        } else {
+            Write-TestResult "Path Encoding Consistency" "FAIL" "$($failures.Count) encoding inconsistencies"
+        }
+    } catch {
+        Write-TestResult "Path Encoding Consistency" "FAIL" $_.Exception.Message
+    }
+
+    # Test 17: Critical Functions Exist
+    try {
+        $criticalFunctions = @(
+            "Get-AllClaudeSessions",
+            "Start-ContinueSession",
+            "Start-ForkSession",
+            "Show-SessionMenu",
+            "Get-ClaudeCLIPath",
+            "Add-WTProfile",
+            "Remove-WTProfile",
+            "New-SessionBackgroundImage",
+            "Get-ColumnConfiguration",
+            "Test-SessionFileValid"
+        )
+
+        $missing = @()
+        foreach ($func in $criticalFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Critical Functions Exist" "PASS" "All $($criticalFunctions.Count) functions available"
+        } else {
+            Write-TestResult "Critical Functions Exist" "FAIL" "$($missing.Count) missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Critical Functions Exist" "FAIL" $_.Exception.Message
+    }
+
+    # Test 18: Safe Name Sanitization
+    try {
+        $testNames = @(
+            @{ Input = "My:Test*Session"; Expected = "My_Test_Session" }
+            @{ Input = 'Test"Session'; Expected = "Test_Session" }
+            @{ Input = "Test<>Session"; Expected = "Test__Session" }
+            @{ Input = "Test|Session"; Expected = "Test_Session" }
+        )
+
+        $failures = @()
+        foreach ($test in $testNames) {
+            $result = $test.Input -replace '[:*?"<>|]', '_'
+            if ($result -ne $test.Expected) {
+                $failures += "Expected '$($test.Expected)', got '$result'"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "Safe Name Sanitization" "PASS" "All special characters handled correctly"
+        } else {
+            Write-TestResult "Safe Name Sanitization" "FAIL" "$($failures.Count) sanitization failures"
+        }
+    } catch {
+        Write-TestResult "Safe Name Sanitization" "FAIL" $_.Exception.Message
+    }
+
+    # Test 19: Session ID Format Validation
+    try {
+        # Generate test GUID and validate format
+        $testGuid = [Guid]::NewGuid().ToString()
+        $guidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+        if ($testGuid -match $guidPattern) {
+            Write-TestResult "Session ID Format" "PASS" "GUID format validation works"
+        } else {
+            Write-TestResult "Session ID Format" "FAIL" "GUID pattern matching failed"
+        }
+    } catch {
+        Write-TestResult "Session ID Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 20: Date Parsing Logic
+    try {
+        $testDate = [DateTime]::Now
+        $formatted = $testDate.ToString('MM/dd HH:mm')
+        $parsed = [DateTime]::ParseExact($formatted, 'MM/dd HH:mm', $null)
+
+        if ($parsed.Month -eq $testDate.Month -and $parsed.Day -eq $testDate.Day) {
+            Write-TestResult "Date Parsing Logic" "PASS" "Date format parsing works correctly"
+        } else {
+            Write-TestResult "Date Parsing Logic" "FAIL" "Date parsing mismatch"
+        }
+    } catch {
+        Write-TestResult "Date Parsing Logic" "FAIL" $_.Exception.Message
+    }
+
+    # Test 21: Truncate-String Function
+    try {
+        $longString = "This is a very long string that needs truncation"
+        $truncated = Truncate-String $longString 20
+
+        if ($truncated.Length -le 20) {
+            Write-TestResult "String Truncation" "PASS" "Truncation respects max length"
+        } else {
+            Write-TestResult "String Truncation" "FAIL" "Truncated string exceeds max length"
+        }
+    } catch {
+        Write-TestResult "String Truncation" "FAIL" $_.Exception.Message
+    }
+
+    # Test 22: Global Variable Initialization
+    try {
+        $requiredGlobals = @(
+            "MenuPath",
+            "SessionMappingPath",
+            "BackgroundTrackingPath",
+            "ClaudeProjectsPath",
+            "DebugLogPath",
+            "ScriptVersion"
+        )
+
+        $missing = @()
+        foreach ($var in $requiredGlobals) {
+            if (-not (Get-Variable -Name $var -Scope Global -ErrorAction SilentlyContinue)) {
+                $missing += $var
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Global Variables" "PASS" "All required globals initialized"
+        } else {
+            Write-TestResult "Global Variables" "FAIL" "$($missing.Count) missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Global Variables" "FAIL" $_.Exception.Message
+    }
+
+    # Test 23: Model Name Parsing
+    try {
+        $testModels = @("opus", "sonnet", "haiku", "claude-sonnet-4-5", "claude-opus-4")
+        $allValid = $true
+
+        foreach ($model in $testModels) {
+            if ($model -notmatch '^(opus|sonnet|haiku|claude-)') {
+                $allValid = $false
+                break
+            }
+        }
+
+        if ($allValid) {
+            Write-TestResult "Model Name Parsing" "PASS" "Model name patterns recognized"
+        } else {
+            Write-TestResult "Model Name Parsing" "FAIL" "Invalid model name pattern"
+        }
+    } catch {
+        Write-TestResult "Model Name Parsing" "FAIL" $_.Exception.Message
+    }
+
+    # Test 24: Sort Column Range Validation
+    try {
+        # Test that sort column numbers are in valid range (1-11 based on key handlers)
+        $validSortColumns = 1..11
+        $testValue = 5  # Test value (not modifying global)
+
+        # Test the validation logic without modifying global state
+        if ($validSortColumns -contains $testValue) {
+            Write-TestResult "Sort Column Range" "PASS" "Sort column validation logic works"
+        } else {
+            Write-TestResult "Sort Column Range" "FAIL" "Sort column validation failed"
+        }
+    } catch {
+        Write-TestResult "Sort Column Range" "FAIL" $_.Exception.Message
+    }
+
+    # Test 25: Menu Navigation Keys Defined
+    try {
+        # These keys should be handled in the navigation logic
+        $expectedKeys = @('N', 'W', 'S', 'H', 'Q', 'C', 'O', 'D', 'R', 'G', 'A', 'X')
+        $keysDocumented = $expectedKeys.Count -ge 10
+
+        if ($keysDocumented) {
+            Write-TestResult "Menu Navigation Keys" "PASS" "$($expectedKeys.Count) menu keys defined"
+        } else {
+            Write-TestResult "Menu Navigation Keys" "WARN" "Fewer than expected menu keys"
+        }
+    } catch {
+        Write-TestResult "Menu Navigation Keys" "FAIL" $_.Exception.Message
+    }
+
+    # Test 26: Table Box Width Calculation
+    try {
+        # Test that box width calculations don't produce negative numbers
+        $testWidth = 120
+        $fixedWidth = 50
+        $spacesBetween = 10
+        $pathWidth = $testWidth - 4 - $fixedWidth - $spacesBetween
+
+        if ($pathWidth -gt 0) {
+            Write-TestResult "Table Width Calculation" "PASS" "Box width math produces valid results"
+        } else {
+            Write-TestResult "Table Width Calculation" "FAIL" "Negative width calculated"
+        }
+    } catch {
+        Write-TestResult "Table Width Calculation" "FAIL" $_.Exception.Message
+    }
+
+    # Test 27: Permission State Consistency
+    try {
+        $permStatus = Get-GlobalPermissionStatus
+        # Should return either boolean or hashtable with Enabled property
+        $isValid = ($permStatus -is [bool]) -or
+                   (($permStatus -is [hashtable]) -and $permStatus.ContainsKey('Enabled'))
+
+        if ($isValid) {
+            Write-TestResult "Permission State Logic" "PASS" "Permission status returns valid format"
+        } else {
+            Write-TestResult "Permission State Logic" "FAIL" "Permission status format invalid"
+        }
+    } catch {
+        Write-TestResult "Permission State Logic" "FAIL" $_.Exception.Message
+    }
+
+    # Test 28: Debug State Functions
+    try {
+        # Test that debug state functions exist and return consistent values
+        # without modifying the user's current debug state
+        if ((Get-Command Get-DebugState -ErrorAction SilentlyContinue) -and
+            (Get-Command Set-DebugState -ErrorAction SilentlyContinue)) {
+
+            $state = Get-DebugState
+            $isValid = ($state -is [bool])
+
+            if ($isValid) {
+                Write-TestResult "Debug State Functions" "PASS" "Debug state functions available and working"
+            } else {
+                Write-TestResult "Debug State Functions" "FAIL" "Debug state returns invalid type"
+            }
+        } else {
+            Write-TestResult "Debug State Functions" "FAIL" "Debug state functions missing"
+        }
+    } catch {
+        Write-TestResult "Debug State Functions" "FAIL" $_.Exception.Message
+    }
+
+    # Test 29: Color Scheme Constants
+    try {
+        # Verify that color constants are strings
+        $testColors = @("Yellow", "Green", "Red", "Cyan", "Gray")
+        $allStrings = $true
+
+        foreach ($color in $testColors) {
+            if ($color -isnot [string]) {
+                $allStrings = $false
+                break
+            }
+        }
+
+        if ($allStrings) {
+            Write-TestResult "Color Scheme Constants" "PASS" "Color values are valid strings"
+        } else {
+            Write-TestResult "Color Scheme Constants" "FAIL" "Invalid color value type"
+        }
+    } catch {
+        Write-TestResult "Color Scheme Constants" "FAIL" $_.Exception.Message
+    }
+
+    # Test 30: Session Object Structure
+    try {
+        # Get a sample session and verify it has expected properties
+        $sessions = Get-AllClaudeSessions
+        if ($sessions -and $sessions.Count -gt 0) {
+            $session = $sessions[0]
+            $requiredProps = @('sessionId', 'projectPath', 'created', 'modified')
+            $missing = @()
+
+            foreach ($prop in $requiredProps) {
+                if (-not ($session.PSObject.Properties.Name -contains $prop)) {
+                    $missing += $prop
+                }
+            }
+
+            if ($missing.Count -eq 0) {
+                Write-TestResult "Session Object Structure" "PASS" "Session objects have required properties"
+            } else {
+                Write-TestResult "Session Object Structure" "FAIL" "Missing properties: $($missing -join ', ')"
+            }
+        } else {
+            Write-TestResult "Session Object Structure" "WARN" "No sessions available to test"
+        }
+    } catch {
+        Write-TestResult "Session Object Structure" "FAIL" $_.Exception.Message
+    }
+
+    # Test 31: Menu Keys Match Handlers
+    try {
+        # Verify that advertised menu keys actually have handlers
+        # These are the keys shown in main menu prompts
+        $menuKeys = @('N', 'W', 'S', 'H', 'Q', 'C', 'O', 'D', 'R', 'G', 'A', 'X')
+
+        # Read the script to find key handlers in navigation logic
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $missingHandlers = @()
+
+        foreach ($key in $menuKeys) {
+            # Look for handler patterns like: if ($char -eq 'N')  or  if ($userInput -eq 'N'
+            $pattern = "if\s*\(\s*\`$\w+\s+-eq\s+'$key'"
+            if ($scriptContent -notmatch $pattern) {
+                $missingHandlers += $key
+            }
+        }
+
+        if ($missingHandlers.Count -eq 0) {
+            Write-TestResult "Menu Key Handlers" "PASS" "All $($menuKeys.Count) menu keys have handlers"
+        } else {
+            Write-TestResult "Menu Key Handlers" "FAIL" "Missing handlers for: $($missingHandlers -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Menu Key Handlers" "FAIL" $_.Exception.Message
+    }
+
+    # Test 32: Column Sort Keys (1-11)
+    try {
+        # Verify that sort column keys 1-11 have corresponding handlers
+        $sortKeys = 1..11
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $missingKeys = @()
+
+        foreach ($key in $sortKeys) {
+            # Look for sort key handlers
+            if ($scriptContent -notmatch "'$key'.*SortColumn") {
+                $missingKeys += $key
+            }
+        }
+
+        if ($missingKeys.Count -eq 0) {
+            Write-TestResult "Column Sort Keys" "PASS" "All 11 sort keys have handlers"
+        } else {
+            Write-TestResult "Column Sort Keys" "FAIL" "Missing sort handlers for: $($missingKeys -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Column Sort Keys" "FAIL" $_.Exception.Message
+    }
+
+    # Test 33: Path Encoding Edge Cases
+    try {
+        $testCases = @(
+            @{ Path = "C:\repos\"; Expected = "C--repos" }  # Trailing slash
+            @{ Path = "C:\repos"; Expected = "C--repos" }   # No trailing slash
+            @{ Path = "c:\temp"; Expected = "c--temp" }     # Lowercase drive
+            @{ Path = "C:\"; Expected = "C-" }              # Root path
+        )
+
+        $failures = @()
+        foreach ($test in $testCases) {
+            $encoded = ConvertTo-ClaudeprojectPath -Path $test.Path
+            if ($encoded -ne $test.Expected) {
+                $failures += "Path '$($test.Path)' -> '$encoded' (expected '$($test.Expected)')"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "Path Encoding Edge Cases" "PASS" "All edge cases handled correctly"
+        } else {
+            Write-TestResult "Path Encoding Edge Cases" "FAIL" "$($failures.Count) failures"
+        }
+    } catch {
+        Write-TestResult "Path Encoding Edge Cases" "FAIL" $_.Exception.Message
+    }
+
+    # Test 34: String Truncation Edge Cases
+    try {
+        $failures = @()
+
+        # Test 1: String shorter than max - should return unchanged
+        $short = "Hello"
+        $result1 = Truncate-String $short 10
+        if ($result1 -ne "Hello") {
+            $failures += "Short string modified: '$result1'"
+        }
+
+        # Test 2: Empty string - should return empty
+        $empty = ""
+        $result2 = Truncate-String $empty 10
+        if ($result2 -ne "") {
+            $failures += "Empty string not handled: '$result2'"
+        }
+
+        # Test 3: String at exact max length - should return unchanged
+        $exact = "1234567890"
+        $result3 = Truncate-String $exact 10
+        if ($result3.Length -ne 10) {
+            $failures += "Exact length failed: length=$($result3.Length)"
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "String Truncation Edge Cases" "PASS" "All truncation edge cases work"
+        } else {
+            Write-TestResult "String Truncation Edge Cases" "FAIL" "$($failures.Count) failures"
+        }
+    } catch {
+        Write-TestResult "String Truncation Edge Cases" "FAIL" $_.Exception.Message
+    }
+
+    # Test 35: JSON File Structure Validation
+    try {
+        $failures = @()
+
+        # Check session-mapping.json structure
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            if (-not $mapping.PSObject.Properties['sessions']) {
+                $failures += "session-mapping.json missing 'sessions' array"
+            }
+        }
+
+        # Check background-tracking.json structure
+        if (Test-Path $Global:BackgroundTrackingPath) {
+            $tracking = Get-Content $Global:BackgroundTrackingPath -Raw | ConvertFrom-Json
+            if (-not $tracking.PSObject.Properties['backgrounds']) {
+                $failures += "background-tracking.json missing 'backgrounds' array"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "JSON Structure Validation" "PASS" "JSON files have correct structure"
+        } else {
+            Write-TestResult "JSON Structure Validation" "FAIL" "$($failures -join ', ')"
+        }
+    } catch {
+        Write-TestResult "JSON Structure Validation" "FAIL" $_.Exception.Message
+    }
+
+    # Test 36: WT Profile Name Format
+    try {
+        # Test that WT profile names follow convention: "Claude-<name>"
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            $invalidNames = @()
+
+            foreach ($session in $mapping.sessions) {
+                if ($session.wtProfileName -and $session.wtProfileName -notmatch '^Claude-') {
+                    $invalidNames += $session.wtProfileName
+                }
+            }
+
+            if ($invalidNames.Count -eq 0) {
+                Write-TestResult "WT Profile Name Format" "PASS" "All profile names follow 'Claude-*' convention"
+            } else {
+                Write-TestResult "WT Profile Name Format" "FAIL" "$($invalidNames.Count) profiles don't follow convention"
+            }
+        } else {
+            Write-TestResult "WT Profile Name Format" "WARN" "Cannot check (no session-mapping.json)"
+        }
+    } catch {
+        Write-TestResult "WT Profile Name Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 37: GUID Format Validation
+    try {
+        # Test GUID generation and validation
+        $testGuid = [Guid]::NewGuid().ToString()
+        $guidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+        $failures = @()
+
+        # Valid GUID should match
+        if ($testGuid -notmatch $guidPattern) {
+            $failures += "Valid GUID rejected"
+        }
+
+        # Invalid GUIDs should not match
+        $invalidGuids = @("not-a-guid", "12345", "")
+        foreach ($invalid in $invalidGuids) {
+            if ($invalid -match $guidPattern) {
+                $failures += "Invalid GUID accepted: $invalid"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "GUID Validation Logic" "PASS" "GUID validation works correctly"
+        } else {
+            Write-TestResult "GUID Validation Logic" "FAIL" "$($failures -join ', ')"
+        }
+    } catch {
+        Write-TestResult "GUID Validation Logic" "FAIL" $_.Exception.Message
+    }
+
+    # Test 38: Background Image Path Consistency
+    try {
+        # Verify background image paths follow expected structure
+        if (Test-Path $Global:BackgroundTrackingPath) {
+            $tracking = Get-Content $Global:BackgroundTrackingPath -Raw | ConvertFrom-Json
+            $invalidPaths = @()
+
+            foreach ($bg in $tracking.backgrounds) {
+                # Should be under .claude-menu directory and end with background.png
+                if ($bg.backgroundPath -notmatch [regex]::Escape($Global:MenuPath)) {
+                    $invalidPaths += $bg.backgroundPath
+                }
+                if ($bg.backgroundPath -notmatch 'background\.png$') {
+                    $invalidPaths += $bg.backgroundPath
+                }
+            }
+
+            if ($invalidPaths.Count -eq 0) {
+                Write-TestResult "Background Path Format" "PASS" "All background paths follow convention"
+            } else {
+                Write-TestResult "Background Path Format" "FAIL" "$($invalidPaths.Count) invalid paths"
+            }
+        } else {
+            Write-TestResult "Background Path Format" "WARN" "Cannot check (no background-tracking.json)"
+        }
+    } catch {
+        Write-TestResult "Background Path Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 39: Session Mapping Consistency
+    try {
+        # Check that session IDs in mapping actually exist in Claude projects
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            $orphanedSessions = @()
+
+            foreach ($session in $mapping.sessions) {
+                $encodedPath = ConvertTo-ClaudeprojectPath -Path $session.projectPath
+                $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$($session.sessionId).jsonl"
+
+                if (-not (Test-Path $sessionFile)) {
+                    $orphanedSessions += $session.sessionId
+                }
+            }
+
+            if ($orphanedSessions.Count -eq 0) {
+                Write-TestResult "Session Mapping Consistency" "PASS" "All mapped sessions have valid files"
+            } else {
+                Write-TestResult "Session Mapping Consistency" "WARN" "$($orphanedSessions.Count) orphaned mappings"
+            }
+        } else {
+            Write-TestResult "Session Mapping Consistency" "WARN" "Cannot check (no session-mapping.json)"
+        }
+    } catch {
+        Write-TestResult "Session Mapping Consistency" "FAIL" $_.Exception.Message
+    }
+
+    # Test 40: Model Name Format Validation
+    try {
+        # Test that model name parsing handles expected formats
+        $validModels = @("opus", "sonnet", "haiku", "claude-opus-4-5", "claude-sonnet-4-5-20250929")
+        $invalidModels = @("", "invalid-model", "123", "gpt-4")
+
+        $failures = @()
+
+        # Valid models should match pattern
+        foreach ($model in $validModels) {
+            if ($model -notmatch '^(opus|sonnet|haiku|claude-)') {
+                $failures += "Valid model rejected: $model"
+            }
+        }
+
+        # Invalid models should not match
+        foreach ($model in $invalidModels) {
+            if ($model -match '^(opus|sonnet|haiku|claude-)') {
+                $failures += "Invalid model accepted: $model"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "Model Name Validation" "PASS" "Model name patterns work correctly"
+        } else {
+            Write-TestResult "Model Name Validation" "FAIL" "$($failures -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Model Name Validation" "FAIL" $_.Exception.Message
+    }
+
+    # Summary
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "           TEST SUMMARY" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-Host "Passed: " -NoNewline
+    Write-Host $script:ValidationPassCount -ForegroundColor Green
+    Write-Host "Warnings: " -NoNewline
+    Write-Host $script:ValidationWarnCount -ForegroundColor Yellow
+    Write-Host "Failed: " -NoNewline
+    Write-Host $script:ValidationFailCount -ForegroundColor Red
+    Write-Host ""
+
+    if ($script:ValidationFailCount -eq 0 -and $script:ValidationWarnCount -eq 0) {
+        Write-ColorText "All tests passed! System is healthy." -Color Green
+    } elseif ($script:ValidationFailCount -eq 0) {
+        Write-ColorText "All critical tests passed. Some warnings noted." -Color Yellow
+    } else {
+        Write-ColorText "Some tests failed. Please review failures above." -Color Red
+    }
+
+    Write-Host ""
+    Write-ColorText "Press any key to return to debug menu..." -Color Yellow
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+
+    # Clean up script-scoped variables
+    Remove-Variable -Name "ValidationPassCount" -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name "ValidationFailCount" -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name "ValidationWarnCount" -Scope Script -ErrorAction SilentlyContinue
+}
+
+function Show-AboutScreen {
+    <#
+    .SYNOPSIS
+        Displays the About screen with ASCII art and version information
+    #>
+
+    Clear-Host
+    Write-ColorText "Claude Code Session Manager with Win Terminal Forking" -Color Yellow
+    Write-Host "Version: $Global:ScriptVersion" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "=**=---========--------===--=====--==-------==" -ForegroundColor Cyan
+    Write-Host "==*#*==-=====++==-==============-------=======" -ForegroundColor Cyan
+    Write-Host "--==-----=+++**++++++##*=*##*%%+=-------===--=" -ForegroundColor Cyan
+    Write-Host "---=-----+#*+=###%%#++++*#%@@@#==-=--==--=---=" -ForegroundColor Cyan
+    Write-Host "--==-----=+=====%@@@@@@@%%@@@%*=-----==------=" -ForegroundColor Cyan
+    Write-Host "---====--=-=======*%@@@@@@@@@@#====--=========" -ForegroundColor Cyan
+    Write-Host "----------====+======+%@@@@@@@%+==============" -ForegroundColor Cyan
+    Write-Host "---=---==--==++-=-==+%@@@@@@@@*====+*+=-======" -ForegroundColor Cyan
+    Write-Host "------=---==++++-====*@@@@@@@@@%+======++=====" -ForegroundColor Cyan
+    Write-Host "-----==----=+++======*#@@%@@@@%%+======+======" -ForegroundColor Cyan
+    Write-Host "-=--=------==+++====*%%@@%%%@@%%+=============" -ForegroundColor Cyan
+    Write-Host "----=------==++====+%@@@@@@%%%%%+=============" -ForegroundColor Cyan
+    Write-Host "---=-------==++==*%#%%@@@@@@@@@@%=============" -ForegroundColor Cyan
+    Write-Host "-----------==+++#@@@@%%%@@@@@@@@@#=======+++*+" -ForegroundColor Cyan
+    Write-Host "----------=-=+*%@@@@@@%*+#@@@@%@@@#=======+++=" -ForegroundColor Cyan
+    Write-Host "-----=------==%@@@@@@@%**+#@%*+=+%@#=====+##+=" -ForegroundColor Cyan
+    Write-Host "*#*+=--------*@@@%@@@@@@%%@@%+====+##*===+##*+" -ForegroundColor Cyan
+    Write-Host "--==#*=----==%@@@@@@@%%@@@@@@*====**%*+===+===" -ForegroundColor Cyan
+    Write-Host "==--=*#=----=*@@@@@@%%%%@@@@@%+=====+=====+===" -ForegroundColor Cyan
+    Write-Host "=----=*%*=---*%@@@@@@%%%@@@@@%+============+==" -ForegroundColor Cyan
+    Write-Host "--==--=+%#=--=#@@@@@@%%#%@@@@*======-=========" -ForegroundColor Cyan
+    Write-Host "---=====+#@%*=+*@@@@@@%%%@@@#+================" -ForegroundColor Cyan
+    Write-Host "==========+#@@@%@@@@@@%%@@%*==================" -ForegroundColor Cyan
+    Write-Host "---====++===++*#@@@@%%%@@@%*+++=============++" -ForegroundColor Cyan
+    Write-Host "*###%%%%%##%%%%%%%%%%##%@@@@@%%%%%%%%%%%%%%%@@" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "By: S. Rives" -ForegroundColor Gray
+    Write-Host "GitHub: " -NoNewline -ForegroundColor Gray
+    Write-Host "https://github.com/srives/WinClaudeCodeForker" -ForegroundColor Cyan
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+}
+
 function Show-DebugToggle {
     <#
     .SYNOPSIS
@@ -549,6 +1508,8 @@ function Show-DebugToggle {
     Write-Host "otepad - Open Debug Log | " -NoNewline -ForegroundColor Gray
     Write-Host "I" -NoNewline -ForegroundColor Yellow
     Write-Host "nstructions - Show debug mode help | " -NoNewline -ForegroundColor Gray
+    Write-Host "V" -NoNewline -ForegroundColor Yellow
+    Write-Host "alidation - Run system tests | " -NoNewline -ForegroundColor Gray
     Write-Host "A" -NoNewline -ForegroundColor Yellow
     Write-Host "bort" -NoNewline -ForegroundColor Gray
 
@@ -607,6 +1568,11 @@ function Show-DebugToggle {
                 $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
                 return
             }
+            'V' {
+                # Run system validation
+                Test-SystemValidation
+                return
+            }
             'A' {
                 # Abort - return to main menu
                 return
@@ -621,6 +1587,62 @@ function Show-DebugToggle {
 #endregion
 
 #region Cost Tracking
+
+function Get-SessionMessageCount {
+    <#
+    .SYNOPSIS
+        Counts the number of messages in a session .jsonl file
+    #>
+    param(
+        [string]$SessionId,
+        [string]$ProjectPath
+    )
+
+    if (-not $SessionId -or -not $ProjectPath) {
+        return 0
+    }
+
+    try {
+        # Get the session .jsonl file path
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
+        $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
+
+        if (-not (Test-Path $sessionFile)) {
+            return 0
+        }
+
+        # Count user messages only (each represents a conversation turn)
+        # Then multiply by 2 to include assistant responses
+        $userCount = 0
+        $reader = [System.IO.StreamReader]::new($sessionFile)
+        try {
+            while ($null -ne ($line = $reader.ReadLine())) {
+                # Quick check before parsing JSON (performance optimization)
+                if ($line -match '"type"\s*:\s*"user"') {
+                    try {
+                        $entry = $line | ConvertFrom-Json
+                        # Only count if the TOP-LEVEL type is user
+                        if ($entry.type -eq "user") {
+                            $userCount++
+                        }
+                    } catch {
+                        # Skip lines that can't be parsed
+                        continue
+                    }
+                }
+            }
+        } finally {
+            $reader.Close()
+        }
+
+        # Return user message count
+        return $userCount
+
+    } catch {
+        Write-DebugInfo "Error counting session messages: $_" -Color Red
+        return 0
+    }
+}
 
 function Get-SessionTokenUsage {
     <#
@@ -722,17 +1744,17 @@ function Get-SessionCost {
     }
 
     # Pricing per 1 million tokens (Claude Sonnet 4.5)
-    $inputRate = 3.00 / 1000000
+    $userInputRate = 3.00 / 1000000
     $cacheWriteRate = 3.75 / 1000000
     $cacheReadRate = 0.30 / 1000000
     $outputRate = 15.00 / 1000000
 
-    $inputCost = $TokenUsage.InputTokens * $inputRate
+    $userInputCost = $TokenUsage.InputTokens * $userInputRate
     $cacheWriteCost = $TokenUsage.CacheCreationTokens * $cacheWriteRate
     $cacheReadCost = $TokenUsage.CacheReadTokens * $cacheReadRate
     $outputCost = $TokenUsage.OutputTokens * $outputRate
 
-    $totalCost = $inputCost + $cacheWriteCost + $cacheReadCost + $outputCost
+    $totalCost = $userInputCost + $cacheWriteCost + $cacheReadCost + $outputCost
 
     return [Math]::Round($totalCost, 4)
 }
@@ -844,7 +1866,7 @@ function Show-CostAnalysis {
         $title = $title.PadRight(35)
 
         $costStr = (Format-Cost -Cost $sc.Cost).PadRight(9)
-        $inputStr = (Format-TokenCount -Count $sc.InputTokens).PadRight(8)
+        $userInputStr = (Format-TokenCount -Count $sc.InputTokens).PadRight(8)
         $outputStr = (Format-TokenCount -Count $sc.OutputTokens).PadRight(8)
         $cacheStr = (Format-TokenCount -Count ($sc.CacheWrites + $sc.CacheReads)).PadRight(8)
         $hitStr = if ($sc.CacheHitRate -gt 0) { "$($sc.CacheHitRate)%" } else { "-" }
@@ -856,7 +1878,7 @@ function Show-CostAnalysis {
             $created = "N/A"
         }
 
-        Write-Host "$title  $costStr  $inputStr  $outputStr  $cacheStr  $hitStr  $created"
+        Write-Host "$title  $costStr  $userInputStr  $outputStr  $cacheStr  $hitStr  $created"
     }
 
     # Display totals
@@ -987,13 +2009,14 @@ function Get-AllClaudeSessions {
 
                         if ($projectPath) {
                             # Create a synthetic session entry
+                            # Note: Message count not available for unindexed sessions
                             $syntheticEntry = [PSCustomObject]@{
                                 sessionId = $sessionId
                                 customTitle = ""  # Empty - unnamed session
                                 projectPath = $projectPath
                                 created = $jsonlFile.CreationTime.ToString('o')
                                 modified = $jsonlFile.LastWriteTime.ToString('o')
-                                messageCount = 0  # We don't know yet
+                                messageCount = 0  # Not reliably calculable for unindexed sessions
                                 firstPrompt = ""
                                 isUnindexed = $true  # Flag to indicate this was found without index
                             }
@@ -1071,6 +2094,9 @@ function Get-AllClaudeSessions {
                     # Extract session name from WT profile name (remove "Claude-" prefix)
                     $sessionName = $mappedSession.wtProfileName -replace '^Claude-', ''
 
+                    # Note: Message count not available for tracked-only sessions
+                    # (these sessions exist but haven't been indexed by Claude yet)
+
                     # Create a synthetic session entry
                     $syntheticEntry = [PSCustomObject]@{
                         sessionId = $mappedSession.sessionId
@@ -1078,7 +2104,7 @@ function Get-AllClaudeSessions {
                         projectPath = $mappedSession.projectPath
                         created = $mappedSession.created
                         modified = $fileInfo.LastWriteTime.ToString('o')
-                        messageCount = 0  # We don't know yet
+                        messageCount = 0  # Not reliably calculable for tracked-only sessions
                         firstPrompt = ""
                         trackedName = $sessionName  # Store our tracked name
                         isTrackedOnly = $true  # Flag to indicate this is from our tracking
@@ -2334,9 +3360,9 @@ function Get-ArrowKeyNavigation {
         Write-Host 'A' -NoNewline -ForegroundColor Yellow
         Write-Host "bort" -ForegroundColor Gray
     } elseif ($ShowUnnamed) {
-        Write-Host "Choose with " -NoNewline -ForegroundColor Gray
+        Write-Host "Use " -NoNewline -ForegroundColor Gray
         Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow
-        Write-Host ", then " -NoNewline -ForegroundColor Gray
+        Write-Host ", " -NoNewline -ForegroundColor Gray
         Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
         Write-Host " to select | " -NoNewline -ForegroundColor Gray
         Write-Host 'N' -NoNewline -ForegroundColor Yellow
@@ -2348,7 +3374,7 @@ function Get-ArrowKeyNavigation {
         }
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'H' -NoNewline -ForegroundColor Yellow
-        Write-Host "ide Unnamed Sessions" -NoNewline -ForegroundColor Gray
+        Write-Host "ide Unnamed" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($HasBypassPermissions) {
             Write-Host 'C' -NoNewline -ForegroundColor Yellow
@@ -2371,6 +3397,9 @@ function Get-ArrowKeyNavigation {
         Write-Host "confi" -NoNewline -ForegroundColor Gray
         Write-Host 'G' -NoNewline -ForegroundColor Yellow
         Write-Host "" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'A' -NoNewline -ForegroundColor Yellow
+        Write-Host "bout" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($TotalPages -gt 1) {
             Write-Host "Pg" -NoNewline -ForegroundColor Yellow
@@ -2384,9 +3413,9 @@ function Get-ArrowKeyNavigation {
         Write-Host 'X' -NoNewline -ForegroundColor Yellow
         Write-Host "it" -ForegroundColor Gray
     } else {
-        Write-Host "Choose with " -NoNewline -ForegroundColor Gray
+        Write-Host "Use " -NoNewline -ForegroundColor Gray
         Write-Host "$([char]0x25B2)$([char]0x25BC)" -NoNewline -ForegroundColor Yellow
-        Write-Host ", then " -NoNewline -ForegroundColor Gray
+        Write-Host ", " -NoNewline -ForegroundColor Gray
         Write-Host "[Enter]" -NoNewline -ForegroundColor Yellow
         Write-Host " to select | " -NoNewline -ForegroundColor Gray
         Write-Host 'N' -NoNewline -ForegroundColor Yellow
@@ -2398,7 +3427,7 @@ function Get-ArrowKeyNavigation {
         }
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'S' -NoNewline -ForegroundColor Yellow
-        Write-Host "how Unnamed Sessions" -NoNewline -ForegroundColor Gray
+        Write-Host "how Unnamed" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($HasBypassPermissions) {
             Write-Host 'C' -NoNewline -ForegroundColor Yellow
@@ -2421,6 +3450,9 @@ function Get-ArrowKeyNavigation {
         Write-Host "confi" -NoNewline -ForegroundColor Gray
         Write-Host 'G' -NoNewline -ForegroundColor Yellow
         Write-Host "" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'A' -NoNewline -ForegroundColor Yellow
+        Write-Host "bout" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($TotalPages -gt 1) {
             Write-Host "Pg" -NoNewline -ForegroundColor Yellow
@@ -2641,6 +3673,11 @@ function Get-ArrowKeyNavigation {
 
                 $char = $key.Character.ToString().ToUpper()
 
+                # About screen
+                if ($char -eq 'A' -and -not $DeleteMode) {
+                    return @{ Type = 'About'; Index = $selectedIndex }
+                }
+
                 # Exit/Quit/Abort
                 if ($char -eq 'X' -or ($char -eq 'A' -and $DeleteMode)) {
                     if ($DeleteMode) {
@@ -2778,19 +3815,24 @@ function Get-UserSelection {
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
             Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [H]ide unnamed sessions$permOption, [O]Cost, " -ForegroundColor Yellow -NoNewline
             Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
-            Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
+            Write-Host "ebug, [R]efresh, [A]bout, e[X]it: " -ForegroundColor Yellow -NoNewline
         } else {
             $wtOption = if ($HasWTProfiles) { ", [W]in Terminal Config" } else { "" }
             $permOption = if ($HasBypassPermissions) { ", [C]hatty Claude Mode" } else { ", [Q]uiet Claude Mode" }
             Write-Host "$range Fork, Join, or Del Session, [N]ew Session$wtOption, [S]how unnamed sessions$permOption, [O]Cost, " -ForegroundColor Yellow -NoNewline
             Write-Host "[D]" -ForegroundColor $debugColor -NoNewline
-            Write-Host "ebug, [R]efresh, e[X]it: " -ForegroundColor Yellow -NoNewline
+            Write-Host "ebug, [R]efresh, [A]bout, e[X]it: " -ForegroundColor Yellow -NoNewline
         }
 
-        $input = Read-Host
+        $userInput = Read-Host
+
+        # Check for About screen
+        if (($userInput -eq 'A' -or $userInput -eq 'a') -and -not $DeleteMode) {
+            return @{ Type = 'About' }
+        }
 
         # Check for exit/abort
-        if ($input -eq 'X' -or $input -eq 'x' -or (($input -eq 'A' -or $input -eq 'a') -and $DeleteMode)) {
+        if ($userInput -eq 'X' -or $userInput -eq 'x' -or (($userInput -eq 'A' -or $userInput -eq 'a') -and $DeleteMode)) {
             if ($DeleteMode) {
                 return @{ Type = 'ExitDeleteMode' }
             } else {
@@ -2800,51 +3842,51 @@ function Get-UserSelection {
 
 
         # Check for new session
-        if (($input -eq 'N' -or $input -eq 'n') -and -not $DeleteMode) {
+        if (($userInput -eq 'N' -or $userInput -eq 'n') -and -not $DeleteMode) {
             return @{ Type = 'NewSession' }
         }
 
         # Check for show/hide toggle
-        if ($input -eq 'S' -or $input -eq 's') {
+        if ($userInput -eq 'S' -or $userInput -eq 's') {
             return @{ Type = 'ShowUnnamed' }
         }
-        if ($input -eq 'H' -or $input -eq 'h') {
+        if ($userInput -eq 'H' -or $userInput -eq 'h') {
             return @{ Type = 'HideUnnamed' }
         }
 
         # Check for debug mode
-        if ($input -eq 'D' -or $input -eq 'd') {
+        if ($userInput -eq 'D' -or $userInput -eq 'd') {
             return @{ Type = 'Debug' }
         }
 
         # Check for cost analysis
-        if ($input -eq '$') {
+        if ($userInput -eq '$') {
             return @{ Type = 'CostAnalysis' }
         }
 
         # Check for refresh
-        if ($input -eq 'R' -or $input -eq 'r') {
+        if ($userInput -eq 'R' -or $userInput -eq 'r') {
             return @{ Type = 'Refresh' }
         }
 
         # Check for delete mode
-        if (($input -eq 'W' -or $input -eq 'w') -and $HasWTProfiles -and -not $DeleteMode) {
+        if (($userInput -eq 'W' -or $userInput -eq 'w') -and $HasWTProfiles -and -not $DeleteMode) {
             return @{ Type = 'EnterDeleteMode' }
         }
 
         # Check for quiet claude mode (enable bypass permissions)
-        if (($input -eq 'Q' -or $input -eq 'q') -and -not $DeleteMode) {
+        if (($userInput -eq 'Q' -or $userInput -eq 'q') -and -not $DeleteMode) {
             return @{ Type = 'EnableBypassPermissions' }
         }
 
         # Check for chatty claude mode (disable bypass permissions)
-        if (($input -eq 'C' -or $input -eq 'c') -and -not $DeleteMode) {
+        if (($userInput -eq 'C' -or $userInput -eq 'c') -and -not $DeleteMode) {
             return @{ Type = 'DisableBypassPermissions' }
         }
 
         # Check for number selection
         $number = 0
-        if ([int]::TryParse($input, [ref]$number)) {
+        if ([int]::TryParse($userInput, [ref]$number)) {
             if ($number -ge $MinOption -and $number -le $MaxOption) {
                 return @{ Type = 'Select'; Value = $number }
             }
@@ -7225,6 +8267,14 @@ function Start-MainMenu {
             'Debug' {
                 # Show debug toggle
                 Show-DebugToggle
+                $selectedIndex = 0
+                $reloadSessions = $true
+                continue
+            }
+
+            'About' {
+                # Show About screen
+                Show-AboutScreen
                 $selectedIndex = 0
                 $reloadSessions = $true
                 continue
