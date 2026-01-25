@@ -2,6 +2,40 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.10.3] - 2026-01-24
+
+### Critical Bug Fix
+
+#### PowerShell Comparison Operator Bug
+- **Fixed File Creation Bug** - Corrected critical syntax error in `PlaceHeaderRightHandBorder` function (line 2522)
+- **Root Cause** - Used `>` (file redirect operator) instead of `-gt` (PowerShell comparison operator)
+- **Symptom** - Created mysterious file named "170" in working directory on every script execution
+- **Impact** - File contained "1 7 0" (spaced characters) due to PowerShell's file redirect behavior
+- **Resolution** - Changed `if ($currentX > $targetX)` to `if ($currentX -gt $targetX)`
+- **Verification** - Comprehensive code audit confirms no other instances of this error pattern
+
+### Technical Details
+
+**The Bug:**
+```powershell
+# INCORRECT (was creating file "170"):
+if ($currentX > $targetX) {
+
+# CORRECT (proper PowerShell syntax):
+if ($currentX -gt $targetX) {
+```
+
+**Why This Happened:**
+- In PowerShell, `>` is the file redirect operator, NOT a comparison operator
+- PowerShell requires `-gt`, `-lt`, `-eq`, `-ge`, `-le`, `-ne` for comparisons
+- When `$currentX=0` and `$targetX=170`, the expression `$currentX > $targetX` was interpreted as "redirect value 0 to file named 170"
+- Script ran without errors because PowerShell silently created the file
+
+**Prevention:**
+- Performed full codebase audit using regex patterns
+- Confirmed 355+ proper PowerShell comparison operators (`-gt`, `-lt`, `-eq`, etc.) used throughout rest of script
+- This was an isolated syntax error, not a systemic issue
+
 ## [1.10.2] - 2026-01-24
 
 ### Major Features

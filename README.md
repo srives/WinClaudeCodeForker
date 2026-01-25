@@ -1,4 +1,4 @@
-# Windows Claude Code Forker v1.10.2
+# Windows Claude Code Forker v1.10.3
 
 > **Visual session management for Claude Code CLI**
 > Never lose track of your conversations. See all your sessions, fork with confidence, track your costs.
