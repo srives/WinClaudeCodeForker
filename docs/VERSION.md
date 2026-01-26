@@ -18,15 +18,16 @@ This release expands the validation test suite from 65 to 80 tests, adding machi
 
 **Core Function Tests:**
 - Test 69: Get-ForkOrContinue Function - Verifies fork/continue logic with required parameters
-- Test 70: Date/Time Formatting - Validates Get-ShortDateTimeString format output
+- Test 70: Date/Time Formatting - Validates .ToString('MM/dd HH:mm') pattern
 - Test 71: Cost Calculation Logic - Tests cost math with known values
-- Test 74: Get-SessionCost Function - Verifies graceful handling of missing sessions
-- Test 76: Draw-SessionRow Function - Critical display function validation
+- Test 74: Get-SessionCost Function - Verifies graceful handling of null input
+- Test 76: Get-SessionMessageCount - Handles missing sessions (returns 0)
+- Test 77: Get-SessionTokenUsage - Handles missing sessions (returns null)
 
 **Feature Function Tests:**
-- Test 72: Archive/Restore Functions - 4 archive-related functions
-- Test 73: Font Functions - 3 Nerd Font installation functions
-- Test 75: WT Profile Functions - 3 Windows Terminal profile functions
+- Test 72: Archive Status Functions - Set/Get-SessionArchiveStatus
+- Test 73: Session Mapping Functions - 3 mapping functions
+- Test 75: WT Profile Functions - 4 Windows Terminal profile functions
 - Test 78: Session Notes Functions - Get/Set session notes
 - Test 79: Git Branch Detection - Handles non-git directories gracefully
 - Test 80: Refresh Returns Updates - Verifies UpdatedBackgrounds list is returned
