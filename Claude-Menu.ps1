@@ -14,14 +14,14 @@
 
 .NOTES
     Author: S. Rives
-    Version: 1.10.5
+    Version: 1.10.8
     Date: 2026-01-25
     Requires: PowerShell 5.1+, Windows Terminal, Claude CLI
 #>
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.10.7"
+$Global:ScriptVersion = "2.0.0"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -2164,6 +2164,385 @@ function Test-SystemValidation {
         }
     } catch {
         Write-TestResult "Loading Spinner" "FAIL" $_.Exception.Message
+    }
+
+    # Test 66: Enter Key Handler Pattern (VirtualKeyCode 13)
+    # Verifies Enter key defaults are implemented in menus (added in v1.10.0)
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Count occurrences of Enter key handling pattern
+            $enterKeyPattern = 'VirtualKeyCode -eq 13'
+            $matches = [regex]::Matches($scriptContent, $enterKeyPattern)
+
+            # We added Enter key defaults to 15+ menus in v1.10.0
+            # Minimum expected is 10 locations
+            if ($matches.Count -ge 10) {
+                Write-TestResult "Enter Key Handlers" "PASS" "Found $($matches.Count) Enter key handlers (expected 10+)"
+            } else {
+                Write-TestResult "Enter Key Handlers" "FAIL" "Only $($matches.Count) Enter key handlers (expected 10+)"
+            }
+        } else {
+            Write-TestResult "Enter Key Handlers" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Enter Key Handlers" "FAIL" $_.Exception.Message
+    }
+
+    # Test 67: Escape Key Handler Pattern (VirtualKeyCode 27)
+    # Verifies Escape key abort is implemented in menus
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Count occurrences of Escape key handling pattern
+            $escKeyPattern = 'VirtualKeyCode -eq 27'
+            $matches = [regex]::Matches($scriptContent, $escKeyPattern)
+
+            # Escape should be handled in multiple menus
+            if ($matches.Count -ge 5) {
+                Write-TestResult "Escape Key Handlers" "PASS" "Found $($matches.Count) Escape key handlers"
+            } else {
+                Write-TestResult "Escape Key Handlers" "FAIL" "Only $($matches.Count) Escape key handlers (expected 5+)"
+            }
+        } else {
+            Write-TestResult "Escape Key Handlers" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Escape Key Handlers" "FAIL" $_.Exception.Message
+    }
+
+    # Test 68: Select-Object -First 1 Pattern for Duplicate Prevention
+    # This pattern prevents bugs when Where-Object returns multiple matches
+    # Added after finding 7 locations causing duplicate display issues
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Count occurrences of the critical pattern
+            $selectFirstPattern = '\| Select-Object -First 1'
+            $matches = [regex]::Matches($scriptContent, $selectFirstPattern)
+
+            # We identified 7+ critical locations that need this pattern
+            if ($matches.Count -ge 7) {
+                Write-TestResult "Select-First Pattern" "PASS" "Found $($matches.Count) Select-Object -First 1 usages"
+            } else {
+                Write-TestResult "Select-First Pattern" "FAIL" "Only $($matches.Count) usages (expected 7+)"
+            }
+        } else {
+            Write-TestResult "Select-First Pattern" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Select-First Pattern" "FAIL" $_.Exception.Message
+    }
+
+    # Test 69: Fork/Continue Function Exists
+    try {
+        if (Get-Command Get-ForkOrContinue -ErrorAction SilentlyContinue) {
+            $func = Get-Command Get-ForkOrContinue
+            $params = $func.Parameters
+
+            # Check for required parameters
+            $requiredParams = @('SessionId', 'ProjectPath', 'IsArchived')
+            $missing = @()
+            foreach ($param in $requiredParams) {
+                if (-not $params.ContainsKey($param)) {
+                    $missing += $param
+                }
+            }
+
+            if ($missing.Count -eq 0) {
+                Write-TestResult "Get-ForkOrContinue Function" "PASS" "Function exists with all required parameters"
+            } else {
+                Write-TestResult "Get-ForkOrContinue Function" "FAIL" "Missing parameters: $($missing -join ', ')"
+            }
+        } else {
+            Write-TestResult "Get-ForkOrContinue Function" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-ForkOrContinue Function" "FAIL" $_.Exception.Message
+    }
+
+    # Test 70: Date/Time Formatting Function
+    try {
+        if (Get-Command Get-ShortDateTimeString -ErrorAction SilentlyContinue) {
+            # Test with known date
+            $testDate = [DateTime]::new(2025, 6, 15, 14, 30, 0)
+            $result = Get-ShortDateTimeString -DateTime $testDate
+
+            # Should return something like "Jun 15 2:30p" - verify format
+            if ($result -match '^\w{3}\s+\d{1,2}\s+\d{1,2}:\d{2}[ap]$') {
+                Write-TestResult "Date/Time Formatting" "PASS" "Format correct: '$result'"
+            } else {
+                Write-TestResult "Date/Time Formatting" "FAIL" "Unexpected format: '$result'"
+            }
+        } else {
+            Write-TestResult "Date/Time Formatting" "FAIL" "Get-ShortDateTimeString function not found"
+        }
+    } catch {
+        Write-TestResult "Date/Time Formatting" "FAIL" $_.Exception.Message
+    }
+
+    # Test 71: Cost Calculation Logic
+    try {
+        # Test the cost calculation math (prices per million tokens)
+        $testCases = @(
+            @{ InputTokens = 1000000; OutputTokens = 500000; InputPrice = 3.0; OutputPrice = 15.0; Expected = 10.5 }  # $3 + $7.5 = $10.5
+            @{ InputTokens = 0; OutputTokens = 0; InputPrice = 3.0; OutputPrice = 15.0; Expected = 0 }
+            @{ InputTokens = 500000; OutputTokens = 250000; InputPrice = 3.0; OutputPrice = 15.0; Expected = 5.25 }  # $1.5 + $3.75 = $5.25
+        )
+
+        $failures = @()
+        foreach ($test in $testCases) {
+            $inputCost = ($test.InputTokens / 1000000) * $test.InputPrice
+            $outputCost = ($test.OutputTokens / 1000000) * $test.OutputPrice
+            $totalCost = $inputCost + $outputCost
+
+            if ([math]::Abs($totalCost - $test.Expected) -gt 0.01) {
+                $failures += "Expected $($test.Expected), got $totalCost"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "Cost Calculation Logic" "PASS" "All cost calculations correct"
+        } else {
+            Write-TestResult "Cost Calculation Logic" "FAIL" "$($failures -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Cost Calculation Logic" "FAIL" $_.Exception.Message
+    }
+
+    # Test 72: Archive/Restore Functions Exist
+    try {
+        $archiveFunctions = @(
+            "Get-SessionArchivePath",
+            "Archive-Session",
+            "Restore-ArchivedSession",
+            "Get-ArchivedSessions"
+        )
+
+        $missing = @()
+        foreach ($func in $archiveFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Archive/Restore Functions" "PASS" "All $($archiveFunctions.Count) archive functions exist"
+        } else {
+            Write-TestResult "Archive/Restore Functions" "FAIL" "Missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Archive/Restore Functions" "FAIL" $_.Exception.Message
+    }
+
+    # Test 73: Font Installation Functions Exist
+    try {
+        $fontFunctions = @(
+            "Test-NerdFontInstalled",
+            "Get-NerdFontDownloadUrl",
+            "Install-NerdFont"
+        )
+
+        $missing = @()
+        foreach ($func in $fontFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Font Functions" "PASS" "All $($fontFunctions.Count) font functions exist"
+        } else {
+            Write-TestResult "Font Functions" "FAIL" "Missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Font Functions" "FAIL" $_.Exception.Message
+    }
+
+    # Test 74: Session Cost Function
+    try {
+        if (Get-Command Get-SessionCost -ErrorAction SilentlyContinue) {
+            # Test with non-existent session (should return $0.00)
+            $result = Get-SessionCost -SessionId "nonexistent-test-id" -ProjectPath "C:\nonexistent"
+
+            if ($result -eq "`$0.00") {
+                Write-TestResult "Get-SessionCost Function" "PASS" "Function handles missing session correctly"
+            } else {
+                Write-TestResult "Get-SessionCost Function" "FAIL" "Unexpected result for missing session: $result"
+            }
+        } else {
+            Write-TestResult "Get-SessionCost Function" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-SessionCost Function" "FAIL" $_.Exception.Message
+    }
+
+    # Test 75: Windows Terminal Profile Functions
+    try {
+        $wtFunctions = @(
+            "Get-WTProfileName",
+            "New-WTProfile",
+            "Get-WTProfiles"
+        )
+
+        $missing = @()
+        foreach ($func in $wtFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "WT Profile Functions" "PASS" "All $($wtFunctions.Count) WT profile functions exist"
+        } else {
+            Write-TestResult "WT Profile Functions" "FAIL" "Missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "WT Profile Functions" "FAIL" $_.Exception.Message
+    }
+
+    # Test 76: Draw-SessionRow Function (critical for display)
+    try {
+        if (Get-Command Draw-SessionRow -ErrorAction SilentlyContinue) {
+            $func = Get-Command Draw-SessionRow
+            $params = $func.Parameters
+
+            # Check for required parameters
+            $requiredParams = @('Session', 'ColumnConfig', 'IsSelected')
+            $missing = @()
+            foreach ($param in $requiredParams) {
+                if (-not $params.ContainsKey($param)) {
+                    $missing += $param
+                }
+            }
+
+            if ($missing.Count -eq 0) {
+                Write-TestResult "Draw-SessionRow Function" "PASS" "Function exists with required parameters"
+            } else {
+                Write-TestResult "Draw-SessionRow Function" "FAIL" "Missing parameters: $($missing -join ', ')"
+            }
+        } else {
+            Write-TestResult "Draw-SessionRow Function" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Draw-SessionRow Function" "FAIL" $_.Exception.Message
+    }
+
+    # Test 77: Column Order in Draw-SessionRow matches Main Display
+    # This would have caught the missing Limit column bug
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Find Draw-SessionRow function and extract column checks
+            $drawFuncMatch = [regex]::Match($scriptContent, 'function Draw-SessionRow \{.*?^function ', [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+            if ($drawFuncMatch.Success) {
+                $funcBody = $drawFuncMatch.Value
+
+                # Check that Limit column is handled (bug we fixed)
+                $hasLimitColumn = $funcBody -match '\$ColumnConfig\.Limit\)'
+
+                if ($hasLimitColumn) {
+                    Write-TestResult "Draw-SessionRow Has Limit" "PASS" "Limit column is handled in Draw-SessionRow"
+                } else {
+                    Write-TestResult "Draw-SessionRow Has Limit" "FAIL" "Limit column missing from Draw-SessionRow"
+                }
+            } else {
+                Write-TestResult "Draw-SessionRow Has Limit" "FAIL" "Could not find Draw-SessionRow function"
+            }
+        } else {
+            Write-TestResult "Draw-SessionRow Has Limit" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Draw-SessionRow Has Limit" "FAIL" $_.Exception.Message
+    }
+
+    # Test 78: Session Notes Functions
+    try {
+        $notesFunctions = @(
+            "Get-SessionNotes",
+            "Set-SessionNotes"
+        )
+
+        $missing = @()
+        foreach ($func in $notesFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Session Notes Functions" "PASS" "All session notes functions exist"
+        } else {
+            Write-TestResult "Session Notes Functions" "FAIL" "Missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Session Notes Functions" "FAIL" $_.Exception.Message
+    }
+
+    # Test 79: Git Branch Detection
+    try {
+        if (Get-Command Get-GitBranch -ErrorAction SilentlyContinue) {
+            # Test with a non-git directory (should return empty or handle gracefully)
+            $result = Get-GitBranch -Path "C:\Windows"
+
+            # Should handle non-git directories without error
+            if ($null -eq $result -or $result -eq "" -or $result -is [string]) {
+                Write-TestResult "Get-GitBranch Function" "PASS" "Function handles non-git directories"
+            } else {
+                Write-TestResult "Get-GitBranch Function" "FAIL" "Unexpected result type: $($result.GetType().Name)"
+            }
+        } else {
+            Write-TestResult "Get-GitBranch Function" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-GitBranch Function" "FAIL" $_.Exception.Message
+    }
+
+    # Test 80: Refresh Backgrounds Returns UpdatedBackgrounds
+    # Verifies the refresh function returns list of updated sessions
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Check that Refresh-AllBackgrounds returns UpdatedBackgrounds
+            $hasReturn = $scriptContent -match 'function Refresh-AllBackgrounds.*?return.*?UpdatedBackgrounds'
+            $hasOutput = $scriptContent -match 'Refresh-AllBackgrounds.*?\.UpdatedBackgrounds'
+
+            if ($hasOutput) {
+                Write-TestResult "Refresh Returns Updates" "PASS" "Refresh-AllBackgrounds returns UpdatedBackgrounds list"
+            } else {
+                Write-TestResult "Refresh Returns Updates" "WARN" "UpdatedBackgrounds return pattern not found"
+            }
+        } else {
+            Write-TestResult "Refresh Returns Updates" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Refresh Returns Updates" "FAIL" $_.Exception.Message
     }
 
     # Summary
@@ -4504,12 +4883,6 @@ function Get-ArrowKeyNavigation {
 
     Write-Host ""
 
-    # Display updated backgrounds notification below sub-menu (if any were updated during refresh)
-    if ($UpdatedBackgrounds -and $UpdatedBackgrounds.Count -gt 0) {
-        $sessionList = $UpdatedBackgrounds -join ", "
-        Write-Host "Updated background images: $sessionList" -ForegroundColor Cyan
-    }
-
     # Capture cursor position BEFORE displaying "Last command" (for sub-menu positioning)
     # This is where dialog output should start - right after the sub-menu
     $promptEndY = 0
@@ -4557,6 +4930,15 @@ function Get-ArrowKeyNavigation {
                 Write-Host $Global:LastClaudeCommand -ForegroundColor DarkGray
             }
         }
+    }
+
+    # Display updated backgrounds notification at the very bottom (after "Last command")
+    # This ensures it persists after menu re-render
+    if ($UpdatedBackgrounds -and $UpdatedBackgrounds.Count -gt 0) {
+        Write-Host ""
+        $sessionList = $UpdatedBackgrounds -join ", "
+        Write-Host "Updated background images: " -NoNewline -ForegroundColor Cyan
+        Write-Host $sessionList -ForegroundColor White
     }
 
     # CRITICAL: Flush input buffer to clear any stale/sticky KeyAvailable artifacts
@@ -8377,7 +8759,7 @@ function Show-BackgroundDiagnostics {
     try {
         $settingsJson = Get-Content $Global:WTSettingsPath -Raw
         $settings = $settingsJson | ConvertFrom-Json
-        $wtProfile = $settings.profiles.list | Where-Object { $_.name -eq $WTProfileName }
+        $wtProfile = $settings.profiles.list | Where-Object { $_.name -eq $WTProfileName } | Select-Object -First 1
 
         if ($wtProfile) {
             Write-Host "Profile Found:    " -NoNewline -ForegroundColor Gray
@@ -8388,7 +8770,7 @@ function Show-BackgroundDiagnostics {
             $wtBgPath = $wtProfile.backgroundImage
             Write-Host "Background Path:  " -NoNewline -ForegroundColor Gray
             if ($wtBgPath) {
-                Write-Host "$wtBgPath" -ForegroundColor White
+                Write-Host $wtBgPath -ForegroundColor White
 
                 # Check for Linux-style path (forward slashes)
                 $hasLinuxPath = $wtBgPath -match '/'

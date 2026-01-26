@@ -294,7 +294,7 @@ The Claude Code Session Manager with Win Terminal Forking has reached a **profes
 - **+ Screen resize detection**
 - **+ Token usage caching**
 - **+ Universal Enter key defaults (15+ menus)**
-- **+ 55 automated validation tests**
+- **+ 80 automated validation tests**
 - **+ Context limit management system**
 - **+ Limit Instructions guide (/memory, /compact, CLAUDE.md)**
 - **+ Background parameter auto-refresh**

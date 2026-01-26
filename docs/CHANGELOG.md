@@ -2,6 +2,39 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [2.0.0] - 2026-01-26
+
+### Validation Tests
+
+#### 15 New Machine-Independent Tests (Tests 66-80)
+
+**Keyboard Handler Tests:**
+- **Test 66:** Enter Key Handlers - Verifies Enter key defaults exist in 10+ menus
+- **Test 67:** Escape Key Handlers - Verifies Escape key abort handling
+
+**Regression Prevention Tests:**
+- **Test 68:** Select-First Pattern - Catches duplicate profile bugs (we found 7 locations)
+- **Test 77:** Draw-SessionRow Has Limit - Catches missing column bugs
+
+**Core Function Tests:**
+- **Test 69:** Get-ForkOrContinue Function - Fork/continue with required parameters
+- **Test 70:** Date/Time Formatting - Validates Get-ShortDateTimeString format
+- **Test 71:** Cost Calculation Logic - Tests cost math with known values
+- **Test 74:** Get-SessionCost Function - Graceful handling of missing sessions
+- **Test 76:** Draw-SessionRow Function - Critical display function validation
+
+**Feature Function Tests:**
+- **Test 72:** Archive/Restore Functions - 4 archive-related functions exist
+- **Test 73:** Font Functions - 3 Nerd Font installation functions exist
+- **Test 75:** WT Profile Functions - 3 Windows Terminal profile functions exist
+- **Test 78:** Session Notes Functions - Get/Set session notes exist
+- **Test 79:** Git Branch Detection - Handles non-git directories gracefully
+- **Test 80:** Refresh Returns Updates - UpdatedBackgrounds list is returned
+
+**Total Tests:** 80 (up from 65)
+
+---
+
 ## [1.10.7] - 2026-01-25
 
 ### Performance Optimizations

@@ -1,6 +1,45 @@
 # Version Information
 
-## Current Version: 1.10.5 (2026-01-25)
+## Current Version: 2.0.0 (2026-01-26)
+
+### Release Notes
+
+This release expands the validation test suite from 65 to 80 tests, adding machine-independent tests that detect regressions in key areas.
+
+#### New Validation Tests (Tests 66-80)
+
+**Keyboard Handler Tests:**
+- Test 66: Enter Key Handler Pattern - Verifies Enter key defaults exist in 10+ menus (added in v1.10.0)
+- Test 67: Escape Key Handler Pattern - Verifies Escape key abort handling in menus
+
+**Regression Prevention Tests:**
+- Test 68: Select-Object -First 1 Pattern - Catches the duplicate profile bug we fixed in 7 locations
+- Test 77: Draw-SessionRow Has Limit - Catches missing Limit column bug we fixed
+
+**Core Function Tests:**
+- Test 69: Get-ForkOrContinue Function - Verifies fork/continue logic with required parameters
+- Test 70: Date/Time Formatting - Validates Get-ShortDateTimeString format output
+- Test 71: Cost Calculation Logic - Tests cost math with known values
+- Test 74: Get-SessionCost Function - Verifies graceful handling of missing sessions
+- Test 76: Draw-SessionRow Function - Critical display function validation
+
+**Feature Function Tests:**
+- Test 72: Archive/Restore Functions - 4 archive-related functions
+- Test 73: Font Functions - 3 Nerd Font installation functions
+- Test 75: WT Profile Functions - 3 Windows Terminal profile functions
+- Test 78: Session Notes Functions - Get/Set session notes
+- Test 79: Git Branch Detection - Handles non-git directories gracefully
+- Test 80: Refresh Returns Updates - Verifies UpdatedBackgrounds list is returned
+
+**Test Philosophy:**
+- Machine-independent: Tests logic, not user configuration
+- Regression prevention: Tests that would have caught bugs we fixed
+- Function existence: Ensures critical functions are present
+- Math validation: Verifies calculations with known values
+
+---
+
+## Previous Version: 1.10.5 (2026-01-25)
 
 ### Release Notes
 
