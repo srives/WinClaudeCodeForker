@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.10.6"
+$Global:ScriptVersion = "1.10.7"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -39,6 +39,12 @@ $Global:ClaudeProjectsPath = "$env:USERPROFILE\.claude\projects"
 $Global:ClaudeSettingsPath = "$env:USERPROFILE\.claude\settings.json"
 $Global:TokenUsageCache = @{}
 $Global:ModelCache = @{}  # Cache for session models to avoid re-parsing .jsonl files
+$Global:WTSettingsCache = $null  # Cache for Windows Terminal settings (avoid repeated JSON parsing)
+$Global:WTSettingsCacheTime = $null  # When the cache was last updated
+$Global:SessionMappingCache = $null  # Cache for session-mapping.json
+$Global:SessionMappingCacheTime = $null  # When the mapping cache was last updated
+$Global:ProfileRegistryCache = $null  # Cache for profile-registry.json
+$Global:ProfileRegistryCacheTime = $null  # When the profile registry cache was last updated
 $Global:SortColumn = 0  # 0 = no sort, 1-10 = column number
 $Global:SortDescending = $false
 $Global:PromptEndY = 0  # Store where prompts end for sub-menu positioning
@@ -66,6 +72,55 @@ function Write-ColorText {
         Write-Host $Text -ForegroundColor $Color -NoNewline
     } else {
         Write-Host $Text -ForegroundColor $Color
+    }
+}
+
+# Global spinner state
+$Global:SpinnerChars = @('|', '/', '-', '\')
+$Global:SpinnerIndex = 0
+
+function Show-LoadingSpinner {
+    <#
+    .SYNOPSIS
+        Shows or updates a loading spinner using simple carriage return for in-place updates
+    .PARAMETER Message
+        Optional message to show alongside the spinner
+    .PARAMETER Initialize
+        Set to $true to initialize the spinner and show first frame
+    .PARAMETER Clear
+        Set to $true to clear the spinner line
+    #>
+    param(
+        [string]$Message = "Loading",
+        [switch]$Initialize,
+        [switch]$Clear
+    )
+
+    try {
+        if ($Initialize) {
+            $Global:SpinnerIndex = 0
+            # Show first frame with newline
+            $spinChar = $Global:SpinnerChars[$Global:SpinnerIndex]
+            $Global:SpinnerIndex = 1
+            Write-Host "  $spinChar $Message" -ForegroundColor DarkGray
+            return
+        }
+
+        if ($Clear) {
+            # Use carriage return to go back to start of line, then overwrite with spaces
+            # The next Write-Host will naturally follow
+            Write-Host "`r$(' ' * 60)`r" -NoNewline
+            return
+        }
+
+        # Update spinner in place using carriage return
+        $spinChar = $Global:SpinnerChars[$Global:SpinnerIndex]
+        $Global:SpinnerIndex = ($Global:SpinnerIndex + 1) % $Global:SpinnerChars.Count
+
+        # Carriage return + message overwrites the current line
+        Write-Host "`r  $spinChar $Message" -NoNewline -ForegroundColor DarkGray
+    } catch {
+        # Silently ignore spinner errors - it's just visual feedback
     }
 }
 
@@ -1860,6 +1915,257 @@ function Test-SystemValidation {
         Write-TestResult "UpdatedBackgrounds Flow" "FAIL" $_.Exception.Message
     }
 
+    # Test 58: Caching Functions Exist
+    try {
+        $cacheFunctions = @(
+            "Get-CachedWTSettings",
+            "Get-CachedSessionMapping",
+            "Get-CachedProfileRegistry",
+            "Clear-MenuCaches"
+        )
+
+        $missing = @()
+        foreach ($func in $cacheFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Caching Functions Exist" "PASS" "All $($cacheFunctions.Count) caching functions available"
+        } else {
+            Write-TestResult "Caching Functions Exist" "FAIL" "Missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Caching Functions Exist" "FAIL" $_.Exception.Message
+    }
+
+    # Test 59: Cache Global Variables Defined
+    try {
+        $cacheVars = @(
+            "WTSettingsCache",
+            "WTSettingsCacheTime",
+            "SessionMappingCache",
+            "SessionMappingCacheTime",
+            "ProfileRegistryCache",
+            "ProfileRegistryCacheTime"
+        )
+
+        $missing = @()
+        foreach ($var in $cacheVars) {
+            # Variables should exist (may be $null initially, but must be defined)
+            $exists = $null -ne (Get-Variable -Name $var -Scope Global -ErrorAction SilentlyContinue)
+            if (-not $exists) {
+                $missing += $var
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Cache Variables Defined" "PASS" "All $($cacheVars.Count) cache variables initialized"
+        } else {
+            Write-TestResult "Cache Variables Defined" "FAIL" "Missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Cache Variables Defined" "FAIL" $_.Exception.Message
+    }
+
+    # Test 60: Clear-MenuCaches Function Behavior
+    try {
+        # Save current cache state
+        $hadWTSettings = $null -ne $Global:WTSettingsCache
+        $hadSessionMapping = $null -ne $Global:SessionMappingCache
+        $hadProfileRegistry = $null -ne $Global:ProfileRegistryCache
+
+        # Clear caches
+        Clear-MenuCaches
+
+        # Verify all caches are cleared
+        $wtCleared = $null -eq $Global:WTSettingsCache
+        $mappingCleared = $null -eq $Global:SessionMappingCache
+        $registryCleared = $null -eq $Global:ProfileRegistryCache
+
+        if ($wtCleared -and $mappingCleared -and $registryCleared) {
+            Write-TestResult "Clear-MenuCaches Behavior" "PASS" "Function clears all 3 cache types"
+        } else {
+            $notCleared = @()
+            if (-not $wtCleared) { $notCleared += "WTSettings" }
+            if (-not $mappingCleared) { $notCleared += "SessionMapping" }
+            if (-not $registryCleared) { $notCleared += "ProfileRegistry" }
+            Write-TestResult "Clear-MenuCaches Behavior" "FAIL" "Not cleared: $($notCleared -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Clear-MenuCaches Behavior" "FAIL" $_.Exception.Message
+    }
+
+    # Test 61: Caching Functions Use Cache Pattern
+    # Verifies that caching functions check $null before reading file
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+            $checks = @()
+
+            # Each cache function should check if cache is null before reading file
+            if ($scriptContent -match 'if \(\$null -eq \$Global:WTSettingsCache\)') {
+                $checks += "WTSettings"
+            }
+            if ($scriptContent -match 'if \(\$null -eq \$Global:SessionMappingCache\)') {
+                $checks += "SessionMapping"
+            }
+            if ($scriptContent -match 'if \(\$null -eq \$Global:ProfileRegistryCache\)') {
+                $checks += "ProfileRegistry"
+            }
+
+            if ($checks.Count -eq 3) {
+                Write-TestResult "Cache Null-Check Pattern" "PASS" "All 3 cache functions use proper null-check pattern"
+            } else {
+                $missing = @("WTSettings", "SessionMapping", "ProfileRegistry") | Where-Object { $checks -notcontains $_ }
+                Write-TestResult "Cache Null-Check Pattern" "FAIL" "Missing null-check for: $($missing -join ', ')"
+            }
+        } else {
+            Write-TestResult "Cache Null-Check Pattern" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Cache Null-Check Pattern" "FAIL" $_.Exception.Message
+    }
+
+    # Test 62: Functions Updated to Use Cache
+    # Verifies key functions use Get-CachedXxx instead of direct file reads
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Extract Get-WTProfileName function and verify it uses cache
+            $wtProfileMatch = [regex]::Match($scriptContent, 'function Get-WTProfileName \{.*?^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+            $checks = @()
+
+            if ($wtProfileMatch.Success) {
+                $funcBody = $wtProfileMatch.Value
+                if ($funcBody -match 'Get-CachedWTSettings') {
+                    $checks += "Get-WTProfileName"
+                }
+            }
+
+            # Check Get-SessionMappingEntry uses cache
+            $mappingEntryMatch = [regex]::Match($scriptContent, 'function Get-SessionMappingEntry \{.*?^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($mappingEntryMatch.Success) {
+                $funcBody = $mappingEntryMatch.Value
+                if ($funcBody -match 'Get-CachedSessionMapping') {
+                    $checks += "Get-SessionMappingEntry"
+                }
+            }
+
+            # Check Get-ModelFromRegistry uses cache
+            $modelRegMatch = [regex]::Match($scriptContent, 'function Get-ModelFromRegistry \{.*?^\}', [System.Text.RegularExpressions.RegexOptions]::Multiline -bor [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($modelRegMatch.Success) {
+                $funcBody = $modelRegMatch.Value
+                if ($funcBody -match 'Get-CachedProfileRegistry') {
+                    $checks += "Get-ModelFromRegistry"
+                }
+            }
+
+            if ($checks.Count -eq 3) {
+                Write-TestResult "Functions Use Caching" "PASS" "All 3 key functions use caching: $($checks -join ', ')"
+            } else {
+                Write-TestResult "Functions Use Caching" "WARN" "$($checks.Count)/3 functions use caching: $($checks -join ', ')"
+            }
+        } else {
+            Write-TestResult "Functions Use Caching" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Functions Use Caching" "FAIL" $_.Exception.Message
+    }
+
+    # Test 63: Path Normalization Function Exists
+    try {
+        if (Get-Command Normalize-WTBackgroundPaths -ErrorAction SilentlyContinue) {
+            Write-TestResult "Path Normalization Function" "PASS" "Normalize-WTBackgroundPaths exists"
+        } else {
+            Write-TestResult "Path Normalization Function" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Path Normalization Function" "FAIL" $_.Exception.Message
+    }
+
+    # Test 64: Windows Path Style in WT Settings
+    # Verifies background image paths use Windows-style backslashes
+    try {
+        $wtSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+        if (Test-Path $wtSettingsPath) {
+            $settings = Get-Content $wtSettingsPath -Raw | ConvertFrom-Json
+            $claudeProfiles = $settings.profiles.list | Where-Object { $_.name -like "Claude-*" -and $_.backgroundImage }
+
+            $linuxStylePaths = @()
+            foreach ($profile in $claudeProfiles) {
+                if ($profile.backgroundImage -match '^[A-Za-z]:/') {
+                    $linuxStylePaths += $profile.name
+                }
+            }
+
+            if ($linuxStylePaths.Count -eq 0) {
+                Write-TestResult "WT Background Path Style" "PASS" "All background paths use Windows-style (backslashes)"
+            } else {
+                Write-TestResult "WT Background Path Style" "WARN" "$($linuxStylePaths.Count) profile(s) have Linux-style paths"
+            }
+        } else {
+            Write-TestResult "WT Background Path Style" "WARN" "Cannot check (WT settings not found)"
+        }
+    } catch {
+        Write-TestResult "WT Background Path Style" "FAIL" $_.Exception.Message
+    }
+
+    # Test 65: Loading Spinner Function and Variables
+    try {
+        $spinnerOk = $true
+        $issues = @()
+
+        # Check function exists
+        if (-not (Get-Command Show-LoadingSpinner -ErrorAction SilentlyContinue)) {
+            $spinnerOk = $false
+            $issues += "Show-LoadingSpinner function missing"
+        }
+
+        # Check global spinner variables exist (SpinnerChars and SpinnerIndex)
+        $spinnerVars = @("SpinnerChars", "SpinnerIndex")
+        foreach ($var in $spinnerVars) {
+            if (-not (Get-Variable -Name $var -Scope Global -ErrorAction SilentlyContinue)) {
+                $spinnerOk = $false
+                $issues += "$var variable missing"
+            }
+        }
+
+        # Verify SpinnerChars contains expected characters
+        if ($Global:SpinnerChars) {
+            $expectedChars = @('|', '/', '-', '\')
+            $hasAllChars = $true
+            foreach ($char in $expectedChars) {
+                if ($Global:SpinnerChars -notcontains $char) {
+                    $hasAllChars = $false
+                }
+            }
+            if (-not $hasAllChars) {
+                $spinnerOk = $false
+                $issues += "SpinnerChars missing expected characters"
+            }
+        }
+
+        if ($spinnerOk) {
+            Write-TestResult "Loading Spinner" "PASS" "Function and variables properly defined"
+        } else {
+            Write-TestResult "Loading Spinner" "FAIL" "$($issues -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Loading Spinner" "FAIL" $_.Exception.Message
+    }
+
     # Summary
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
@@ -2705,10 +3011,87 @@ function Get-AllClaudeSessions {
 
 #region Menu Display
 
+function Get-CachedWTSettings {
+    <#
+    .SYNOPSIS
+        Gets Windows Terminal settings with caching (avoids repeated file reads)
+    .DESCRIPTION
+        Reads and parses WT settings.json once, then returns cached copy.
+        Cache is invalidated when Show-SessionMenu starts (via Clear-MenuCaches).
+    #>
+    if ($null -eq $Global:WTSettingsCache) {
+        try {
+            if (Test-Path $Global:WTSettingsPath) {
+                $settingsJson = Get-Content $Global:WTSettingsPath -Raw
+                $Global:WTSettingsCache = $settingsJson | ConvertFrom-Json
+                $Global:WTSettingsCacheTime = Get-Date
+            }
+        } catch {
+            Write-DebugInfo "Error caching WT settings: $_" -Color Red
+            return $null
+        }
+    }
+    return $Global:WTSettingsCache
+}
+
+function Get-CachedSessionMapping {
+    <#
+    .SYNOPSIS
+        Gets session mapping with caching (avoids repeated file reads)
+    #>
+    if ($null -eq $Global:SessionMappingCache) {
+        try {
+            $mappingPath = Join-Path $Global:MenuPath "session-mapping.json"
+            if (Test-Path $mappingPath) {
+                $content = Get-Content $mappingPath -Raw
+                $Global:SessionMappingCache = $content | ConvertFrom-Json
+                $Global:SessionMappingCacheTime = Get-Date
+            }
+        } catch {
+            Write-DebugInfo "Error caching session mapping: $_" -Color Red
+            return $null
+        }
+    }
+    return $Global:SessionMappingCache
+}
+
+function Get-CachedProfileRegistry {
+    <#
+    .SYNOPSIS
+        Gets profile registry with caching (avoids repeated file reads)
+    #>
+    if ($null -eq $Global:ProfileRegistryCache) {
+        try {
+            if (Test-Path $Global:ProfileRegistryPath) {
+                $content = Get-Content $Global:ProfileRegistryPath -Raw
+                $Global:ProfileRegistryCache = $content | ConvertFrom-Json
+                $Global:ProfileRegistryCacheTime = Get-Date
+            }
+        } catch {
+            Write-DebugInfo "Error caching profile registry: $_" -Color Red
+            return $null
+        }
+    }
+    return $Global:ProfileRegistryCache
+}
+
+function Clear-MenuCaches {
+    <#
+    .SYNOPSIS
+        Clears all menu-related caches (call at start of menu rendering)
+    #>
+    $Global:WTSettingsCache = $null
+    $Global:WTSettingsCacheTime = $null
+    $Global:SessionMappingCache = $null
+    $Global:SessionMappingCacheTime = $null
+    $Global:ProfileRegistryCache = $null
+    $Global:ProfileRegistryCacheTime = $null
+}
+
 function Get-WTProfileName {
     <#
     .SYNOPSIS
-        Checks if a Windows Terminal profile exists for a session
+        Checks if a Windows Terminal profile exists for a session (uses cached settings)
     #>
     param(
         [string]$SessionTitle,
@@ -2720,12 +3103,11 @@ function Get-WTProfileName {
         $profileName = "Claude-$SessionTitle"
 
         try {
-            if (-not (Test-Path $Global:WTSettingsPath)) {
+            # Use cached WT settings (much faster than reading file each time)
+            $settings = Get-CachedWTSettings
+            if (-not $settings) {
                 return ""
             }
-
-            $settingsJson = Get-Content $Global:WTSettingsPath -Raw
-            $settings = $settingsJson | ConvertFrom-Json
 
             # Check if profile exists
             $profile = $settings.profiles.list | Where-Object { $_.name -eq $profileName } | Select-Object -First 1
@@ -2734,7 +3116,7 @@ function Get-WTProfileName {
                 return $profileName
             }
         } catch {
-            Write-ErrorLog "Error getting profile name from registry: $_"
+            Write-ErrorLog "Error getting profile name: $_"
             return ""
         }
     }
@@ -2753,16 +3135,17 @@ function Get-WTProfileName {
 function Get-SessionMapping {
     <#
     .SYNOPSIS
-        Gets the Windows Terminal profile name for a session ID from the mapping file
+        Gets the Windows Terminal profile name for a session ID from the mapping file (uses cache)
     #>
     param([string]$SessionId)
 
-    if (-not (Test-Path $Global:SessionMappingPath)) {
-        return $null
-    }
-
     try {
-        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        # Use cached mapping (much faster than reading file each time)
+        $mapping = Get-CachedSessionMapping
+        if (-not $mapping) {
+            return $null
+        }
+
         $entry = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
 
         if ($entry -and $entry.wtProfileName) {
@@ -2778,16 +3161,14 @@ function Get-SessionMapping {
 function Get-SessionMappingEntry {
     <#
     .SYNOPSIS
-        Gets the full session mapping entry for a session ID
+        Gets the full session mapping entry for a session ID (uses cache for performance)
     #>
     param([string]$SessionId)
 
-    if (-not (Test-Path $Global:SessionMappingPath)) {
-        return $null
-    }
-
     try {
-        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        # Use cached mapping (much faster than reading file each time)
+        $mapping = Get-CachedSessionMapping
+        if (-not $mapping) { return $null }
         $entry = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
         return $entry
     } catch {
@@ -2800,16 +3181,14 @@ function Get-SessionMappingEntry {
 function Get-ForkedFromInfo {
     <#
     .SYNOPSIS
-        Gets information about what session this was forked from
+        Gets information about what session this was forked from (uses cache for performance)
     #>
     param([string]$SessionId)
 
-    if (-not (Test-Path $Global:SessionMappingPath)) {
-        return $null
-    }
-
     try {
-        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        # Use cached mapping (much faster than reading file each time)
+        $mapping = Get-CachedSessionMapping
+        if (-not $mapping) { return $null }
         $entry = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
 
         if ($entry -and $entry.forkedFrom) {
@@ -2999,11 +3378,11 @@ function Get-ForkTree {
     if ($forkInfo) {
         $parentSessionId = $forkInfo.ForkedFrom
     } else {
-        # Fallback to profile registry (for named sessions)
+        # Fallback to profile registry (for named sessions) - use cache for performance
         if ($SessionTitle) {
             try {
-                if (Test-Path $Global:ProfileRegistryPath) {
-                    $registry = Get-Content $Global:ProfileRegistryPath -Raw | ConvertFrom-Json
+                $registry = Get-CachedProfileRegistry
+                if ($registry) {
                     $entry = $registry.profiles | Where-Object { $_.sessionName -eq $SessionTitle }
                     if ($entry -and $entry.originalSessionId) {
                         $parentSessionId = $entry.originalSessionId
@@ -3035,17 +3414,14 @@ function Get-ForkTree {
 function Get-WTProfileDetails {
     <#
     .SYNOPSIS
-        Gets Windows Terminal profile details including color scheme
+        Gets Windows Terminal profile details including color scheme (uses cache for performance)
     #>
     param([string]$ProfileName)
 
     try {
-        if (-not (Test-Path $Global:WTSettingsPath)) {
-            return $null
-        }
-
-        $settingsJson = Get-Content $Global:WTSettingsPath -Raw
-        $settings = $settingsJson | ConvertFrom-Json
+        # Use cached WT settings (much faster than reading file each time)
+        $settings = Get-CachedWTSettings
+        if (-not $settings) { return $null }
 
         # Find the profile
         $profile = $settings.profiles.list | Where-Object { $_.name -eq $ProfileName } | Select-Object -First 1
@@ -3335,6 +3711,8 @@ function Show-SessionMenu {
         [bool]$IsRefresh = $false
     )
 
+    # Clear caches at start of each menu render (forces fresh read, but then caches for this render cycle)
+    Clear-MenuCaches
 
     # Initialize as empty array if null
     if ($null -eq $Sessions) { $Sessions = @() }
@@ -3367,7 +3745,6 @@ function Show-SessionMenu {
     }
 
     Write-Host ""
-
 
     # Display title if provided (centered with spaces between letters)
     if ($Title) {
@@ -3584,7 +3961,6 @@ function Show-SessionMenu {
             ModifiedDate = $modified
         }
     }
-
 
     # Sort rows if a column is selected (easter egg feature)
     # LimitFeature: Added Limit column (2), shifted all others
@@ -8548,19 +8924,18 @@ function Set-SessionArchiveStatus {
 function Get-SessionArchiveStatus {
     <#
     .SYNOPSIS
-        Gets the archive status of a session
+        Gets the archive status of a session (uses cache for performance)
     #>
     param(
         [Parameter(Mandatory=$true)]
         [string]$SessionId
     )
 
-    if (-not (Test-Path $Global:SessionMappingPath)) {
-        return @{ Archived = $false; ArchivedDate = $null }
-    }
-
     try {
-        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        # Use cached session mapping (much faster than reading file each time)
+        $mapping = Get-CachedSessionMapping
+        if (-not $mapping) { return @{ Archived = $false; ArchivedDate = $null } }
+
         $session = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
 
         if ($session -and $session.archived -eq $true) {
@@ -8579,19 +8954,18 @@ function Get-SessionArchiveStatus {
 function Get-SessionNotes {
     <#
     .SYNOPSIS
-        Gets the notes for a session
+        Gets the notes for a session (uses cache for performance)
     #>
     param(
         [Parameter(Mandatory=$true)]
         [string]$SessionId
     )
 
-    if (-not (Test-Path $Global:SessionMappingPath)) {
-        return ""
-    }
-
     try {
-        $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+        # Use cached session mapping (much faster than reading file each time)
+        $mapping = Get-CachedSessionMapping
+        if (-not $mapping) { return "" }
+
         $session = $mapping.sessions | Where-Object { $_.sessionId -eq $SessionId }
 
         if ($session -and $session.notes) {
@@ -8921,16 +9295,14 @@ function Add-ProfileRegistry {
 function Get-ModelFromRegistry {
     <#
     .SYNOPSIS
-        Gets the model for a session from the profile registry
+        Gets the model for a session from the profile registry (uses cache for performance)
     #>
     param([string]$SessionName)
 
-    if (-not (Test-Path $Global:ProfileRegistryPath)) {
-        return ""
-    }
-
     try {
-        $registry = Get-Content $Global:ProfileRegistryPath -Raw | ConvertFrom-Json
+        # Use cached profile registry (much faster than reading file each time)
+        $registry = Get-CachedProfileRegistry
+        if (-not $registry) { return "" }
         $entry = $registry.profiles | Where-Object { $_.sessionName -eq $SessionName }
 
         if ($entry -and $entry.model) {

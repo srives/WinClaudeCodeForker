@@ -2,6 +2,52 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.10.7] - 2026-01-25
+
+### Performance Optimizations
+
+#### Menu Loading Caching System
+- **9 Functions Now Use Caching** - Major performance improvement for menu loading
+- **Get-CachedWTSettings** - Windows Terminal settings parsed once per render cycle
+- **Get-CachedSessionMapping** - Session mapping JSON parsed once per render cycle
+- **Get-CachedProfileRegistry** - Profile registry JSON parsed once per render cycle
+- **Clear-MenuCaches** - Clears all caches at start of each menu render
+- **Estimated 10-20x Speedup** - For JSON parsing portion of menu loading
+
+#### Functions Updated to Use Caching
+- `Get-WTProfileName` - No longer reads WT settings for every session
+- `Get-WTProfileDetails` - Uses cached WT settings
+- `Get-SessionMapping` - Uses cached session mapping
+- `Get-SessionMappingEntry` - Uses cached session mapping
+- `Get-ForkedFromInfo` - Uses cached session mapping
+- `Get-ForkTree` - Uses cached profile registry
+- `Get-ModelFromRegistry` - Uses cached profile registry
+- `Get-SessionArchiveStatus` - Uses cached session mapping
+- `Get-SessionNotes` - Uses cached session mapping
+
+### New Features
+
+#### Loading Spinner Infrastructure
+- **Show-LoadingSpinner Function** - Ready for future use
+- **Global Spinner Variables** - SpinnerChars and SpinnerIndex
+- **Carriage Return Method** - Simple, reliable spinner animation
+
+### Validation Tests
+
+#### 8 New Tests (Tests 58-65)
+- **Test 58:** Caching Functions Exist - Verifies all 4 cache functions available
+- **Test 59:** Cache Variables Defined - Checks all 6 cache global variables
+- **Test 60:** Clear-MenuCaches Behavior - Verifies cache clearing works
+- **Test 61:** Cache Null-Check Pattern - Validates proper cache initialization pattern
+- **Test 62:** Functions Use Caching - Confirms key functions use Get-CachedXxx
+- **Test 63:** Path Normalization Function - Verifies Normalize-WTBackgroundPaths exists
+- **Test 64:** Windows Path Style in WT Settings - Checks for Linux-style path issues
+- **Test 65:** Loading Spinner - Validates spinner function and variables
+
+**Total Tests:** 65 (up from 57)
+
+---
+
 ## [1.10.6] - 2026-01-25
 
 ### New Features
