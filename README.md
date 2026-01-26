@@ -1,7 +1,10 @@
-# Windows Claude Code Forker v2.0.0
+# Windows Claude Code Forker version 2.0
+A Claude Code Session Manager CLI tool for Windows Terminal Users.
+Download **[WinClaudeForker.exe](https://github.com/srives/WinClaudeCodeForker/releases)**
 
 > **Visual session management for Claude Code CLI**
 > Never lose track of your conversations. See all your sessions, fork with confidence, track your costs.
+
 
 ![Main Menu](docs/MainMenu.png)
 
@@ -131,7 +134,12 @@ TOTAL                     $27.35   4.5M    1.5M    24.6M   88%
 New Session | Win Terminal Config | Hide Unnamed | Cost | Debug | Refresh | eXit
 ```
 
-### Background Images Show
+### WIN TERMINAL Background Images Show
+
+This is the key feature. Seeing a watermark on the Windows Terminal is the main idea
+of this product for me (a Windows user). The screen background image watermark has the 
+following information:
+
 - **Line 1:** Session name (bold, 48pt)
 - **Line 2:** Forked from parent (if applicable)
 - **Line 3:** Git branch
@@ -144,27 +152,11 @@ New Session | Win Terminal Config | Hide Unnamed | Cost | Debug | Refresh | eXit
 ## 🔧 Advanced Features
 
 ### Column Configuration
-Press **G** to customize which columns appear:
-- ✓ Active indicator
-- ✓ Model name
-- ✓ Session name
-- ☐ Notes (hidden by default)
-- ✓ Message count
-- ✓ Created date
-- ✓ Modified date
-- ✓ Cost
-- ✓ Windows Terminal profile
-- ✓ Forked from
-- ✓ Path
+Press **G** to customize which columns appear.
+Easter Egg: Press 1, 2, 3, 4, etc. to sort on a column.
 
 ### Validation System
-Built-in self-protection with 80 automated tests:
-- Infrastructure validation (PowerShell, Claude CLI, Windows Terminal)
-- Logic validation (path encoding, GUID format, model names)
-- Data consistency (JSON structure, session mappings)
-- Menu integrity (key handlers match menu options)
-
-Press **D** for Debug menu → **V** to run validation tests.
+Built-in self-protection with 80 automated tests
 
 ---
 
@@ -234,7 +226,7 @@ Each Windows Terminal profile gets a **custom background watermark** showing:
 ### Built with AI
 This tool was created with Claude Code's help - **a meta tool for managing Claude itself!**
 
-Demonstrates AI-assisted development achieving professional-grade quality in 8 days instead of months.
+Demonstrates AI-assisted development achieving professional-grade quality in less than a week instead of months.
 
 ---
 
