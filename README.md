@@ -86,7 +86,7 @@ $Shortcut.Save()
 - **Dynamic Columns** - Customize which columns appear (11 configurable columns)
 - **Pagination** - Handle hundreds of sessions with screen-aware pagination
 - **Universal Defaults** - Press Enter for default action in any menu
-- **Silent Validation** - 55 automated tests protect against bugs
+- **Silent Validation** - 80 automated tests protect against bugs
 
 ---
 
@@ -95,31 +95,6 @@ $Shortcut.Save()
 ### Launch & Navigate
 ```
 Launch → See all sessions → Use ↑↓ to navigate → Press Enter
-```
-
-### Keyboard Shortcuts
-| Key | Action |
-|-----|--------|
-| **↑↓** | Navigate sessions |
-| **Enter** | Select / Default action |
-| **N** | New session |
-| **W** | Windows Terminal config |
-| **H** | Hide unnamed sessions |
-| **S** | Show unnamed sessions |
-| **O** | Cost analysis |
-| **D** | Debug mode |
-| **R** | Refresh |
-| **G** | Column configuration |
-| **X** | Exit |
-| **1-11** | Sort by column |
-
-### After Selecting a Session
-```
-Continue → Resume in current terminal
-Fork → Create branch with custom background
-Delete → Remove session with cleanup
-Rename → Update session name everywhere
-Notes → Add annotations
 ```
 
 ---
@@ -183,7 +158,7 @@ Press **G** to customize which columns appear:
 - ✓ Path
 
 ### Validation System
-Built-in self-protection with 40 automated tests:
+Built-in self-protection with 80 automated tests:
 - Infrastructure validation (PowerShell, Claude CLI, Windows Terminal)
 - Logic validation (path encoding, GUID format, model names)
 - Data consistency (JSON structure, session mappings)
@@ -230,24 +205,36 @@ powershell -ExecutionPolicy Bypass -File "Claude-Menu.ps1"
 
 ## 💎 What Makes This Special
 
+### Visual Watermarks on Every Session
+
+Each Windows Terminal profile gets a **custom background watermark** showing:
+- **Session name** (large, readable at a glance)
+- **Parent session** (if forked)
+- **Git branch** (always know which branch you're on)
+- **AI model** (Opus/Sonnet/Haiku)
+- **Directory path** (never lose context)
+
+![Watermark Example](docs/screenshot_watermark.png)
+*Subtle watermark keeps you oriented without obscuring your work*
+
 ### Professional Quality
 - **Enterprise-grade UX** - Arrow navigation, silent input handling, universal defaults
-- **40 Automated Tests** - Self-validating code protects against regressions
+- **80 Automated Tests** - Self-validating code protects against regressions
 - **Comprehensive Error Handling** - Graceful recovery from failures
 - **Performance Optimized** - Caching, pagination, instant response
 
 ### Unique Features
 - **Only professional-grade session manager** for Claude Code
-- **Cost tracking** per session (unique feature)
-- **Visual fork tracking** with custom backgrounds
-- **Windows Terminal deep integration**
-- **Git branch awareness**
-- **Customizable columns**
+- **Cost tracking** per session (know exactly what each conversation costs)
+- **Visual fork tracking** with custom watermark backgrounds
+- **Windows Terminal deep integration** (profiles, backgrounds, management)
+- **Git branch awareness** in every session
+- **Context limit warnings** before auto-compaction
 
 ### Built with AI
 This tool was created with Claude Code's help - **a meta tool for managing Claude itself!**
 
-Demonstrates AI-assisted development achieving professional-grade quality in days instead of months.
+Demonstrates AI-assisted development achieving professional-grade quality in 8 days instead of months.
 
 ---
 
