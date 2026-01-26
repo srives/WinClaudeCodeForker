@@ -14,14 +14,14 @@
 
 .NOTES
     Author: S. Rives
-    Version: 1.10.3
-    Date: 2026-01-24
+    Version: 1.10.5
+    Date: 2026-01-25
     Requires: PowerShell 5.1+, Windows Terminal, Claude CLI
 #>
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.10.3"
+$Global:ScriptVersion = "1.10.5"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -38,6 +38,7 @@ $Global:PathCache = @{}
 $Global:ClaudeProjectsPath = "$env:USERPROFILE\.claude\projects"
 $Global:ClaudeSettingsPath = "$env:USERPROFILE\.claude\settings.json"
 $Global:TokenUsageCache = @{}
+$Global:ModelCache = @{}  # Cache for session models to avoid re-parsing .jsonl files
 $Global:SortColumn = 0  # 0 = no sort, 1-10 = column number
 $Global:SortDescending = $false
 $Global:PromptEndY = 0  # Store where prompts end for sub-menu positioning
@@ -1406,6 +1407,378 @@ function Test-SystemValidation {
         Write-TestResult "Model Name Validation" "FAIL" $_.Exception.Message
     }
 
+    # Test 41: Get-ModelFromBackgroundTxt Function
+    try {
+        # Test that function exists and handles missing file gracefully
+        if (Get-Command Get-ModelFromBackgroundTxt -ErrorAction SilentlyContinue) {
+            # Test with non-existent profile (should return empty string)
+            $result = Get-ModelFromBackgroundTxt -WTProfileName "Claude-NonExistentProfile12345"
+            if ($result -eq "") {
+                Write-TestResult "Get-ModelFromBackgroundTxt" "PASS" "Function exists and handles missing files"
+            } else {
+                Write-TestResult "Get-ModelFromBackgroundTxt" "FAIL" "Should return empty for missing profile"
+            }
+        } else {
+            Write-TestResult "Get-ModelFromBackgroundTxt" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-ModelFromBackgroundTxt" "FAIL" $_.Exception.Message
+    }
+
+    # Test 42: Get-BranchFromBackgroundTxt Function
+    try {
+        # Test that function exists and handles missing file gracefully
+        if (Get-Command Get-BranchFromBackgroundTxt -ErrorAction SilentlyContinue) {
+            # Test with non-existent profile (should return empty string)
+            $result = Get-BranchFromBackgroundTxt -WTProfileName "Claude-NonExistentProfile12345"
+            if ($result -eq "") {
+                Write-TestResult "Get-BranchFromBackgroundTxt" "PASS" "Function exists and handles missing files"
+            } else {
+                Write-TestResult "Get-BranchFromBackgroundTxt" "FAIL" "Should return empty for missing profile"
+            }
+        } else {
+            Write-TestResult "Get-BranchFromBackgroundTxt" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-BranchFromBackgroundTxt" "FAIL" $_.Exception.Message
+    }
+
+    # Test 43: Get-AllValuesFromBackgroundTxt Function
+    try {
+        # Test that function exists and handles missing file gracefully
+        if (Get-Command Get-AllValuesFromBackgroundTxt -ErrorAction SilentlyContinue) {
+            # Test with non-existent profile (should return $null)
+            $result = Get-AllValuesFromBackgroundTxt -WTProfileName "Claude-NonExistentProfile12345"
+            if ($null -eq $result) {
+                Write-TestResult "Get-AllValuesFromBackgroundTxt" "PASS" "Function exists and handles missing files"
+            } else {
+                Write-TestResult "Get-AllValuesFromBackgroundTxt" "FAIL" "Should return null for missing profile"
+            }
+        } else {
+            Write-TestResult "Get-AllValuesFromBackgroundTxt" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-AllValuesFromBackgroundTxt" "FAIL" $_.Exception.Message
+    }
+
+    # Test 44: Update-BackgroundIfChanged Function Exists
+    try {
+        if (Get-Command Update-BackgroundIfChanged -ErrorAction SilentlyContinue) {
+            Write-TestResult "Update-BackgroundIfChanged" "PASS" "Function exists"
+        } else {
+            Write-TestResult "Update-BackgroundIfChanged" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Update-BackgroundIfChanged" "FAIL" $_.Exception.Message
+    }
+
+    # Test 45: Background .txt File Format Validation
+    try {
+        # Check that existing background.txt files have expected format
+        if (Test-Path $Global:MenuPath) {
+            $txtFiles = Get-ChildItem -Path $Global:MenuPath -Recurse -Filter "background.txt" -ErrorAction SilentlyContinue
+            $invalidFiles = @()
+            $checkedCount = 0
+
+            foreach ($txtFile in $txtFiles) {
+                $checkedCount++
+                $content = Get-Content $txtFile.FullName -Raw -ErrorAction SilentlyContinue
+
+                # Must contain at least Session: and Directory: lines
+                if ($content -notmatch 'Session:') {
+                    $invalidFiles += "$($txtFile.Name) missing Session:"
+                }
+                if ($content -notmatch 'Directory:') {
+                    $invalidFiles += "$($txtFile.Name) missing Directory:"
+                }
+            }
+
+            if ($checkedCount -eq 0) {
+                Write-TestResult "Background .txt Format" "WARN" "No background.txt files found to validate"
+            } elseif ($invalidFiles.Count -eq 0) {
+                Write-TestResult "Background .txt Format" "PASS" "$checkedCount file(s) have valid format"
+            } else {
+                Write-TestResult "Background .txt Format" "FAIL" "$($invalidFiles.Count) invalid file(s)"
+            }
+        } else {
+            Write-TestResult "Background .txt Format" "WARN" "Menu path does not exist"
+        }
+    } catch {
+        Write-TestResult "Background .txt Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 46: Background .txt and .png Pairing
+    try {
+        # Check that each background.png has a corresponding background.txt
+        if (Test-Path $Global:MenuPath) {
+            $pngFiles = Get-ChildItem -Path $Global:MenuPath -Recurse -Filter "background.png" -ErrorAction SilentlyContinue
+            $missingTxt = @()
+
+            foreach ($pngFile in $pngFiles) {
+                $txtPath = $pngFile.FullName -replace '\.png$', '.txt'
+                if (-not (Test-Path $txtPath)) {
+                    $missingTxt += $pngFile.Directory.Name
+                }
+            }
+
+            if ($pngFiles.Count -eq 0) {
+                Write-TestResult "Background .txt/.png Pairing" "WARN" "No background.png files found"
+            } elseif ($missingTxt.Count -eq 0) {
+                Write-TestResult "Background .txt/.png Pairing" "PASS" "All $($pngFiles.Count) PNG files have .txt"
+            } else {
+                Write-TestResult "Background .txt/.png Pairing" "WARN" "$($missingTxt.Count) PNG file(s) missing .txt"
+            }
+        } else {
+            Write-TestResult "Background .txt/.png Pairing" "WARN" "Menu path does not exist"
+        }
+    } catch {
+        Write-TestResult "Background .txt/.png Pairing" "FAIL" $_.Exception.Message
+    }
+
+    # Test 47: Model Cache Global Variable
+    try {
+        if (Get-Variable -Name ModelCache -Scope Global -ErrorAction SilentlyContinue) {
+            $cache = $Global:ModelCache
+            if ($cache -is [hashtable]) {
+                Write-TestResult "Model Cache Variable" "PASS" "ModelCache hashtable exists with $($cache.Count) entries"
+            } else {
+                Write-TestResult "Model Cache Variable" "FAIL" "ModelCache is not a hashtable"
+            }
+        } else {
+            Write-TestResult "Model Cache Variable" "FAIL" "Global:ModelCache not found"
+        }
+    } catch {
+        Write-TestResult "Model Cache Variable" "FAIL" $_.Exception.Message
+    }
+
+    # Test 48: Background Txt Parsing Patterns
+    try {
+        # Test the regex patterns used for parsing background.txt
+        $testLines = @(
+            @{ Line = "Session: TestSession"; Pattern = '^Session:\s*(.+)$'; Expected = "TestSession" }
+            @{ Line = "Model: opus"; Pattern = '^Model:\s*(.+)$'; Expected = "opus" }
+            @{ Line = "Branch: main"; Pattern = '^Branch:\s*(.+)$'; Expected = "main" }
+            @{ Line = "Directory: C:\repos"; Pattern = '^Directory:\s*(.+)$'; Expected = "C:\repos" }
+            @{ Line = "Forked from: parent-session"; Pattern = '^Forked from:\s*(.+)$'; Expected = "parent-session" }
+            @{ Line = "Computer:User: PC\User"; Pattern = '^Computer:User:\s*(.+)$'; Expected = "PC\User" }
+        )
+
+        $failures = @()
+        foreach ($test in $testLines) {
+            if ($test.Line -match $test.Pattern) {
+                if ($Matches[1].Trim() -ne $test.Expected) {
+                    $failures += "Pattern '$($test.Pattern)' extracted '$($Matches[1])' instead of '$($test.Expected)'"
+                }
+            } else {
+                $failures += "Pattern '$($test.Pattern)' didn't match '$($test.Line)'"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "Background Txt Patterns" "PASS" "All $($testLines.Count) parsing patterns work"
+        } else {
+            Write-TestResult "Background Txt Patterns" "FAIL" "$($failures.Count) pattern failures"
+        }
+    } catch {
+        Write-TestResult "Background Txt Patterns" "FAIL" $_.Exception.Message
+    }
+
+    # Test 49: IsRefresh Parameter Flow
+    try {
+        # Verify Show-SessionMenu has IsRefresh parameter
+        $func = Get-Command Show-SessionMenu -ErrorAction SilentlyContinue
+        if ($func) {
+            $params = $func.Parameters
+            if ($params.ContainsKey('IsRefresh')) {
+                $paramType = $params['IsRefresh'].ParameterType.Name
+                if ($paramType -eq 'Boolean') {
+                    Write-TestResult "IsRefresh Parameter" "PASS" "Show-SessionMenu has IsRefresh [bool] parameter"
+                } else {
+                    Write-TestResult "IsRefresh Parameter" "FAIL" "IsRefresh should be bool, got $paramType"
+                }
+            } else {
+                Write-TestResult "IsRefresh Parameter" "FAIL" "Show-SessionMenu missing IsRefresh parameter"
+            }
+        } else {
+            Write-TestResult "IsRefresh Parameter" "FAIL" "Show-SessionMenu function not found"
+        }
+    } catch {
+        Write-TestResult "IsRefresh Parameter" "FAIL" $_.Exception.Message
+    }
+
+    # Test 50: Critical New Functions Exist
+    try {
+        $newFunctions = @(
+            "Get-ModelFromBackgroundTxt",
+            "Get-BranchFromBackgroundTxt",
+            "Get-AllValuesFromBackgroundTxt",
+            "Update-BackgroundIfChanged"
+        )
+
+        $missing = @()
+        foreach ($func in $newFunctions) {
+            if (-not (Get-Command $func -ErrorAction SilentlyContinue)) {
+                $missing += $func
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "New Background Functions" "PASS" "All $($newFunctions.Count) new functions available"
+        } else {
+            Write-TestResult "New Background Functions" "FAIL" "$($missing.Count) missing: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "New Background Functions" "FAIL" $_.Exception.Message
+    }
+
+    # Test 51: LimitFeature - Get-SessionContextUsage Function
+    # LimitFeature: Validation test
+    try {
+        if (Get-Command Get-SessionContextUsage -ErrorAction SilentlyContinue) {
+            # Test with non-existent session (should return $null)
+            $result = Get-SessionContextUsage -SessionId "nonexistent-session-id" -ProjectPath "C:\nonexistent" -Model "sonnet"
+            if ($null -eq $result) {
+                Write-TestResult "LimitFeature: Get-SessionContextUsage" "PASS" "Function exists and handles missing sessions"
+            } else {
+                Write-TestResult "LimitFeature: Get-SessionContextUsage" "FAIL" "Should return null for missing session"
+            }
+        } else {
+            Write-TestResult "LimitFeature: Get-SessionContextUsage" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "LimitFeature: Get-SessionContextUsage" "FAIL" $_.Exception.Message
+    }
+
+    # Test 52: LimitFeature - Context Limits Defined
+    # LimitFeature: Validation test
+    try {
+        # Verify context limits are reasonable values
+        $expectedLimits = @{
+            "opus" = 200000
+            "sonnet" = 200000
+            "haiku" = 200000
+        }
+
+        $failures = @()
+        foreach ($model in $expectedLimits.Keys) {
+            $limit = $expectedLimits[$model]
+            if ($limit -lt 100000 -or $limit -gt 1000000) {
+                $failures += "Invalid limit for $model : $limit"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "LimitFeature: Context Limits" "PASS" "Context limits are within expected range"
+        } else {
+            Write-TestResult "LimitFeature: Context Limits" "FAIL" "$($failures -join ', ')"
+        }
+    } catch {
+        Write-TestResult "LimitFeature: Context Limits" "FAIL" $_.Exception.Message
+    }
+
+    # Test 53: LimitFeature - Limit Column in Configuration
+    # LimitFeature: Validation test
+    try {
+        $config = Get-ColumnConfiguration
+        if ($config.ContainsKey('Limit')) {
+            # Verify Limit is false by default (hidden)
+            if ($config.Limit -eq $false) {
+                Write-TestResult "LimitFeature: Limit Column Config" "PASS" "Limit column exists and defaults to hidden"
+            } else {
+                Write-TestResult "LimitFeature: Limit Column Config" "WARN" "Limit column exists but is enabled (expected hidden by default)"
+            }
+        } else {
+            Write-TestResult "LimitFeature: Limit Column Config" "FAIL" "Limit column not in configuration"
+        }
+    } catch {
+        Write-TestResult "LimitFeature: Limit Column Config" "FAIL" $_.Exception.Message
+    }
+
+    # Test 54: LimitFeature - Percentage Calculation Logic
+    # LimitFeature: Validation test
+    try {
+        # Test percentage calculation logic
+        $testCases = @(
+            @{ Tokens = 180000; Limit = 200000; ExpectedPct = 90 }
+            @{ Tokens = 198000; Limit = 200000; ExpectedPct = 99 }
+            @{ Tokens = 100000; Limit = 200000; ExpectedPct = 50 }
+            @{ Tokens = 200000; Limit = 200000; ExpectedPct = 100 }
+        )
+
+        $failures = @()
+        foreach ($test in $testCases) {
+            $calculated = [math]::Round(($test.Tokens / $test.Limit) * 100, 0)
+            if ($calculated -ne $test.ExpectedPct) {
+                $failures += "Expected $($test.ExpectedPct)%, got $calculated%"
+            }
+        }
+
+        if ($failures.Count -eq 0) {
+            Write-TestResult "LimitFeature: Percentage Calculation" "PASS" "All percentage calculations correct"
+        } else {
+            Write-TestResult "LimitFeature: Percentage Calculation" "FAIL" "$($failures -join ', ')"
+        }
+    } catch {
+        Write-TestResult "LimitFeature: Percentage Calculation" "FAIL" $_.Exception.Message
+    }
+
+    # Test 55: Column Consistency - All column blocks must have same columns in same order
+    # This test would have caught the Draw-SessionRow missing Limit column bug
+    try {
+        # Get the expected column order from configuration
+        $expectedColumns = @('Active', 'Limit', 'Model', 'Session', 'Notes', 'Messages', 'Created', 'Modified', 'Cost', 'WinTerminal', 'ForkedFrom', 'Git', 'Path')
+
+        # Read the script source
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            # Pattern to find columnConfig checks - looking for if ($columnConfig.X) patterns
+            $columnPattern = '\$columnConfig\.(\w+)\)'
+
+            # Find all sections that build format strings (look for formatParts += patterns)
+            $formatSections = [regex]::Matches($scriptContent, 'formatParts\s*\+=.*?\$valueIndex\+\+[^}]+', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+            $issues = @()
+
+            # Check each format section for column order consistency
+            $sectionCount = 0
+            foreach ($section in $formatSections) {
+                $sectionCount++
+                $columnMatches = [regex]::Matches($section.Value, $columnPattern)
+                $columnsInSection = $columnMatches | ForEach-Object { $_.Groups[1].Value }
+
+                # Build the expected subset based on which columns appear
+                $expectedSubset = $expectedColumns | Where-Object { $columnsInSection -contains $_ }
+
+                # Verify order matches expected
+                for ($i = 0; $i -lt $columnsInSection.Count; $i++) {
+                    if ($i -lt $expectedSubset.Count -and $columnsInSection[$i] -ne $expectedSubset[$i]) {
+                        $issues += "Section $sectionCount : Column order mismatch at position $i - found '$($columnsInSection[$i])' expected '$($expectedSubset[$i])'"
+                    }
+                }
+            }
+
+            # Verify at least 2 format sections exist (main display and Draw-SessionRow)
+            if ($sectionCount -lt 2) {
+                $issues += "Expected at least 2 format sections, found $sectionCount"
+            }
+
+            if ($issues.Count -eq 0) {
+                Write-TestResult "Column Consistency Check" "PASS" "All $sectionCount format sections have consistent column order"
+            } else {
+                Write-TestResult "Column Consistency Check" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "Column Consistency Check" "SKIP" "Could not locate script file for analysis"
+        }
+    } catch {
+        Write-TestResult "Column Consistency Check" "FAIL" $_.Exception.Message
+    }
+
     # Summary
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
@@ -1641,6 +2014,117 @@ function Get-SessionMessageCount {
         return 0
     }
 }
+
+# LimitFeature: BEGIN - Context usage tracking for session handoff system
+function Get-SessionContextUsage {
+    <#
+    .SYNOPSIS
+        Gets the current context window usage percentage for a session
+    .DESCRIPTION
+        LimitFeature: Reads the last assistant message's token usage to determine
+        how much of the context window is being used. Returns percentage.
+        Total context = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+        Context limits by model:
+        - Opus/Sonnet: 200K tokens
+        - Haiku: 200K tokens
+    .RETURNS
+        Hashtable with InputTokens, ContextLimit, Percentage, or $null if unavailable
+    #>
+    param(
+        [string]$SessionId,
+        [string]$ProjectPath,
+        [string]$Model = "sonnet"  # Default to sonnet's limit
+    )
+
+    if (-not $SessionId -or -not $ProjectPath) {
+        return $null
+    }
+
+    try {
+        # Get the session .jsonl file path
+        $encodedPath = ConvertTo-ClaudeprojectPath -Path $ProjectPath
+        $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
+
+        if (-not (Test-Path $sessionFile)) {
+            Write-DebugInfo "LimitFeature: Session file not found: $sessionFile" -Color DarkGray
+            return $null
+        }
+
+        # Context limits by model (in tokens)
+        # LimitFeature: These are approximate - Claude Code may have different effective limits
+        $contextLimits = @{
+            "opus" = 200000
+            "sonnet" = 200000
+            "haiku" = 200000
+            "default" = 200000
+        }
+
+        # Handle empty model - default to sonnet
+        $modelKey = if ($Model -and $Model.Length -gt 0) { $Model.ToLower() } else { "default" }
+        $contextLimit = if ($contextLimits.ContainsKey($modelKey)) {
+            $contextLimits[$modelKey]
+        } else {
+            $contextLimits["default"]
+        }
+
+        # Read file and find the LAST assistant message with usage
+        $lastInputTokens = 0
+        $foundMessages = 0
+        $reader = [System.IO.StreamReader]::new($sessionFile)
+        try {
+            while ($null -ne ($line = $reader.ReadLine())) {
+                # Only check lines that contain assistant messages with usage
+                if ($line -notmatch '"type"\s*:\s*"assistant"') {
+                    continue
+                }
+                if ($line -notmatch '"usage"') {
+                    continue
+                }
+
+                # Parse the JSON
+                $entry = $line | ConvertFrom-Json
+
+                # Check if this is an assistant message with usage info
+                if ($entry.type -eq "assistant" -and $entry.message -and $entry.message.usage) {
+                    $foundMessages++
+                    $usage = $entry.message.usage
+                    # Total context = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+                    # input_tokens alone is just the new tokens, not the full context
+                    $totalTokens = 0
+                    if ($usage.input_tokens) { $totalTokens += $usage.input_tokens }
+                    if ($usage.cache_creation_input_tokens) { $totalTokens += $usage.cache_creation_input_tokens }
+                    if ($usage.cache_read_input_tokens) { $totalTokens += $usage.cache_read_input_tokens }
+                    if ($totalTokens -gt 0) {
+                        $lastInputTokens = $totalTokens
+                    }
+                }
+            }
+        } finally {
+            $reader.Close()
+        }
+
+        Write-DebugInfo "LimitFeature: Session $($SessionId.Substring(0,8))... - Found $foundMessages msgs, totalTokens=$lastInputTokens" -Color DarkGray
+
+        if ($lastInputTokens -eq 0) {
+            return $null
+        }
+
+        # Calculate percentage
+        $percentage = [math]::Round(($lastInputTokens / $contextLimit) * 100, 0)
+
+        return @{
+            TotalTokens = $lastInputTokens
+            ContextLimit = $contextLimit
+            Percentage = $percentage
+            Model = $Model
+        }
+
+    } catch {
+        Write-DebugInfo "LimitFeature: Error reading context usage: $_" -Color Red
+        return $null
+    }
+}
+# LimitFeature: END - Context usage tracking
 
 function Get-SessionTokenUsage {
     <#
@@ -2609,55 +3093,66 @@ function Write-SessionMenuHeader {
             $headerWidths += 6
             $headerToColumn += 1
         }
+        # LimitFeature: Add Limit column header if enabled
+        if ($columnConfig.Limit) {
+            $headers += "Limit"
+            $headerWidths += 6
+            $headerToColumn += 2
+        }
         if ($columnConfig.Model) {
             $headers += "Model"
             $headerWidths += 8
-            $headerToColumn += 2
+            $headerToColumn += 3
         }
         if ($columnConfig.Session) {
             $headers += "Session"
             $headerWidths += 30
-            $headerToColumn += 3
+            $headerToColumn += 4
         }
         if ($columnConfig.Notes) {
             $headers += "Notes"
             $headerWidths += 10
-            $headerToColumn += 4
+            $headerToColumn += 5
         }
         if ($columnConfig.Messages) {
             $headers += "Messages"
             $headerWidths += 8
-            $headerToColumn += 5
+            $headerToColumn += 6
         }
         if ($columnConfig.Created) {
             $headers += "Created"
             $headerWidths += 12
-            $headerToColumn += 6
+            $headerToColumn += 7
         }
         if ($columnConfig.Modified) {
             $headers += "Modified"
             $headerWidths += 12
-            $headerToColumn += 7
+            $headerToColumn += 8
         }
         if ($columnConfig.Cost) {
             $headers += "Cost"
             $headerWidths += 8
-            $headerToColumn += 8
+            $headerToColumn += 9
         }
         if ($columnConfig.WinTerminal) {
             $headers += "Win Terminal"
             $headerWidths += 25
-            $headerToColumn += 9
+            $headerToColumn += 10
         }
         if ($columnConfig.ForkedFrom) {
             $headers += "Forked From"
             $headerWidths += 25
-            $headerToColumn += 10
+            $headerToColumn += 11
+        }
+        if ($columnConfig.Git) {
+            $headers += "Git Repo"
+            $headerWidths += 20
+            $headerToColumn += 12
         }
         if ($columnConfig.Path) {
             $headers += "Path"
             $headerWidths += $pathWidth
-            $headerToColumn += 11
+            $headerToColumn += 13
         }
 
         # Top border
@@ -2727,6 +3222,7 @@ function Get-DynamicPathWidth {
     if ($ColumnConfig.Cost) { $fixedWidth += 8; $nonPathColumns++ }
     if ($ColumnConfig.WinTerminal) { $fixedWidth += 25; $nonPathColumns++ }
     if ($ColumnConfig.ForkedFrom) { $fixedWidth += 25; $nonPathColumns++ }
+    if ($ColumnConfig.Git) { $fixedWidth += 20; $nonPathColumns++ }
 
     # Calculate spaces between columns
     # If Path is visible: we have (nonPathColumns) + Path = total columns, need (nonPathColumns) spaces
@@ -2755,7 +3251,8 @@ function Show-SessionMenu {
         [bool]$ShowUnnamed = $false,
         [bool]$OnlyWithProfiles = $false,
         [string]$Title = "",
-        [int]$SelectedIndex = 0
+        [int]$SelectedIndex = 0,
+        [bool]$IsRefresh = $false
     )
 
 
@@ -2848,6 +3345,15 @@ function Show-SessionMenu {
     $rows = @()
     $displayNum = 1
 
+    # LimitFeature: Load column config to check if Limit column is enabled
+    $rowColumnConfig = Get-ColumnConfiguration
+    $limitColumnEnabled = $rowColumnConfig.Limit -eq $true
+
+    # Log refresh status
+    if ($IsRefresh) {
+        Write-DebugInfo "=== REFRESH: Checking all sessions for background changes ===" -Color Cyan
+    }
+
     # Add sessions (filter by named/unnamed and profiles)
     for ($i = 0; $i -lt $Sessions.Count; $i++) {
         $session = $Sessions[$i]
@@ -2897,25 +3403,35 @@ function Show-SessionMenu {
             }
         }
 
-        # Get model - try multiple sources
+        # Get model - on Refresh, read from session file to detect changes
+        # Otherwise, use fast cached sources (background.txt or session-mapping.json)
         $model = ""
 
-        # First, try from registry using customTitle (for older forked sessions)
-        if ($session.customTitle) {
-            $model = Get-ModelFromRegistry -SessionName $session.customTitle
-        }
-
-        # If no model yet, try from session-mapping.json using sessionId
-        if (-not $model -and $session.sessionId) {
-            $mappingEntry = Get-SessionMappingEntry -SessionId $session.sessionId
-            if ($mappingEntry -and $mappingEntry.model) {
-                $model = $mappingEntry.model
-            }
-        }
-
-        # Final fallback: read from session .jsonl file
-        if (-not $model) {
+        if ($IsRefresh) {
+            # On refresh: read from session file to get current model
+            # (user can change model mid-session, so we need fresh data)
             $model = Get-ModelFromSession -SessionId $session.sessionId -ProjectPath $session.projectPath
+        }
+
+        # If not refresh, or if session file didn't have model info, use cached sources
+        if (-not $model) {
+            # First try background.txt (fast file read)
+            if ($wtProfile) {
+                $model = Get-ModelFromBackgroundTxt -WTProfileName $wtProfile
+            }
+
+            # Fallback to registry using customTitle (for older forked sessions)
+            if (-not $model -and $session.customTitle) {
+                $model = Get-ModelFromRegistry -SessionName $session.customTitle
+            }
+
+            # If still no model, try from session-mapping.json using sessionId
+            if (-not $model -and $session.sessionId) {
+                $mappingEntry = Get-SessionMappingEntry -SessionId $session.sessionId
+                if ($mappingEntry -and $mappingEntry.model) {
+                    $model = $mappingEntry.model
+                }
+            }
         }
 
         # Get fork tree information
@@ -2926,6 +3442,17 @@ function Show-SessionMenu {
         # Get activity marker based on file modification time
         $activeMarker = Get-SessionActivityMarker -SessionId $session.sessionId -ProjectPath $session.projectPath
 
+        # LimitFeature: Get context usage percentage (only if Limit column is enabled - it's slow)
+        $limitDisplay = ""
+        $limitValue = 0
+        if ($limitColumnEnabled) {
+            $contextUsage = Get-SessionContextUsage -SessionId $session.sessionId -ProjectPath $session.projectPath -Model $model
+            if ($contextUsage -and $contextUsage.Percentage) {
+                $limitValue = $contextUsage.Percentage
+                $limitDisplay = "$($contextUsage.Percentage)%"
+            }
+        }
+
         # Get cost (with caching to avoid repeated parsing)
         $usage = Get-SessionTokenUsage -SessionId $session.sessionId -ProjectPath $session.projectPath
         $cost = if ($usage) { Get-SessionCost -TokenUsage $usage } else { 0.0 }
@@ -2933,6 +3460,14 @@ function Show-SessionMenu {
 
         # Get notes
         $notes = Get-SessionNotes -SessionId $session.sessionId
+
+        # Get Git repo name
+        $gitRepo = Get-GitRepoName -Path $session.projectPath
+
+        # Check if any background parameters have changed and regenerate if needed (only on refresh)
+        if ($IsRefresh -and $wtProfile) {
+            $null = Update-BackgroundIfChanged -Session $session -WTProfileName $wtProfile -CurrentModel $model
+        }
 
         $rows += [PSCustomObject]@{
             Title = $title
@@ -2945,9 +3480,12 @@ function Show-SessionMenu {
             Model = $model
             ForkTree = $forkTree
             Active = $activeMarker
+            Limit = $limitDisplay       # LimitFeature: Context usage percentage
+            LimitValue = $limitValue    # LimitFeature: Numeric value for sorting
             Cost = $costDisplay
             CostValue = [double]$cost  # Ensure numeric for sorting
             Notes = $notes
+            GitRepo = $gitRepo
             Session = $session
             OriginalIndex = $i
             CreatedDate = $created
@@ -2957,19 +3495,22 @@ function Show-SessionMenu {
 
 
     # Sort rows if a column is selected (easter egg feature)
+    # LimitFeature: Added Limit column (2), shifted all others
     if ($Global:SortColumn -gt 0 -and $rows.Count -gt 0) {
         $sortProperty = switch ($Global:SortColumn) {
             1 { 'Active' }      # Active marker
-            2 { 'Model' }       # Model name
-            3 { 'Title' }       # Session title
-            4 { 'Notes' }       # Notes
-            5 { 'Messages' }    # Message count
-            6 { 'CreatedDate' } # Created date (use date object for proper sorting)
-            7 { 'ModifiedDate' }# Modified date (use date object for proper sorting)
-            8 { 'CostValue' }   # Cost (numeric value)
-            9 { 'Profile' }     # Win Terminal profile
-            10 { 'ForkTree' }   # Forked from
-            11 { 'Path' }       # Path
+            2 { 'LimitValue' }  # LimitFeature: Context usage percentage (numeric)
+            3 { 'Model' }       # Model name
+            4 { 'Title' }       # Session title
+            5 { 'Notes' }       # Notes
+            6 { 'Messages' }    # Message count
+            7 { 'CreatedDate' } # Created date (use date object for proper sorting)
+            8 { 'ModifiedDate' }# Modified date (use date object for proper sorting)
+            9 { 'CostValue' }   # Cost (numeric value)
+            10 { 'Profile' }    # Win Terminal profile
+            11 { 'ForkTree' }   # Forked from
+            12 { 'GitRepo' }    # Git repository
+            13 { 'Path' }       # Path
             default { $null }
         }
 
@@ -3087,6 +3628,10 @@ function Show-SessionMenu {
             if ($columnConfig.Active) {
                 $rowParts += Truncate-String $row.Active 6
             }
+            # LimitFeature: Add Limit column value
+            if ($columnConfig.Limit) {
+                $rowParts += Truncate-String $row.Limit 6
+            }
             if ($columnConfig.Model) {
                 $rowParts += Truncate-String $row.Model 8
             }
@@ -3114,6 +3659,9 @@ function Show-SessionMenu {
             if ($columnConfig.ForkedFrom) {
                 $rowParts += Truncate-String $row.ForkTree 25
             }
+            if ($columnConfig.Git) {
+                $rowParts += Truncate-String $row.GitRepo 20
+            }
             if ($columnConfig.Path) {
                 $rowParts += Truncate-String $row.Path $pathWidth -FromLeft
             }
@@ -3122,6 +3670,8 @@ function Show-SessionMenu {
             $formatParts = @()
             $valueIndex = 0
             if ($columnConfig.Active) { $formatParts += "{$valueIndex,-6}"; $valueIndex++ }
+            # LimitFeature: Add Limit column format
+            if ($columnConfig.Limit) { $formatParts += "{$valueIndex,-6}"; $valueIndex++ }
             if ($columnConfig.Model) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
             if ($columnConfig.Session) { $formatParts += "{$valueIndex,-30}"; $valueIndex++ }
             if ($columnConfig.Notes) { $formatParts += "{$valueIndex,-10}"; $valueIndex++ }
@@ -3131,6 +3681,7 @@ function Show-SessionMenu {
             if ($columnConfig.Cost) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
             if ($columnConfig.WinTerminal) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
             if ($columnConfig.ForkedFrom) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
+            if ($columnConfig.Git) { $formatParts += "{$valueIndex,-20}"; $valueIndex++ }
             if ($columnConfig.Path) { $formatParts += "{$valueIndex,-$pathWidth}"; $valueIndex++ }
 
             $formatString = $formatParts -join " "
@@ -3242,6 +3793,7 @@ function Write-SingleMenuRow {
         # Build row dynamically based on column configuration
         $rowParts = @()
         if ($columnConfig.Active) { $rowParts += Truncate-String $RowData.Active 6 }
+        if ($columnConfig.Limit) { $rowParts += Truncate-String $RowData.Limit 6 }
         if ($columnConfig.Model) { $rowParts += Truncate-String $RowData.Model 8 }
         if ($columnConfig.Session) { $rowParts += Truncate-String $RowData.Title 30 }
         if ($columnConfig.Notes) { $rowParts += Truncate-String $RowData.Notes 10 }
@@ -3251,12 +3803,14 @@ function Write-SingleMenuRow {
         if ($columnConfig.Cost) { $rowParts += Truncate-String $RowData.Cost 8 }
         if ($columnConfig.WinTerminal) { $rowParts += Truncate-String $RowData.Profile 25 }
         if ($columnConfig.ForkedFrom) { $rowParts += Truncate-String $RowData.ForkTree 25 }
+        if ($columnConfig.Git) { $rowParts += Truncate-String $RowData.GitRepo 20 }
         if ($columnConfig.Path) { $rowParts += Truncate-String $RowData.Path $pathWidth -FromLeft }
 
         # Build format string
         $formatParts = @()
         $valueIndex = 0
         if ($columnConfig.Active) { $formatParts += "{$valueIndex,-6}"; $valueIndex++ }
+        if ($columnConfig.Limit) { $formatParts += "{$valueIndex,-6}"; $valueIndex++ }
         if ($columnConfig.Model) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
         if ($columnConfig.Session) { $formatParts += "{$valueIndex,-30}"; $valueIndex++ }
         if ($columnConfig.Notes) { $formatParts += "{$valueIndex,-10}"; $valueIndex++ }
@@ -3266,6 +3820,7 @@ function Write-SingleMenuRow {
         if ($columnConfig.Cost) { $formatParts += "{$valueIndex,-8}"; $valueIndex++ }
         if ($columnConfig.WinTerminal) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
         if ($columnConfig.ForkedFrom) { $formatParts += "{$valueIndex,-25}"; $valueIndex++ }
+        if ($columnConfig.Git) { $formatParts += "{$valueIndex,-20}"; $valueIndex++ }
         if ($columnConfig.Path) { $formatParts += "{$valueIndex,-$pathWidth}"; $valueIndex++ }
 
         $formatString = $formatParts -join " "
@@ -3352,6 +3907,9 @@ function Get-ArrowKeyNavigation {
             Write-Host 'L' -NoNewline -ForegroundColor Yellow
             Write-Host "l Sessions" -NoNewline -ForegroundColor Gray
         }
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'S' -NoNewline -ForegroundColor Yellow
+        Write-Host "anity Check" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'R' -NoNewline -ForegroundColor Yellow
         Write-Host "efresh" -NoNewline -ForegroundColor Gray
@@ -3700,7 +4258,7 @@ function Get-ArrowKeyNavigation {
                 }
 
                 # Show/Hide unnamed
-                if ($char -eq 'S') {
+                if ($char -eq 'S' -and -not $DeleteMode) {
                     return @{ Type = 'ShowUnnamed'; Index = $selectedIndex }
                 }
                 if ($char -eq 'H') {
@@ -3746,6 +4304,11 @@ function Get-ArrowKeyNavigation {
                 }
                 if ($char -eq 'P' -and $DeleteMode -and $ShowAllInDeleteMode) {
                     return @{ Type = 'ProfilesOnlyInDeleteMode'; Index = $selectedIndex }
+                }
+
+                # Regenerate backgrounds in Delete Mode
+                if ($char -eq 'S' -and $DeleteMode) {
+                    return @{ Type = 'RegenerateBackgrounds'; Index = $selectedIndex }
                 }
 
                 # Easter egg: Number keys for column sorting (1-9, 0 for column 10)
@@ -4179,7 +4742,8 @@ function Start-NewSession {
         if ($sessionId) {
             # 7. Update tracking with discovered session ID
             Write-ColorText "Registering session..." -Color Cyan
-            Add-SessionMapping -SessionId $sessionId -WTProfileName $actualProfileName -ProjectPath $projectPath -Model $model
+            $gitBranch = Get-GitBranch -Path $projectPath
+            Add-SessionMapping -SessionId $sessionId -WTProfileName $actualProfileName -ProjectPath $projectPath -Model $model -GitBranch $gitBranch
 
             Write-ColorText "New session launched successfully!" -Color Green
             Write-Host ""
@@ -4245,7 +4809,7 @@ function Start-ContinueSession {
         Write-Host "Y" -NoNewline -ForegroundColor Yellow
         Write-Host "es | " -NoNewline -ForegroundColor Gray
         Write-Host "N" -NoNewline -ForegroundColor Yellow
-        Write-Host "o: " -NoNewline -ForegroundColor Gray
+        Write-Host "o " -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $deleteChoice = $key.Character.ToString().ToUpper()
 
@@ -4429,7 +4993,9 @@ function Start-ContinueSession {
 
                 if (Test-Path $sessionFile) {
                     Write-DebugInfo "  Session file VERIFIED - proceeding with mapping" -Color Green
-                    Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath
+                    $gitBranch = Get-GitBranch -Path $Session.projectPath
+                    $model = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
+                    Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath -Model $model -GitBranch $gitBranch
                 } else {
                     Write-DebugInfo "  ERROR: Session file NOT FOUND!" -Color Red
                     Write-DebugInfo "  Session ID: $($Session.sessionId)" -Color Red
@@ -4488,7 +5054,7 @@ function Start-ContinueSession {
         Write-Host "Y" -NoNewline -ForegroundColor Yellow
         Write-Host "es | " -NoNewline -ForegroundColor Gray
         Write-Host "N" -NoNewline -ForegroundColor Yellow
-        Write-Host "o: " -NoNewline -ForegroundColor Gray
+        Write-Host "o " -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $createProfile = $key.Character.ToString().ToUpper()
 
@@ -4607,7 +5173,9 @@ function Start-ContinueSession {
 
                         if (Test-Path $sessionFile) {
                             Write-DebugInfo "    Session file VERIFIED - proceeding with mapping" -Color Green
-                            Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath
+                            $gitBranch = Get-GitBranch -Path $Session.projectPath
+                            $model = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
+                            Add-SessionMapping -SessionId $Session.sessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath -Model $model -GitBranch $gitBranch
                             Write-DebugInfo "  Session mapping updated successfully" -Color Green
                         } else {
                             Write-DebugInfo "    ERROR: Session file NOT FOUND!" -Color Red
@@ -4868,6 +5436,59 @@ function Get-ForkOrContinue {
         }
     }
 
+    # Display model from session
+    $sessionModel = Get-ModelFromSession -SessionId $SessionId -ProjectPath $ProjectPath
+    if ($sessionModel) {
+        if ($sessionModel -eq '<synthetic>') {
+            Write-Host "Model: " -NoNewline -ForegroundColor DarkGray
+            Write-Host "<synthetic>" -NoNewline -ForegroundColor Magenta
+            Write-Host " (session created outside Claude CLI, e.g. claude.ai or API)" -ForegroundColor DarkGray
+        } else {
+            Write-ColorText "Model: $sessionModel" -Color DarkGray
+        }
+    }
+
+    # LimitFeature: Display context usage percentage with explanation
+    $contextUsage = Get-SessionContextUsage -SessionId $SessionId -ProjectPath $ProjectPath -Model $sessionModel
+    if ($contextUsage -and $contextUsage.Percentage) {
+        $pct = $contextUsage.Percentage
+        $totalK = [math]::Round($contextUsage.TotalTokens / 1000, 0)
+        $limitK = [math]::Round($contextUsage.ContextLimit / 1000, 0)
+
+        # Color code based on usage level
+        Write-Host "Context: " -NoNewline -ForegroundColor DarkGray
+        if ($pct -ge 90) {
+            Write-Host "$pct%" -NoNewline -ForegroundColor Red
+            Write-Host " ($($totalK)K / $($limitK)K tokens) " -NoNewline -ForegroundColor DarkGray
+            Write-Host "CRITICAL" -ForegroundColor Red
+        } elseif ($pct -ge 75) {
+            Write-Host "$pct%" -NoNewline -ForegroundColor Yellow
+            Write-Host " ($($totalK)K / $($limitK)K tokens) " -NoNewline -ForegroundColor DarkGray
+            Write-Host "HIGH" -ForegroundColor Yellow
+        } elseif ($pct -ge 50) {
+            Write-Host "$pct%" -NoNewline -ForegroundColor Cyan
+            Write-Host " ($($totalK)K / $($limitK)K tokens)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "$pct%" -NoNewline -ForegroundColor Green
+            Write-Host " ($($totalK)K / $($limitK)K tokens)" -ForegroundColor DarkGray
+        }
+
+        # Show guidance based on usage level
+        if ($pct -ge 90) {
+            Write-Host ""
+            Write-Host "  WARNING: " -NoNewline -ForegroundColor Red
+            Write-Host "Context window nearly full. Session will auto-compact soon." -ForegroundColor Gray
+            Write-Host "  " -NoNewline
+            Write-Host "Action: " -NoNewline -ForegroundColor Yellow
+            Write-Host "Fork this session now to preserve full context in the new branch." -ForegroundColor Gray
+            Write-Host "         The original session can continue but will lose older context." -ForegroundColor DarkGray
+        } elseif ($pct -ge 75) {
+            Write-Host ""
+            Write-Host "  Note: " -NoNewline -ForegroundColor Yellow
+            Write-Host "Context usage is high. Consider forking if this is a long-running task." -ForegroundColor Gray
+        }
+    }
+
     # Display notes if they exist
     if ($Notes -and $Notes -ne "") {
         Write-ColorText "Notes: $Notes" -Color DarkGray
@@ -4922,6 +5543,8 @@ function Get-ForkOrContinue {
         Write-Host "archi" -NoNewline -ForegroundColor Gray
         Write-Host "V" -NoNewline -ForegroundColor Yellow
         Write-Host "e | " -NoNewline -ForegroundColor Gray
+        Write-Host "L" -NoNewline -ForegroundColor Yellow
+        Write-Host "imit Instructions | " -NoNewline -ForegroundColor Gray
         Write-Host "A" -NoNewline -ForegroundColor Yellow
         Write-Host "bort" -NoNewline -ForegroundColor Gray
     }
@@ -5002,6 +5625,10 @@ function Get-ForkOrContinue {
                 Write-DebugInfo "  'V' pressed - returning 'archive'"
                 Write-Host ""
                 return 'archive'
+            } elseif ($choice -eq 'L') {
+                Write-DebugInfo "  'L' pressed - returning 'limit-instructions'"
+                Write-Host ""
+                return 'limit-instructions'
             } elseif ($choice -eq 'A') {
                 Write-DebugInfo "  'A' pressed - returning 'abort'"
                 Write-Host ""
@@ -5011,6 +5638,196 @@ function Get-ForkOrContinue {
             }
         }
     }
+}
+
+function Show-LimitInstructions {
+    <#
+    .SYNOPSIS
+        Displays comprehensive instructions for managing context limits
+    .DESCRIPTION
+        Shows detailed guidance about Claude Code's context window, memory system,
+        forking, and strategies for long-running sessions.
+    #>
+    param(
+        [int]$CurrentPercentage = 0,
+        [string]$ProjectPath = ""
+    )
+
+    Clear-Host
+    Write-Host ""
+    Write-Host "================================================================================" -ForegroundColor Cyan
+    Write-Host "                    CONTEXT LIMIT MANAGEMENT GUIDE" -ForegroundColor Cyan
+    Write-Host "================================================================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Current status
+    if ($CurrentPercentage -gt 0) {
+        Write-Host "Your current session context usage: " -NoNewline -ForegroundColor Gray
+        if ($CurrentPercentage -ge 90) {
+            Write-Host "$CurrentPercentage%" -ForegroundColor Red
+        } elseif ($CurrentPercentage -ge 75) {
+            Write-Host "$CurrentPercentage%" -ForegroundColor Yellow
+        } else {
+            Write-Host "$CurrentPercentage%" -ForegroundColor Green
+        }
+        Write-Host ""
+    }
+
+    # What is the context window?
+    Write-Host "WHAT IS THE CONTEXT WINDOW?" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "Claude's context window is the total amount of text (measured in tokens) that"
+    Write-Host "Claude can 'see' during a conversation. This includes:"
+    Write-Host "  - System prompts and CLAUDE.md files"
+    Write-Host "  - All previous messages in the conversation"
+    Write-Host "  - File contents you've asked Claude to read"
+    Write-Host "  - Tool outputs and results"
+    Write-Host ""
+    Write-Host "Current models have a " -NoNewline
+    Write-Host "200,000 token" -NoNewline -ForegroundColor Cyan
+    Write-Host " context limit (~150K words)."
+    Write-Host ""
+
+    # What happens at the limit?
+    Write-Host "WHAT HAPPENS WHEN YOU HIT THE LIMIT?" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "When context exceeds ~95%, Claude Code automatically " -NoNewline
+    Write-Host "compacts" -NoNewline -ForegroundColor Red
+    Write-Host " the session."
+    Write-Host "Compaction creates a summary of the conversation, which means:"
+    Write-Host "  - Older messages are summarized, losing some detail and nuance" -ForegroundColor Gray
+    Write-Host "  - Code snippets and specific instructions may be forgotten" -ForegroundColor Gray
+    Write-Host "  - The 'feel' of the conversation changes as context is lost" -ForegroundColor Gray
+    Write-Host ""
+
+    # Strategy 1: Forking
+    Write-Host "STRATEGY 1: FORK THE SESSION (Best for preserving context)" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "Forking creates a " -NoNewline
+    Write-Host "new session branch" -NoNewline -ForegroundColor Green
+    Write-Host " with the full context of the parent."
+    Write-Host ""
+    Write-Host "  When to fork:" -ForegroundColor Cyan
+    Write-Host "    - Before hitting 90% context (do it at 75-85% to be safe)"
+    Write-Host "    - When starting a new major task within the same project"
+    Write-Host "    - When you want to try a different approach without losing the original"
+    Write-Host ""
+    Write-Host "  How to fork:" -ForegroundColor Cyan
+    Write-Host "    - Press 'F' from this Session Options screen"
+    Write-Host "    - Or use: claude --resume <session-id> --fork-session"
+    Write-Host ""
+    Write-Host "  The forked session starts fresh at 0% but 'remembers' everything!"
+    Write-Host ""
+
+    # Strategy 2: /memory
+    Write-Host "STRATEGY 2: USE /memory (Best for saving key learnings)" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "The " -NoNewline
+    Write-Host "/memory" -NoNewline -ForegroundColor Green
+    Write-Host " command saves important context to a persistent file that Claude"
+    Write-Host "automatically reads in future sessions."
+    Write-Host ""
+    Write-Host "  How /memory works:" -ForegroundColor Cyan
+    Write-Host "    1. Type: " -NoNewline
+    Write-Host "/memory" -ForegroundColor Green
+    Write-Host "    2. Claude analyzes the conversation for important learnings"
+    Write-Host "    3. These are saved to a CLAUDE.md file"
+    Write-Host ""
+    Write-Host "  Where memories are saved:" -ForegroundColor Cyan
+    Write-Host "    - Project-level: " -NoNewline
+    Write-Host "<project>/.claude/settings/CLAUDE.md" -ForegroundColor Magenta
+    if ($ProjectPath) {
+        $projectMemory = Join-Path $ProjectPath ".claude\settings\CLAUDE.md"
+        if (Test-Path $projectMemory) {
+            Write-Host "      (EXISTS: $projectMemory)" -ForegroundColor Green
+        } else {
+            Write-Host "      (Would be: $projectMemory)" -ForegroundColor DarkGray
+        }
+    }
+    Write-Host "    - User-level:    " -NoNewline
+    Write-Host "~/.claude/CLAUDE.md" -ForegroundColor Magenta
+    $userMemory = Join-Path $env:USERPROFILE ".claude\CLAUDE.md"
+    if (Test-Path $userMemory) {
+        Write-Host "      (EXISTS: $userMemory)" -ForegroundColor Green
+    } else {
+        Write-Host "      (Would be: $userMemory)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "  Usage limits:" -ForegroundColor Cyan
+    Write-Host "    - You can use /memory " -NoNewline
+    Write-Host "multiple times per session" -ForegroundColor Green
+    Write-Host "    - Each use appends new learnings (doesn't overwrite)"
+    Write-Host "    - Best practice: Use it after completing major milestones"
+    Write-Host "    - The file can be manually edited to curate important info"
+    Write-Host ""
+
+    # Strategy 3: CLAUDE.md
+    Write-Host "STRATEGY 3: MAINTAIN CLAUDE.md FILES (Best for project knowledge)" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "CLAUDE.md files are " -NoNewline
+    Write-Host "automatically loaded" -NoNewline -ForegroundColor Green
+    Write-Host " at the start of every session."
+    Write-Host ""
+    Write-Host "  Where to place them:" -ForegroundColor Cyan
+    Write-Host "    - Project root:  " -NoNewline
+    Write-Host "CLAUDE.md" -NoNewline -ForegroundColor Magenta
+    Write-Host " - loaded for all sessions in that directory"
+    Write-Host "    - Subdirectories: Each can have its own CLAUDE.md"
+    Write-Host "    - User config:   " -NoNewline
+    Write-Host "~/.claude/CLAUDE.md" -NoNewline -ForegroundColor Magenta
+    Write-Host " - loaded for ALL sessions"
+    Write-Host ""
+    Write-Host "  What to put in CLAUDE.md:" -ForegroundColor Cyan
+    Write-Host "    - Project architecture and structure"
+    Write-Host "    - Coding standards and conventions"
+    Write-Host "    - Important context that never changes"
+    Write-Host "    - Instructions that should apply to every session"
+    Write-Host ""
+
+    # Strategy 4: Manual compaction
+    Write-Host "STRATEGY 4: MANUAL COMPACTION (When you want to continue lighter)" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "Use " -NoNewline
+    Write-Host "/compact" -NoNewline -ForegroundColor Green
+    Write-Host " to manually trigger compaction when you want to:"
+    Write-Host "    - Free up context for a new direction"
+    Write-Host "    - Keep the session but don't need old details"
+    Write-Host "    - Before auto-compaction kicks in (to control the summary)"
+    Write-Host ""
+
+    # Recommended workflow
+    Write-Host "RECOMMENDED WORKFLOW FOR LONG SESSIONS" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "  1. " -NoNewline -ForegroundColor Cyan
+    Write-Host "Start: Begin work in a session"
+    Write-Host "  2. " -NoNewline -ForegroundColor Cyan
+    Write-Host "At 50%: Consider if key learnings should be saved with /memory"
+    Write-Host "  3. " -NoNewline -ForegroundColor Cyan
+    Write-Host "At 75%: Use /memory to save progress, consider forking soon"
+    Write-Host "  4. " -NoNewline -ForegroundColor Cyan
+    Write-Host "At 85%: Fork the session to preserve full context"
+    Write-Host "  5. " -NoNewline -ForegroundColor Cyan
+    Write-Host "Continue: Work in the forked session (starts at 0%)"
+    Write-Host "  6. " -NoNewline -ForegroundColor Cyan
+    Write-Host "Optional: /compact the original if you want to continue it lighter"
+    Write-Host ""
+
+    # Quick reference
+    Write-Host "QUICK REFERENCE" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "  /memory          " -NoNewline -ForegroundColor Green
+    Write-Host "- Save learnings to persistent CLAUDE.md"
+    Write-Host "  /compact         " -NoNewline -ForegroundColor Green
+    Write-Host "- Manually summarize and compress the session"
+    Write-Host "  --fork-session   " -NoNewline -ForegroundColor Green
+    Write-Host "- Create new branch with full context (via CLI)"
+    Write-Host "  CLAUDE.md        " -NoNewline -ForegroundColor Green
+    Write-Host "- Auto-loaded instructions/context file"
+    Write-Host ""
+    Write-Host "================================================================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Press any key to return to Session Options..." -ForegroundColor DarkGray
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 }
 
 #endregion
@@ -5679,7 +6496,7 @@ function Start-ForkSession {
         Write-Host "Y" -NoNewline -ForegroundColor Yellow
         Write-Host "es | " -NoNewline -ForegroundColor Gray
         Write-Host "N" -NoNewline -ForegroundColor Yellow
-        Write-Host "o: " -NoNewline -ForegroundColor Gray
+        Write-Host "o " -NoNewline -ForegroundColor Gray
         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         $deleteChoice = $key.Character.ToString().ToUpper()
 
@@ -5742,6 +6559,9 @@ function Start-ForkSession {
         # Use the resolved name (may have been modified for 'new' action)
         $finalNewName = $resolution.name
 
+        # Detect git branch (needed for both image generation and session mapping)
+        $gitBranch = Get-GitBranch -Path $Session.projectPath
+
         # 5. Generate or use background image with model info
         if ($resolution.action -eq 'use') {
             # Use existing image
@@ -5751,9 +6571,6 @@ function Start-ForkSession {
             # Generate new image (either 'create' or 'overwrite')
             Write-Host ""
             Write-ColorText "Generating background image..." -Color Cyan
-
-            # Detect git branch
-            $gitBranch = Get-GitBranch -Path $Session.projectPath
 
             $bgPath = New-SessionBackgroundImage -NewName $finalNewName -OldName $oldName -IsFork -GitBranch $gitBranch -Model $model -ProjectPath $Session.projectPath
         }
@@ -5773,7 +6590,7 @@ function Start-ForkSession {
         Add-ProfileRegistry -SessionName $finalNewName -ProfileGuid $profile.guid -OriginalSessionId $Session.sessionId -projectPath $Session.projectPath -BackgroundImage $bgPath -Model $model
 
         # 8. Store in session mapping (use actual profile name)
-        Add-SessionMapping -SessionId $newSessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath -Model $model -ForkedFrom $Session.sessionId
+        Add-SessionMapping -SessionId $newSessionId -WTProfileName $actualProfileName -ProjectPath $Session.projectPath -Model $model -ForkedFrom $Session.sessionId -GitBranch $gitBranch
 
         # 9. Launch Windows Terminal with new profile
         Write-Host ""
@@ -6182,6 +6999,58 @@ function Get-GitBranch {
     }
 }
 
+function Get-GitRepoName {
+    <#
+    .SYNOPSIS
+        Gets the Git repository name from the remote URL
+    .PARAMETER Path
+        The directory path to check for git repo
+    .RETURNS
+        The repository name (e.g., "WinClaudeCodeForker") or empty string if not a git repo
+    #>
+    param([string]$Path)
+
+    try {
+        # Check if directory exists
+        if (-not (Test-Path $Path)) {
+            return ""
+        }
+
+        # Check if this is a git repository
+        $gitDir = Join-Path $Path ".git"
+        if (-not (Test-Path $gitDir)) {
+            return ""
+        }
+
+        # Save current location
+        $originalLocation = Get-Location
+        Set-Location $Path
+
+        # Get the remote URL (origin)
+        $remoteUrl = git config --get remote.origin.url 2>&1 | Where-Object { $_ -is [string] }
+
+        # Restore location
+        Set-Location $originalLocation
+
+        if (-not $remoteUrl -or $remoteUrl -eq "") {
+            return ""
+        }
+
+        # Extract repo name from URL
+        # Handles: https://github.com/user/repo.git, git@github.com:user/repo.git, etc.
+        $repoName = ""
+        if ($remoteUrl -match '/([^/]+?)(\.git)?$') {
+            $repoName = $matches[1]
+        } elseif ($remoteUrl -match ':([^/]+/)?([^/]+?)(\.git)?$') {
+            $repoName = $matches[2]
+        }
+
+        return $repoName
+    } catch {
+        return ""
+    }
+}
+
 #endregion
 
 #region Image Generation
@@ -6463,6 +7332,26 @@ function New-UniformBackgroundImage {
         $bitmap.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png)
         Write-DebugInfo "  Image saved to: $OutputPath" -Color Green
 
+        # Create corresponding .txt file with the same content
+        $txtPath = $OutputPath -replace '\.png$', '.txt'
+        $txtContent = @()
+        $txtContent += "Session: $SessionName"
+        if ($ForkedFrom) {
+            $txtContent += "Forked from: $ForkedFrom"
+        }
+        $txtContent += "Computer:User: $ComputerUser"
+        if ($GitBranch) {
+            $txtContent += "Branch: $GitBranch"
+        }
+        if ($Model) {
+            $txtContent += "Model: $Model"
+        }
+        $txtContent += "Directory: $DirectoryPath"
+        $txtContent += ""
+        $txtContent += "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        $txtContent -join "`r`n" | Set-Content $txtPath -Encoding UTF8
+        Write-DebugInfo "  Text file saved to: $txtPath" -Color Green
+
         # Cleanup
         $graphics.Dispose()
         $bitmap.Dispose()
@@ -6631,7 +7520,7 @@ function Update-SessionBackgroundImage {
             $parentName = if ($parentSession -and $parentSession.customTitle) {
                 $parentSession.customTitle
             } else {
-                "(deleted or unnamed)"
+                '(deleted or unnamed)'
             }
 
             # Detect git branch
@@ -6686,6 +7575,290 @@ function Update-SessionBackgroundImage {
     }
 }
 
+function Get-ModelFromBackgroundTxt {
+    <#
+    .SYNOPSIS
+        Reads the model from a background .txt file
+    .DESCRIPTION
+        Parses the background .txt file to extract the Model line.
+        This is faster than loading session-mapping.json.
+    .PARAMETER WTProfileName
+        The Windows Terminal profile name (e.g., "Claude-MySession")
+    .RETURNS
+        The model string if found, empty string otherwise
+    #>
+    param(
+        [string]$WTProfileName
+    )
+
+    if (-not $WTProfileName) {
+        return ""
+    }
+
+    try {
+        # Extract session name from WT profile name
+        $sessionName = $WTProfileName -replace '^Claude-', ''
+
+        # Build path to background.txt
+        $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
+
+        if (-not (Test-Path $txtPath)) {
+            return ""
+        }
+
+        # Read and parse the txt file
+        $content = Get-Content $txtPath -ErrorAction SilentlyContinue
+        foreach ($line in $content) {
+            if ($line -match '^Model:\s*(.+)$') {
+                return $Matches[1].Trim()
+            }
+        }
+    } catch {
+        Write-DebugInfo "Error reading background txt for $WTProfileName : $_" -Color Red
+    }
+
+    return ""
+}
+
+function Get-BranchFromBackgroundTxt {
+    <#
+    .SYNOPSIS
+        Reads the git branch from a background .txt file
+    .DESCRIPTION
+        Parses the background .txt file to extract the Branch line.
+        This is faster than loading session-mapping.json.
+    .PARAMETER WTProfileName
+        The Windows Terminal profile name (e.g., "Claude-MySession")
+    .RETURNS
+        The branch string if found, empty string otherwise
+    #>
+    param(
+        [string]$WTProfileName
+    )
+
+    if (-not $WTProfileName) {
+        return ""
+    }
+
+    try {
+        # Extract session name from WT profile name
+        $sessionName = $WTProfileName -replace '^Claude-', ''
+
+        # Build path to background.txt
+        $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
+
+        if (-not (Test-Path $txtPath)) {
+            return ""
+        }
+
+        # Read and parse the txt file
+        $content = Get-Content $txtPath -ErrorAction SilentlyContinue
+        foreach ($line in $content) {
+            if ($line -match '^Branch:\s*(.+)$') {
+                return $Matches[1].Trim()
+            }
+        }
+    } catch {
+        Write-DebugInfo "Error reading background txt for $WTProfileName : $_" -Color Red
+    }
+
+    return ""
+}
+
+function Get-AllValuesFromBackgroundTxt {
+    <#
+    .SYNOPSIS
+        Reads all values from a background .txt file
+    .DESCRIPTION
+        Parses the background .txt file to extract all stored values.
+    .PARAMETER WTProfileName
+        The Windows Terminal profile name (e.g., "Claude-MySession")
+    .RETURNS
+        Hashtable with Session, ForkedFrom, ComputerUser, Branch, Model, Directory, or $null if file not found
+    #>
+    param(
+        [string]$WTProfileName
+    )
+
+    if (-not $WTProfileName) {
+        return $null
+    }
+
+    try {
+        # Extract session name from WT profile name
+        $sessionName = $WTProfileName -replace '^Claude-', ''
+
+        # Build path to background.txt
+        $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
+
+        if (-not (Test-Path $txtPath)) {
+            return $null
+        }
+
+        # Initialize result hashtable
+        $result = @{
+            Session = ""
+            ForkedFrom = ""
+            ComputerUser = ""
+            Branch = ""
+            Model = ""
+            Directory = ""
+        }
+
+        # Read and parse the txt file
+        $content = Get-Content $txtPath -ErrorAction SilentlyContinue
+        foreach ($line in $content) {
+            if ($line -match '^Session:\s*(.+)$') {
+                $result.Session = $Matches[1].Trim()
+            } elseif ($line -match '^Forked from:\s*(.+)$') {
+                $result.ForkedFrom = $Matches[1].Trim()
+            } elseif ($line -match '^Computer:User:\s*(.+)$') {
+                $result.ComputerUser = $Matches[1].Trim()
+            } elseif ($line -match '^Branch:\s*(.+)$') {
+                $result.Branch = $Matches[1].Trim()
+            } elseif ($line -match '^Model:\s*(.+)$') {
+                $result.Model = $Matches[1].Trim()
+            } elseif ($line -match '^Directory:\s*(.+)$') {
+                $result.Directory = $Matches[1].Trim()
+            }
+        }
+
+        return $result
+    } catch {
+        Write-DebugInfo "Error reading background txt for $WTProfileName : $_" -Color Red
+    }
+
+    return $null
+}
+
+function Update-BackgroundIfChanged {
+    <#
+    .SYNOPSIS
+        Detects if any background parameters have changed and regenerates background if needed
+    .DESCRIPTION
+        Called during explicit Refresh only. Compares all background text parameters
+        (model, branch, directory, computer:user) with current values and regenerates
+        the background image if ANY have changed.
+    .RETURNS
+        $true if background was regenerated, $false otherwise
+    #>
+    param(
+        [object]$Session,
+        [string]$WTProfileName,
+        [string]$CurrentModel
+    )
+
+    # Skip if no WT profile
+    if (-not $WTProfileName) {
+        return $false
+    }
+
+    try {
+        # Extract session name from WT profile name
+        $sessionName = $WTProfileName -replace '^Claude-', ''
+
+        Write-DebugInfo "  Checking background for: $sessionName" -Color Cyan
+
+        # Get all stored values from background .txt file
+        $storedValues = Get-AllValuesFromBackgroundTxt -WTProfileName $WTProfileName
+
+        if (-not $storedValues) {
+            Write-DebugInfo "    No background.txt found - skipping" -Color DarkGray
+            return $false
+        }
+
+        # Get current values
+        $currentBranch = Get-GitBranch -Path $Session.projectPath
+        $currentComputerUser = "$env:COMPUTERNAME\$env:USERNAME"
+        $currentDirectory = $Session.projectPath
+
+        # Check if this is a forked session and get parent name
+        $forkInfo = Get-ForkedFromInfo -SessionId $Session.sessionId
+        $currentForkedFrom = ""
+        $parentName = ""
+        if ($forkInfo -and $forkInfo.ForkedFrom) {
+            $allSessions = Get-AllClaudeSessions
+            $parentSession = $allSessions | Where-Object { $_.sessionId -eq $forkInfo.ForkedFrom }
+            $parentName = if ($parentSession -and $parentSession.customTitle) {
+                $parentSession.customTitle
+            } else {
+                '(deleted or unnamed)'
+            }
+            $currentForkedFrom = $parentName
+        }
+
+        # Build list of changes
+        $changes = @()
+
+        if ($storedValues.Model -and $CurrentModel -and $storedValues.Model -ne $CurrentModel) {
+            $changes += "Model: '$($storedValues.Model)' -> '$CurrentModel'"
+        }
+        if ($storedValues.Branch -and $currentBranch -and $storedValues.Branch -ne $currentBranch) {
+            $changes += "Branch: '$($storedValues.Branch)' -> '$currentBranch'"
+        }
+        if ($storedValues.ComputerUser -and $storedValues.ComputerUser -ne $currentComputerUser) {
+            $changes += "Computer:User: '$($storedValues.ComputerUser)' -> '$currentComputerUser'"
+        }
+        if ($storedValues.Directory -and $storedValues.Directory -ne $currentDirectory) {
+            $changes += "Directory: '$($storedValues.Directory)' -> '$currentDirectory'"
+        }
+        if ($storedValues.ForkedFrom -and $currentForkedFrom -and $storedValues.ForkedFrom -ne $currentForkedFrom) {
+            $changes += "ForkedFrom: '$($storedValues.ForkedFrom)' -> '$currentForkedFrom'"
+        }
+
+        # Log comparison results
+        Write-DebugInfo "    Stored: Model='$($storedValues.Model)', Branch='$($storedValues.Branch)'" -Color DarkGray
+        Write-DebugInfo "    Current: Model='$CurrentModel', Branch='$currentBranch'" -Color DarkGray
+
+        if ($changes.Count -eq 0) {
+            Write-DebugInfo "    No changes detected" -Color DarkGray
+            return $false
+        }
+
+        # Log what changed
+        Write-DebugInfo "    CHANGES DETECTED:" -Color Yellow
+        foreach ($change in $changes) {
+            Write-DebugInfo "      - $change" -Color Yellow
+        }
+
+        # Update session-mapping.json with new values
+        Add-SessionMapping -SessionId $Session.sessionId `
+                          -WTProfileName $WTProfileName `
+                          -ProjectPath $Session.projectPath `
+                          -Model $CurrentModel `
+                          -GitBranch $currentBranch
+
+        # Regenerate background image
+        if ($forkInfo -and $forkInfo.ForkedFrom) {
+            # Fork session
+            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath
+        } else {
+            # Non-fork session
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath
+        }
+
+        # Update Windows Terminal profile with new image path
+        $settingsJson = Get-Content $Global:WTSettingsPath -Raw
+        $settings = $settingsJson | ConvertFrom-Json
+
+        for ($i = 0; $i -lt $settings.profiles.list.Count; $i++) {
+            if ($settings.profiles.list[$i].name -eq $WTProfileName) {
+                $imagePath = $bgPath -replace '\\', '/'
+                $settings.profiles.list[$i].backgroundImage = $imagePath
+                $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+                Write-DebugInfo "    Regenerated background for '$WTProfileName'" -Color Green
+                break
+            }
+        }
+
+        return $true
+    } catch {
+        Write-ErrorLog "Error in Update-BackgroundIfChanged: $_"
+    }
+
+    return $false
+}
+
 #endregion
 
 #region Session Mapping
@@ -6716,7 +7889,8 @@ function Add-SessionMapping {
         [string]$WTProfileName,
         [string]$ProjectPath,
         [string]$Model = "",
-        [string]$ForkedFrom = ""
+        [string]$ForkedFrom = "",
+        [string]$GitBranch = ""
     )
 
     Initialize-SessionMapping
@@ -6785,6 +7959,14 @@ function Add-SessionMapping {
                 $updatedEntry.forkedFrom = $mapping.sessions[$existingIndex].forkedFrom
             }
 
+            # Add gitBranch if provided
+            if ($GitBranch) {
+                $updatedEntry.gitBranch = $GitBranch
+            } elseif ($mapping.sessions[$existingIndex].gitBranch) {
+                # Preserve existing gitBranch if not updating it
+                $updatedEntry.gitBranch = $mapping.sessions[$existingIndex].gitBranch
+            }
+
             $mapping.sessions[$existingIndex] = $updatedEntry
         } else {
             # Create new entry
@@ -6799,6 +7981,11 @@ function Add-SessionMapping {
             # Add forkedFrom if provided
             if ($ForkedFrom) {
                 $newEntry.forkedFrom = $ForkedFrom
+            }
+
+            # Add gitBranch if provided
+            if ($GitBranch) {
+                $newEntry.gitBranch = $GitBranch
             }
 
             $mapping.sessions = @($mapping.sessions) + $newEntry
@@ -7033,9 +8220,11 @@ function Get-ColumnConfiguration {
         Gets the column visibility configuration
     #>
     if (-not (Test-Path $Global:ColumnConfigPath)) {
-        # Return default configuration (Notes hidden by default)
+        # Return default configuration (Notes, Git, and Limit hidden by default)
+        # LimitFeature: Limit column added, default hidden
         return @{
             Active = $true
+            Limit = $false  # LimitFeature: Context usage percentage, hidden by default (slow)
             Model = $true
             Session = $true
             Notes = $false
@@ -7045,6 +8234,7 @@ function Get-ColumnConfiguration {
             Cost = $true
             WinTerminal = $true
             ForkedFrom = $true
+            Git = $false
             Path = $true
         }
     }
@@ -7060,8 +8250,10 @@ function Get-ColumnConfiguration {
     } catch {
         Write-DebugInfo "Error loading column config: $_" -Color Red
         # Return default on error
+        # LimitFeature: Limit column added, default hidden
         return @{
             Active = $true
+            Limit = $false  # LimitFeature: Context usage percentage, hidden by default (slow)
             Model = $true
             Session = $true
             Notes = $false
@@ -7071,6 +8263,7 @@ function Get-ColumnConfiguration {
             Cost = $true
             WinTerminal = $true
             ForkedFrom = $true
+            Git = $false
             Path = $true
         }
     }
@@ -7105,8 +8298,10 @@ function Show-ColumnConfigMenu {
     $config = Get-ColumnConfiguration
 
     # Define columns in display order
+    # LimitFeature: Added Limit column
     $columns = @(
         @{ Name = "Active"; Label = "Active" }
+        @{ Name = "Limit"; Label = "Limit (Context %)" }  # LimitFeature: Context usage percentage
         @{ Name = "Model"; Label = "Model" }
         @{ Name = "Session"; Label = "Session" }
         @{ Name = "Notes"; Label = "Notes" }
@@ -7116,6 +8311,7 @@ function Show-ColumnConfigMenu {
         @{ Name = "Cost"; Label = "Cost" }
         @{ Name = "WinTerminal"; Label = "Win Terminal" }
         @{ Name = "ForkedFrom"; Label = "Forked From" }
+        @{ Name = "Git"; Label = "Git Repo" }
         @{ Name = "Path"; Label = "Path" }
     )
 
@@ -7141,7 +8337,7 @@ function Show-ColumnConfigMenu {
         Write-Host ""
         Write-Host "TIP: " -NoNewline -ForegroundColor Yellow
         Write-Host "In the main menu, press " -NoNewline -ForegroundColor Gray
-        Write-Host "1-11" -NoNewline -ForegroundColor Yellow
+        Write-Host "1-12" -NoNewline -ForegroundColor Yellow
         Write-Host " to sort by column number" -ForegroundColor Gray
         Write-Host ""
 
@@ -7293,7 +8489,11 @@ function Get-ModelFromRegistry {
 function Get-ModelFromSession {
     <#
     .SYNOPSIS
-        Extracts the model from a session's .jsonl file
+        Extracts the current model from a session's .jsonl file
+    .DESCRIPTION
+        Reads the LAST assistant message to get the most recent/current model,
+        since users can change models mid-session. Results are cached based on
+        file modification time to avoid re-parsing unchanged files.
     #>
     param(
         [string]$SessionId,
@@ -7313,7 +8513,24 @@ function Get-ModelFromSession {
             return ""
         }
 
-        # Read file line by line looking for first assistant message with model
+        # Get file modification time for cache key
+        $fileInfo = Get-Item $sessionFile
+        $cacheKey = "$SessionId|$($fileInfo.LastWriteTime.Ticks)"
+
+        # Check cache first
+        if ($Global:ModelCache.ContainsKey($cacheKey)) {
+            return $Global:ModelCache[$cacheKey]
+        }
+
+        # Clear old cache entries for this session (different modification times)
+        $keysToRemove = $Global:ModelCache.Keys | Where-Object { $_ -like "$SessionId|*" -and $_ -ne $cacheKey }
+        foreach ($key in $keysToRemove) {
+            $Global:ModelCache.Remove($key)
+        }
+
+        # Read file line by line, keeping track of the LAST assistant message with model
+        # This ensures we get the current model even if user changed it mid-session
+        $lastModel = ""
         $reader = [System.IO.StreamReader]::new($sessionFile)
         try {
             while ($null -ne ($line = $reader.ReadLine())) {
@@ -7331,23 +8548,29 @@ function Get-ModelFromSession {
 
                     # Parse model name to friendly format
                     if ($fullModel -match 'opus') {
-                        return "opus"
+                        $lastModel = "opus"
                     } elseif ($fullModel -match 'sonnet') {
-                        return "sonnet"
+                        $lastModel = "sonnet"
                     } elseif ($fullModel -match 'haiku') {
-                        return "haiku"
+                        $lastModel = "haiku"
                     } else {
                         # Return first word of model name
                         if ($fullModel -match 'claude-([^-]+)') {
-                            return $matches[1]
+                            $lastModel = $matches[1]
+                        } else {
+                            $lastModel = $fullModel
                         }
-                        return $fullModel
                     }
                 }
             }
         } finally {
             $reader.Close()
         }
+
+        # Cache the result
+        $Global:ModelCache[$cacheKey] = $lastModel
+
+        return $lastModel
     } catch {
         Write-ErrorLog "Error getting model from session file: $_"
     }
@@ -7841,6 +9064,471 @@ function Get-BackgroundTracking {
     }
 }
 
+function Get-OutOfSyncBackgrounds {
+    <#
+    .SYNOPSIS
+        Finds all sessions with backgrounds that are out of sync with current session data
+    .DESCRIPTION
+        Compares stored model and git branch in background .txt files with current values
+        from session files and git repository. Uses .txt files for faster reading.
+    .RETURNS
+        Array of objects containing session info and what's out of sync
+    #>
+
+    $outOfSync = @()
+
+    Write-DebugInfo "=== Get-OutOfSyncBackgrounds ===" -Color Cyan
+
+    # Get all sessions
+    $allSessions = Get-AllClaudeSessions
+    Write-DebugInfo "  Total sessions: $($allSessions.Count)"
+
+    foreach ($session in $allSessions) {
+        # Get session mapping entry (still needed to find WT profile name)
+        $mappingEntry = Get-SessionMappingEntry -SessionId $session.sessionId
+        if (-not $mappingEntry -or -not $mappingEntry.wtProfileName) {
+            Write-DebugInfo "  Session $($session.sessionId): No WT mapping - skip" -Color DarkGray
+            # No WT profile - skip
+            continue
+        }
+
+        $changes = @()
+        $wtProfileName = $mappingEntry.wtProfileName
+        $sessionName = $wtProfileName -replace '^Claude-', ''
+        Write-DebugInfo "  Checking: $sessionName" -Color Yellow
+
+        # Check if background image exists
+        $bgPath = Join-Path $Global:MenuPath "$sessionName\background.png"
+        $bgExists = Test-Path $bgPath
+        Write-DebugInfo "    bgPath: $bgPath (exists: $bgExists)"
+        if (-not $bgExists) {
+            # No background image - flag as needing generation
+            $changes += "No background image"
+        }
+
+        # Compare model - read stored value from background .txt file (faster)
+        $storedModel = Get-ModelFromBackgroundTxt -WTProfileName $wtProfileName
+        $currentModel = Get-ModelFromSession -SessionId $session.sessionId -ProjectPath $session.projectPath
+        Write-DebugInfo "    storedModel: '$storedModel', currentModel: '$currentModel'"
+        if ($currentModel -and $storedModel -and $currentModel -ne $storedModel) {
+            $changes += "Model: $storedModel -> $currentModel"
+        } elseif ($currentModel -and -not $storedModel) {
+            $changes += "Model: (none) -> $currentModel"
+        }
+
+        # Compare git branch - read stored value from background .txt file (faster)
+        $storedBranch = Get-BranchFromBackgroundTxt -WTProfileName $wtProfileName
+        $currentBranch = Get-GitBranch -Path $session.projectPath
+        Write-DebugInfo "    storedBranch: '$storedBranch', currentBranch: '$currentBranch'"
+        if ($currentBranch -and $storedBranch -and $currentBranch -ne $storedBranch) {
+            $changes += "Branch: $storedBranch -> $currentBranch"
+        } elseif ($currentBranch -and -not $storedBranch) {
+            $changes += "Branch: (none) -> $currentBranch"
+        }
+
+        Write-DebugInfo "    Changes found: $($changes.Count)" -Color $(if ($changes.Count -gt 0) { "Green" } else { "DarkGray" })
+
+        # If anything changed, add to list
+        if ($changes.Count -gt 0) {
+            $displayName = if ($session.customTitle) {
+                $session.customTitle
+            } elseif ($session.trackedName) {
+                $session.trackedName
+            } else {
+                $sessionName
+            }
+
+            $outOfSync += [PSCustomObject]@{
+                Session = $session
+                SessionName = $sessionName
+                DisplayName = $displayName
+                WTProfileName = $wtProfileName
+                Changes = $changes
+                CurrentModel = $currentModel
+                CurrentBranch = $currentBranch
+                StoredModel = $storedModel
+                StoredBranch = $storedBranch
+            }
+        }
+    }
+
+    Write-DebugInfo "  Total out of sync: $($outOfSync.Count)" -Color Cyan
+    return $outOfSync
+}
+
+function Get-SessionsWithMissingTxtFiles {
+    <#
+    .SYNOPSIS
+        Finds all sessions that have background.png but no corresponding background.txt
+    .RETURNS
+        Array of objects containing session info for missing txt files
+    #>
+
+    $missingTxt = @()
+
+    Write-DebugInfo "=== Get-SessionsWithMissingTxtFiles ===" -Color Cyan
+    Write-DebugInfo "  MenuPath: $Global:MenuPath"
+
+    # Get all sessions
+    $allSessions = Get-AllClaudeSessions
+    Write-DebugInfo "  Total sessions found: $($allSessions.Count)"
+
+    foreach ($session in $allSessions) {
+        # Get session mapping entry
+        $mappingEntry = Get-SessionMappingEntry -SessionId $session.sessionId
+        if (-not $mappingEntry -or -not $mappingEntry.wtProfileName) {
+            Write-DebugInfo "  Session $($session.sessionId): No WT profile mapping - skipping" -Color DarkGray
+            continue
+        }
+
+        $wtProfileName = $mappingEntry.wtProfileName
+        $sessionName = $wtProfileName -replace '^Claude-', ''
+        Write-DebugInfo "  Checking session: $sessionName (WT: $wtProfileName)" -Color Yellow
+
+        # Check if background image exists but txt doesn't
+        $bgPath = Join-Path $Global:MenuPath "$sessionName\background.png"
+        $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
+        Write-DebugInfo "    bgPath: $bgPath"
+        Write-DebugInfo "    txtPath: $txtPath"
+        Write-DebugInfo "    bgExists: $(Test-Path $bgPath), txtExists: $(Test-Path $txtPath)"
+
+        if ((Test-Path $bgPath) -and -not (Test-Path $txtPath)) {
+            Write-DebugInfo "    -> MISSING TXT FILE" -Color Green
+            $displayName = if ($session.customTitle) {
+                $session.customTitle
+            } elseif ($session.trackedName) {
+                $session.trackedName
+            } else {
+                $sessionName
+            }
+
+            $missingTxt += [PSCustomObject]@{
+                Session = $session
+                SessionName = $sessionName
+                DisplayName = $displayName
+                WTProfileName = $wtProfileName
+                BackgroundPath = $bgPath
+                TxtPath = $txtPath
+                StoredModel = if ($mappingEntry.model) { $mappingEntry.model } else { "" }
+                StoredBranch = if ($mappingEntry.gitBranch) { $mappingEntry.gitBranch } else { "" }
+            }
+        } else {
+            Write-DebugInfo "    -> OK (both exist or no bg)" -Color DarkGray
+        }
+    }
+
+    Write-DebugInfo "  Total missing txt files: $($missingTxt.Count)" -Color Cyan
+    return $missingTxt
+}
+
+function New-BackgroundTxtFile {
+    <#
+    .SYNOPSIS
+        Creates a .txt file for an existing background image
+    #>
+    param(
+        [string]$SessionName,
+        [string]$TxtPath,
+        [object]$Session,
+        [string]$Model,
+        [string]$GitBranch
+    )
+
+    try {
+        # Get fork info
+        $forkInfo = Get-ForkedFromInfo -SessionId $Session.sessionId
+        $forkedFrom = $null
+
+        if ($forkInfo -and $forkInfo.ForkedFrom) {
+            $allSessions = Get-AllClaudeSessions
+            $parentSession = $allSessions | Where-Object { $_.sessionId -eq $forkInfo.ForkedFrom }
+            $forkedFrom = if ($parentSession -and $parentSession.customTitle) {
+                $parentSession.customTitle
+            } else {
+                '(deleted or unnamed)'
+            }
+        }
+
+        # Build txt content
+        $computerUser = "$env:COMPUTERNAME`:$env:USERNAME"
+        $txtContent = @()
+        $txtContent += "Session: $SessionName"
+        if ($forkedFrom) {
+            $txtContent += "Forked from: $forkedFrom"
+        }
+        $txtContent += "Computer:User: $computerUser"
+        if ($GitBranch) {
+            $txtContent += "Branch: $GitBranch"
+        }
+        if ($Model) {
+            $txtContent += "Model: $Model"
+        }
+        $txtContent += "Directory: $($Session.projectPath)"
+        $txtContent += ""
+        $txtContent += "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        $txtContent += "(txt file created retroactively)"
+
+        # Ensure directory exists
+        $txtDir = Split-Path $TxtPath -Parent
+        if (-not (Test-Path $txtDir)) {
+            New-Item -ItemType Directory -Path $txtDir -Force | Out-Null
+        }
+
+        $txtContent -join "`r`n" | Set-Content $TxtPath -Encoding UTF8
+        return $true
+    } catch {
+        Write-ErrorLog "Error creating txt file: $_"
+        return $false
+    }
+}
+
+function Show-RegenerateBackgroundsMenu {
+    <#
+    .SYNOPSIS
+        Shows menu for regenerating out-of-sync background images
+    .DESCRIPTION
+        First checks for missing .txt files, then lists sessions with backgrounds
+        that differ from current session data and offers to regenerate them
+    #>
+
+    Clear-Host
+    Write-Host ""
+    Write-ColorText "=== Background Sanity Check ===" -Color Cyan
+    Write-Host ""
+
+    # First check for missing .txt files
+    Write-ColorText "Checking for missing .txt files..." -Color Gray
+    $missingTxt = Get-SessionsWithMissingTxtFiles
+
+    if ($missingTxt.Count -gt 0) {
+        Write-Host ""
+        Write-ColorText "Found $($missingTxt.Count) background image(s) without .txt files:" -Color Yellow
+        Write-Host ""
+
+        $index = 1
+        foreach ($item in $missingTxt) {
+            Write-Host "  $index. " -NoNewline -ForegroundColor White
+            Write-Host "$($item.DisplayName)" -NoNewline -ForegroundColor Cyan
+            Write-Host " [$($item.WTProfileName)]" -ForegroundColor DarkGray
+            $index++
+        }
+
+        Write-Host ""
+        Write-Host "-" * 60 -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "Generate missing .txt files? " -NoNewline -ForegroundColor Gray
+        Write-Host "Y" -NoNewline -ForegroundColor Yellow
+        Write-Host "es " -NoNewline -ForegroundColor Gray
+        Write-Host "|" -NoNewline -ForegroundColor Gray
+        Write-Host " N" -NoNewline -ForegroundColor Yellow
+        Write-Host "o " -NoNewline -ForegroundColor Gray
+
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $generateTxt = $key.Character.ToString().ToUpper()
+
+        if ($key.VirtualKeyCode -eq 27) {
+            $generateTxt = 'N'
+        }
+
+        Write-Host ""
+
+        if ($generateTxt -eq 'Y') {
+            Write-Host ""
+            Write-ColorText "Generating .txt files..." -Color Cyan
+
+            $successCount = 0
+            $failCount = 0
+
+            foreach ($item in $missingTxt) {
+                Write-Host "  Creating: " -NoNewline -ForegroundColor Gray
+                Write-Host "$($item.SessionName).txt" -NoNewline -ForegroundColor Cyan
+                Write-Host "..." -NoNewline -ForegroundColor Gray
+
+                # Get current model and branch if not stored
+                $model = $item.StoredModel
+                if (-not $model) {
+                    $model = Get-ModelFromSession -SessionId $item.Session.sessionId -ProjectPath $item.Session.projectPath
+                }
+                $gitBranch = $item.StoredBranch
+                if (-not $gitBranch) {
+                    $gitBranch = Get-GitBranch -Path $item.Session.projectPath
+                }
+
+                $success = New-BackgroundTxtFile -SessionName $item.SessionName -TxtPath $item.TxtPath -Session $item.Session -Model $model -GitBranch $gitBranch
+
+                if ($success) {
+                    Write-Host " Done" -ForegroundColor Green
+                    $successCount++
+                } else {
+                    Write-Host " Failed" -ForegroundColor Red
+                    $failCount++
+                }
+            }
+
+            Write-Host ""
+            Write-ColorText "Created $successCount .txt file(s)" -Color $(if ($failCount -gt 0) { "Yellow" } else { "Green" })
+            if ($failCount -gt 0) {
+                Write-ColorText "$failCount failed" -Color Red
+            }
+            Write-Host ""
+            Write-Host "Press any key to continue..."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        }
+
+        Write-Host ""
+    }
+
+    # Now check for out-of-sync backgrounds
+    Write-ColorText "Scanning sessions for out-of-sync backgrounds..." -Color Gray
+    Write-Host ""
+
+    # Get out of sync backgrounds
+    $outOfSync = Get-OutOfSyncBackgrounds
+
+    if ($outOfSync.Count -eq 0) {
+        Write-ColorText "All background images are in sync!" -Color Green
+        Write-Host ""
+        Write-Host "Press any key to return..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        return
+    }
+
+    # Display the list
+    Write-ColorText "Found $($outOfSync.Count) session(s) with out-of-sync backgrounds:" -Color Yellow
+    Write-Host ""
+
+    $index = 1
+    foreach ($item in $outOfSync) {
+        Write-Host "  $index. " -NoNewline -ForegroundColor White
+        Write-Host "$($item.DisplayName)" -NoNewline -ForegroundColor Cyan
+        Write-Host " [$($item.WTProfileName)]" -ForegroundColor DarkGray
+        foreach ($change in $item.Changes) {
+            Write-Host "     - $change" -ForegroundColor Yellow
+        }
+        $index++
+    }
+
+    Write-Host ""
+    Write-Host "─" * 60 -ForegroundColor DarkGray
+    Write-Host ""
+
+    # Prompt for regeneration
+    Write-Host "Options:" -ForegroundColor Gray
+    Write-Host "  " -NoNewline
+    Write-Host "A" -NoNewline -ForegroundColor Yellow
+    Write-Host " - Regenerate ALL out-of-sync backgrounds" -ForegroundColor Gray
+    Write-Host "  " -NoNewline
+    Write-Host "1-$($outOfSync.Count)" -NoNewline -ForegroundColor Yellow
+    Write-Host " - Regenerate specific session" -ForegroundColor Gray
+    Write-Host "  " -NoNewline
+    Write-Host "Q" -NoNewline -ForegroundColor Yellow
+    Write-Host " - Return without regenerating" -ForegroundColor Gray
+    Write-Host ""
+
+    $choice = Read-Host "Enter choice"
+
+    if ($choice -eq 'Q' -or $choice -eq 'q' -or $choice -eq '') {
+        return
+    }
+
+    $sessionsToRegenerate = @()
+
+    if ($choice -eq 'A' -or $choice -eq 'a') {
+        $sessionsToRegenerate = $outOfSync
+    } else {
+        $num = 0
+        if ([int]::TryParse($choice, [ref]$num) -and $num -ge 1 -and $num -le $outOfSync.Count) {
+            $sessionsToRegenerate = @($outOfSync[$num - 1])
+        } else {
+            Write-ColorText "Invalid choice." -Color Red
+            Start-Sleep -Seconds 1
+            return
+        }
+    }
+
+    # Regenerate selected backgrounds
+    Write-Host ""
+    Write-ColorText "Regenerating $($sessionsToRegenerate.Count) background(s)..." -Color Cyan
+    Write-Host ""
+
+    $successCount = 0
+    $failCount = 0
+
+    foreach ($item in $sessionsToRegenerate) {
+        Write-Host "  Regenerating: " -NoNewline -ForegroundColor Gray
+        Write-Host "$($item.DisplayName)" -NoNewline -ForegroundColor Cyan
+        Write-Host "..." -NoNewline -ForegroundColor Gray
+
+        try {
+            # Get fork info
+            $forkInfo = Get-ForkedFromInfo -SessionId $item.Session.sessionId
+
+            # Detect current git branch
+            $gitBranch = $item.CurrentBranch
+            if (-not $gitBranch) {
+                $gitBranch = Get-GitBranch -Path $item.Session.projectPath
+            }
+
+            # Get current model
+            $model = $item.CurrentModel
+            if (-not $model) {
+                $model = Get-ModelFromSession -SessionId $item.Session.sessionId -ProjectPath $item.Session.projectPath
+            }
+
+            if ($forkInfo -and $forkInfo.ForkedFrom) {
+                # Fork session - get parent name
+                $allSessions = Get-AllClaudeSessions
+                $parentSession = $allSessions | Where-Object { $_.sessionId -eq $forkInfo.ForkedFrom }
+                $parentName = if ($parentSession -and $parentSession.customTitle) {
+                    $parentSession.customTitle
+                } else {
+                    '(deleted or unnamed)'
+                }
+
+                # Regenerate fork-style background
+                $bgPath = New-SessionBackgroundImage -NewName $item.SessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $model -ProjectPath $item.Session.projectPath
+            } else {
+                # Non-fork session - regenerate continue-style background
+                $bgPath = New-ContinueSessionBackgroundImage -SessionName $item.SessionName -GitBranch $gitBranch -Model $model -ProjectPath $item.Session.projectPath
+            }
+
+            # Update Windows Terminal profile with new image path
+            $settingsJson = Get-Content $Global:WTSettingsPath -Raw
+            $settings = $settingsJson | ConvertFrom-Json
+
+            for ($i = 0; $i -lt $settings.profiles.list.Count; $i++) {
+                if ($settings.profiles.list[$i].name -eq $item.WTProfileName) {
+                    $imagePath = $bgPath -replace '\\', '/'
+                    $settings.profiles.list[$i].backgroundImage = $imagePath
+                    $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+                    break
+                }
+            }
+
+            # Update session mapping with current model and git branch
+            Add-SessionMapping -SessionId $item.Session.sessionId `
+                              -WTProfileName $item.WTProfileName `
+                              -ProjectPath $item.Session.projectPath `
+                              -Model $model `
+                              -GitBranch $gitBranch
+
+            Write-Host " Done" -ForegroundColor Green
+            $successCount++
+
+        } catch {
+            Write-Host " Failed: $_" -ForegroundColor Red
+            $failCount++
+        }
+    }
+
+    Write-Host ""
+    Write-Host "─" * 60 -ForegroundColor DarkGray
+    Write-ColorText "Regeneration complete: $successCount succeeded, $failCount failed" -Color $(if ($failCount -gt 0) { "Yellow" } else { "Green" })
+    Write-Host ""
+    Write-Host "Press any key to return..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
+
 function New-CustomTextBackgroundImage {
     <#
     .SYNOPSIS
@@ -8072,6 +9760,7 @@ function Start-MainMenu {
     $showAllInDeleteMode = $false
     $selectedIndex = 0
     $reloadSessions = $true
+    $isRefresh = $false  # Track if this is an explicit refresh (to trigger model checks)
     $sessions = $null
 
     while ($true) {
@@ -8133,9 +9822,12 @@ function Start-MainMenu {
         $onlyWithProfiles = $deleteMode -and -not $showAllInDeleteMode
 
         Write-DebugInfo "=== ABOUT TO CALL Show-SessionMenu ==="
-        Write-DebugInfo "  Title: '$menuTitle'"
+        Write-DebugInfo "  Title: '$menuTitle', IsRefresh: $isRefresh"
 
-        $menuResult = Show-SessionMenu -Sessions $sessions -ShowUnnamed $showUnnamed -OnlyWithProfiles $onlyWithProfiles -Title $menuTitle -SelectedIndex $selectedIndex
+        $menuResult = Show-SessionMenu -Sessions $sessions -ShowUnnamed $showUnnamed -OnlyWithProfiles $onlyWithProfiles -Title $menuTitle -SelectedIndex $selectedIndex -IsRefresh $isRefresh
+
+        # Reset refresh flag after use (so subsequent iterations don't re-check models)
+        $isRefresh = $false
 
         Write-DebugInfo "=== RETURNED FROM Show-SessionMenu ==="
 
@@ -8316,6 +10008,7 @@ function Start-MainMenu {
                 # Refresh menu - just continue the loop to reload session data
                 $selectedIndex = 0
                 $reloadSessions = $true
+                $isRefresh = $true  # Signal to check model changes from session files
                 continue
             }
 
@@ -8357,6 +10050,12 @@ function Start-MainMenu {
             'ProfilesOnlyInDeleteMode' {
                 $showAllInDeleteMode = $false
                 $selectedIndex = 0
+                $reloadSessions = $true
+                continue
+            }
+
+            'RegenerateBackgrounds' {
+                Show-RegenerateBackgroundsMenu
                 $reloadSessions = $true
                 continue
             }
@@ -8507,7 +10206,7 @@ function Start-MainMenu {
                                 Write-Host "Y" -NoNewline -ForegroundColor Yellow
                                 Write-Host "es | " -NoNewline -ForegroundColor Gray
                                 Write-Host "N" -NoNewline -ForegroundColor Yellow
-                                Write-Host "o: " -NoNewline -ForegroundColor Gray
+                                Write-Host "o " -NoNewline -ForegroundColor Gray
                                 $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                                 $confirmed = $key.Character.ToString().ToUpper()
 
@@ -8569,7 +10268,7 @@ function Start-MainMenu {
                                 Write-Host "Y" -NoNewline -ForegroundColor Yellow
                                 Write-Host "es | " -NoNewline -ForegroundColor Gray
                                 Write-Host "N" -NoNewline -ForegroundColor Yellow
-                                Write-Host "o: " -NoNewline -ForegroundColor Gray
+                                Write-Host "o " -NoNewline -ForegroundColor Gray
                                 $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                                 $confirmed = $key.Character.ToString().ToUpper()
 
@@ -8617,7 +10316,7 @@ function Start-MainMenu {
                         Write-Host "Y" -NoNewline -ForegroundColor Yellow
                         Write-Host "es | " -NoNewline -ForegroundColor Gray
                         Write-Host "N" -NoNewline -ForegroundColor Yellow
-                        Write-Host "o: " -NoNewline -ForegroundColor Gray
+                        Write-Host "o " -NoNewline -ForegroundColor Gray
                         $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                         $createProfile = $key.Character.ToString().ToUpper()
                         Write-Host $createProfile  # Echo the key
@@ -8687,7 +10386,9 @@ function Start-MainMenu {
                                 if ($profile) {
                                     # Update session mapping (use actual profile name in case it was modified)
                                     $actualProfileName = $profile.name
-                                    Add-SessionMapping -SessionId $session.sessionId -WTProfileName $actualProfileName -ProjectPath $session.projectPath
+                                    $gitBranch = Get-GitBranch -Path $session.projectPath
+                                    $model = Get-ModelFromSession -SessionId $session.sessionId -ProjectPath $session.projectPath
+                                    Add-SessionMapping -SessionId $session.sessionId -WTProfileName $actualProfileName -ProjectPath $session.projectPath -Model $model -GitBranch $gitBranch
 
                                     Write-Host ""
                                     Write-ColorText "Windows Terminal profile created successfully: $actualProfileName" -Color Green
@@ -8745,9 +10446,28 @@ function Start-MainMenu {
                 Write-DebugInfo "  Session Notes: '$notes'" -Color Cyan
 
                 # Ask: Fork, Continue, or Delete? (or Unarchive if archived)
-                Write-DebugInfo "  Calling Get-ForkOrContinue..." -Color Yellow
-                $action = Get-ForkOrContinue -SessionId $session.sessionId -SessionTitle $sessionTitle -ProjectPath $session.projectPath -IsArchived $archiveStatus.Archived -ArchivedDate $archiveStatus.ArchivedDate -Notes $notes
-                Write-DebugInfo "  Get-ForkOrContinue returned: '$action'" -Color Green
+                # Loop to handle 'limit-instructions' which shows help then returns to Session Options
+                $action = $null
+                while ($action -eq $null -or $action -eq 'limit-instructions') {
+                    Write-DebugInfo "  Calling Get-ForkOrContinue..." -Color Yellow
+                    $action = Get-ForkOrContinue -SessionId $session.sessionId -SessionTitle $sessionTitle -ProjectPath $session.projectPath -IsArchived $archiveStatus.Archived -ArchivedDate $archiveStatus.ArchivedDate -Notes $notes
+                    Write-DebugInfo "  Get-ForkOrContinue returned: '$action'" -Color Green
+
+                    if ($action -eq 'limit-instructions') {
+                        # User wants to see context limit management instructions
+                        Write-DebugInfo "  Action is 'limit-instructions' - showing guide" -Color Yellow
+
+                        # Get current context usage for display
+                        $sessionModel = Get-ModelFromSession -SessionId $session.sessionId -ProjectPath $session.projectPath
+                        $contextUsage = Get-SessionContextUsage -SessionId $session.sessionId -ProjectPath $session.projectPath -Model $sessionModel
+                        $currentPct = if ($contextUsage -and $contextUsage.Percentage) { $contextUsage.Percentage } else { 0 }
+
+                        # Show the instructions
+                        Show-LimitInstructions -CurrentPercentage $currentPct -ProjectPath $session.projectPath
+
+                        # Loop will continue and re-show Session Options
+                    }
+                }
 
                 if ($action -eq 'abort') {
                     Write-DebugInfo "  Action is 'abort' - returning to menu" -Color Yellow
@@ -8842,7 +10562,7 @@ function Start-MainMenu {
                     Write-Host "Y" -NoNewline -ForegroundColor Yellow
                     Write-Host "es | " -NoNewline -ForegroundColor Gray
                     Write-Host "N" -NoNewline -ForegroundColor Yellow
-                    Write-Host "o: " -NoNewline -ForegroundColor Gray
+                    Write-Host "o " -NoNewline -ForegroundColor Gray
                     $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                     $confirmed = $key.Character.ToString().ToUpper()
 

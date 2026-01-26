@@ -1,31 +1,53 @@
 # Version Information
 
-## Current Version: 1.10.3 (2026-01-24)
+## Current Version: 1.10.5 (2026-01-25)
 
 ### Release Notes
 
-This release fixes a critical PowerShell syntax bug that caused mysterious file creation on every script execution.
+This release adds comprehensive context limit management features to help users understand and manage their session context usage before auto-compaction occurs.
 
-#### Critical Bug Fix
+#### Major Features
 
-**PowerShell Comparison Operator Bug**
-- Fixed critical syntax error in `PlaceHeaderRightHandBorder` function (line 2522)
-- Root Cause: Used `>` (file redirect operator) instead of `-gt` (PowerShell comparison operator)
-- Symptom: Created mysterious file named "170" in working directory on every script execution
-- Impact: File contained "1 7 0" (spaced characters) due to PowerShell's file redirect behavior
-- Resolution: Changed `if ($currentX > $targetX)` to `if ($currentX -gt $targetX)`
-- Verification: Comprehensive code audit confirms no other instances of this error pattern
+**Context Limit Management System (LimitFeature)**
+- Context usage percentage displayed in Session Options screen with color-coded severity
+- New Limit column in main menu (configurable, hidden by default due to performance)
+- Color coding: Green (<50%), Cyan (50-74%), Yellow (75-89%), Red (90%+ CRITICAL)
+- Actionable guidance at 75% and 90% thresholds
+- Fixed token calculation to include all cached tokens (was showing 0% before)
 
-**Why This Happened:**
-- In PowerShell, `>` is the file redirect operator, NOT a comparison operator
-- PowerShell requires `-gt`, `-lt`, `-eq`, `-ge`, `-le`, `-ne` for comparisons
-- When `$currentX=0` and `$targetX=170`, the expression was interpreted as "redirect value 0 to file named 170"
-- Script ran without errors because PowerShell silently created the file
+**Limit Instructions Guide (L Key)**
+- Press 'L' in Session Options to view comprehensive context management guide
+- Covers 4 strategies: Fork, /memory, CLAUDE.md, /compact
+- Explains where /memory saves data, how many times you can use it
+- Shows recommended workflow for long-running sessions
+- Quick reference for all commands
 
-**Prevention:**
-- Performed full codebase audit using regex patterns
-- Confirmed 355+ proper PowerShell comparison operators used throughout rest of script
-- This was an isolated syntax error, not a systemic issue
+**Background Parameter Refresh System**
+- Refresh now checks ALL background parameters (model, branch, computer:user, directory, forked-from)
+- Auto-regenerates background if ANY parameter changed
+- Model caching for performance optimization
+- Expensive operations only run on explicit Refresh
+
+#### Bug Fixes
+
+- Fixed Limit column not appearing during up/down arrow navigation
+- Fixed context calculation showing 0% (now correctly sums all token types)
+- Added Test 55 to prevent future column consistency issues
+
+---
+
+## Previous Version: 1.10.4 (2026-01-25)
+
+### Release Notes
+
+This release added background image sanity checking and automatic model change detection.
+
+#### Features
+
+- Background Image Sanity Check menu option
+- Automatic model change detection with background regeneration
+- Git branch tracking in session mappings
+- Background image .txt companion files
 
 ---
 

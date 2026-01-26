@@ -2,6 +2,80 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.10.5] - 2026-01-25
+
+### New Features
+
+#### Context Limit Management System (LimitFeature)
+- **Context Usage Display** - Shows context window usage percentage in Session Options screen
+- **Color-Coded Severity** - Green (<50%), Cyan (50-74%), Yellow (75-89%), Red (90%+)
+- **Actionable Guidance** - Displays warnings and recommendations at high context usage
+- **Limit Column** - New configurable column showing context % in main menu (hidden by default)
+- **Token Calculation Fix** - Now correctly calculates total context including cached tokens
+
+#### Limit Instructions Guide (L Key)
+- **Comprehensive Guide** - Press 'L' in Session Options for detailed context management help
+- **Strategy 1: Fork** - When and how to fork sessions to preserve context
+- **Strategy 2: /memory** - Full explanation of /memory command, where it saves, usage limits
+- **Strategy 3: CLAUDE.md** - How to maintain persistent project knowledge
+- **Strategy 4: /compact** - When to use manual compaction
+- **Recommended Workflow** - Step-by-step guide for long-running sessions
+- **Quick Reference** - Commands at a glance
+
+#### Background Parameter Refresh System
+- **Comprehensive Checks** - Refresh now checks ALL background parameters (model, branch, computer:user, directory, forked-from)
+- **Auto-Regeneration** - Background images regenerate if ANY parameter changed
+- **Performance Optimization** - Model reads only run on explicit Refresh, not on startup/return
+- **Model Caching** - Added ModelCache for faster repeated lookups
+
+### Bug Fixes
+
+#### Limit Column Navigation Fix
+- **Fixed Draw-SessionRow** - Limit column was missing from up/down arrow navigation redraw
+- **Added Consistency Test** - New Test 55 validates all format sections have consistent column order
+
+#### Context Calculation Fix
+- **Fixed Token Sum** - Now correctly sums input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+- **Was Showing 0%** - Previously only read input_tokens (8) instead of total context (52K+)
+
+### Improvements
+
+- Session Options now shows Context usage with detailed breakdown (e.g., "26% (52K / 200K tokens)")
+- Added Test 55: Column Consistency Check to prevent future column sync issues
+- Optimized expensive operations to only run on explicit Refresh
+
+---
+
+## [1.10.4] - 2026-01-25
+
+### New Features
+
+#### Background Image Sanity Check
+- **Sanity Check Menu** - New option in Windows Terminal Config mode (press 'S')
+- Scans all sessions with WT profiles and compares stored data with current session data
+- Detects out-of-sync backgrounds (model changes, git branch changes, missing images)
+- Allows regenerating individual sessions or all out-of-sync sessions at once
+- Updates session-mapping.json with current model and git branch after regeneration
+
+#### Automatic Model Change Detection
+- Background images now automatically regenerate when model changes are detected
+- Compares stored model in session-mapping.json with current model from session file
+- Triggers during session list refresh/load
+
+#### Git Branch Tracking
+- Session mappings now track git branch information
+- Enables detection of branch changes for background regeneration
+
+#### Background Image Text Files
+- Every background image now has a corresponding .txt file
+- Contains the same information rendered in the image (session name, model, branch, etc.)
+- Makes it easy to inspect background content without viewing the PNG
+
+### Improvements
+
+- Removed colons from all "Yes | No" prompts for cleaner UI
+- Fixed PowerShell string interpretation issue with "(deleted or unnamed)" text
+
 ## [1.10.3] - 2026-01-24
 
 ### Critical Bug Fix

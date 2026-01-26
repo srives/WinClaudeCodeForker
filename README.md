@@ -1,4 +1,4 @@
-# Windows Claude Code Forker v1.10.3
+# Windows Claude Code Forker v1.10.5
 
 > **Visual session management for Claude Code CLI**
 > Never lose track of your conversations. See all your sessions, fork with confidence, track your costs.
@@ -86,7 +86,7 @@ $Shortcut.Save()
 - **Dynamic Columns** - Customize which columns appear (11 configurable columns)
 - **Pagination** - Handle hundreds of sessions with screen-aware pagination
 - **Universal Defaults** - Press Enter for default action in any menu
-- **Silent Validation** - 40 automated tests protect against bugs
+- **Silent Validation** - 55 automated tests protect against bugs
 
 ---
 
