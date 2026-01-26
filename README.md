@@ -239,8 +239,8 @@ Issues, suggestions, and contributions welcome!
 ### Cost to Buid (AI Cost vs. Hand Built Cost)
 
 This software was built by a software engineer with decades of development experience using Claude Code AI.
-I built this in early 2026 on a whim for a side project at home. However, with each AI project I work on,
-(at work or at home) I always ask AI to estimate cost and value, and then measure cost if I had built this 
+I built this in early 2026 on a whim for a side project at home. And, with most AI projects I work on
+(at work or at home) I like to ask AI to estimate cost and value, and then measure cost if I had built this 
 without AI. I imagine we won't be asking this question in 2027 and beyond, as we are now in the transition 
 to AI. So the question is interesting as we see the value of AI vs. traditional coding costs.
 
