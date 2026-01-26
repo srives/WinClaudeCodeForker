@@ -1,10 +1,28 @@
 # Changelog
 
-All notable changes to Windows Claude Code Forker will be documented in this file.
+All notable changes to Claude Code Session Manager will be documented in this file.
 
 ## [2.0.0] - 2026-01-26
 
-### Validation Tests
+### Linux Port (In Progress)
+
+A full Linux port is under development in the `linux/` directory:
+
+- **Python Core:** ~2500 lines of Python replacing PowerShell
+- **Terminal Support:** Kitty, Konsole, Direct (WSL/headless)
+- **Shell Wrappers:** Bash and Fish wrappers call Python core
+- **Features:**
+  - Curses-based interactive menu with arrow-key navigation
+  - Session discovery scanning `~/.claude/projects/`
+  - Background image generation via ImageMagick or Pillow
+  - Fork/Continue workflows with terminal profile management
+  - Debug logging system with file output
+  - WSL detection with automatic "direct mode" fallback
+  - Auto-detection of Claude data in Windows home (`/mnt/c/Users/...`) for WSL
+- **Installation:** `cd linux/ && bash install.sh`
+- **Documentation:** See `linux/LINUX.md`
+
+### Validation Tests (Windows)
 
 #### 15 New Machine-Independent Tests (Tests 66-80)
 

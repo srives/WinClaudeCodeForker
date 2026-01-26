@@ -1,0 +1,18 @@
+# Claude Code Session Manager - Default Configuration
+#
+# This file shows the default configuration values.
+# Your actual config is stored in ~/.config/claude-menu/config.json
+#
+
+# Terminal emulator to use: 'kitty' or 'konsole'
+terminal: kitty
+
+# Your preferred shell
+shell: /bin/bash
+
+# Enable debug logging
+debug: false
+
+# Sort settings
+sort_column: 0
+sort_descending: true

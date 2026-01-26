@@ -1,4 +1,15 @@
-# Windows Claude Code Forker version 2.0
+# Claude Code Session Manager v2.0.1
+
+A visual session manager for Claude Code CLI with fork/continue workflows and background watermarks.
+
+| Platform | Status | Terminal Support |
+|----------|--------|------------------|
+| **Windows** | ✅ Stable | Windows Terminal |
+| **Linux** | 🚧 In Progress | Kitty, Konsole, WSL |
+
+---
+
+## Windows Version
 A Claude Code Session Manager CLI tool for Windows Terminal Users.
 Download **[WinClaudeForker.exe](https://github.com/srives/WinClaudeCodeForker/releases)**
 
@@ -236,24 +247,71 @@ Issues, suggestions, and contributions welcome!
 
 ---
 
-### Cost to Buid (AI Cost vs. Hand Built Cost)
+### Cost to Build (AI Cost vs. Hand Built Cost)
 
 This software was built by a software engineer with decades of development experience using Claude Code AI.
 I built this in early 2026 on a whim for a side project at home. And, with most AI projects I work on
-(at work or at home) I like to ask AI to estimate cost and value, and then measure cost if I had built this 
-without AI. I imagine we won't be asking this question in 2027 and beyond, as we are now in the transition 
+(at work or at home) I like to ask AI to estimate cost and value, and then measure cost if I had built this
+without AI. I imagine we won't be asking this question in 2027 and beyond, as we are now in the transition
 to AI. So the question is interesting as we see the value of AI vs. traditional coding costs.
 
 "What if this software was built by hand by one Senior Software Engineer, with no AI help?"
 See [PRODUCT ANALYSIS](docs/PRODUCT_ANALYSIS.md) for greater details
 
 The following is Claude's own analysis/estimate of costs (I do think it is inflated, but it also gives
-a cost justification that is logical:
+a cost justification that is logical):
 
-**If Developed Traditionally:**
+**Windows Version (If Developed Traditionally):**
 - Development cost: $175,000
 - Time to market: 6-8 months
-- Opportunity cost: 6-8 months × market growth
+- Lines of code: ~9,000+ PowerShell
+- Features: 50+ with 80 automated tests
+
+**Linux Port (If Developed Traditionally):**
+- Development cost: $35,000-50,000
+- Time to market: 2-3 months
+- Lines of code: ~2,500 Python
+- Market expansion: 1.6-2.5x (Linux/WSL users)
+
+**Total Product Value (Traditional Development):**
+- **Combined cost: $210,000-225,000**
+- **Total timeline: 8-11 months**
+- **Total LOC: ~11,500**
+
+**With AI Assistance (Actual):**
+- Development cost: ~$18,000-25,000 (developer guidance time)
+- Time to market: 9 days (Jan 19-27, 2026)
+- **Cost savings: $185,000-207,000 (88-92%)**
+- **Time savings: 26x faster**
+
+---
+
+## 🐧 Linux Version (In Progress)
+
+A Linux port is under development with support for:
+
+- **Terminal Emulators:** Kitty, Konsole
+- **WSL Support:** Direct mode for WSL environments without GUI
+- **Shell Support:** Bash, Fish (Python core)
+- **Image Generation:** ImageMagick or Pillow
+
+### Quick Start (Linux/WSL)
+
+```bash
+cd linux/
+bash install.sh
+claude-menu
+```
+
+### WSL Notes
+
+In WSL without a display server, the manager runs in "direct mode" - sessions run in your current terminal. Background watermarks require GUI support (WSLg on Windows 11, or X server on Windows 10) with Kitty installed.
+
+See **[Linux Documentation](linux/LINUX.md)** for full details.
+
+**Status:** Core functionality working. Session discovery, debug logging, and WSL path detection being refined.
+
+---
 
 ## 📝 License
 

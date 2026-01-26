@@ -1,0 +1,15 @@
+# Force Unix line endings for all Linux files
+* text=auto eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+*.fish text eol=lf
+
+# Python
+*.py text eol=lf
+
+# Config files
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.conf text eol=lf

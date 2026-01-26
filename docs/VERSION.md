@@ -1,10 +1,29 @@
 # Version Information
 
-## Current Version: 2.0.0 (2026-01-26)
+## Current Version: 2.0.1 (2026-01-26)
 
 ### Release Notes
 
 This release expands the validation test suite from 65 to 80 tests, adding machine-independent tests that detect regressions in key areas.
+
+### Linux Port (In Progress)
+
+A Linux port is under active development in the `linux/` directory:
+
+- **Status:** Core functionality implemented, testing in progress
+- **Terminal Support:** Kitty, Konsole, Direct (WSL/headless)
+- **Features Working:**
+  - Session discovery with auto-path detection
+  - Curses-based interactive menu
+  - Fork/Continue workflows
+  - Background image generation (ImageMagick/Pillow)
+  - Debug logging system
+  - WSL environment detection
+- **Known Issues:**
+  - Session path detection in WSL (checking Windows home via `/mnt/c/`)
+  - Background watermarks require GUI terminal (not available in direct mode)
+
+See `linux/LINUX.md` for Linux-specific documentation.
 
 #### New Validation Tests (Tests 66-80)
 
