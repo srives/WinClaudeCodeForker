@@ -103,13 +103,22 @@ def _load_sessions_from_index(project_dir: Path, index_file: Path) -> List[Sessi
         with open(index_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
-        entries = data.get('entries', [])
-        for entry in entries:
+        log_debug(f"Index file keys: {list(data.keys())}")
+
+        # Try 'entries' first (Claude's format), then 'sessions' as fallback
+        entries = data.get('entries', data.get('sessions', []))
+        log_debug(f"Found {len(entries)} entries in index")
+
+        for i, entry in enumerate(entries):
+            log_debug(f"Entry {i}: keys={list(entry.keys()) if isinstance(entry, dict) else type(entry)}")
             session = _parse_session_entry(entry, project_dir)
             if session:
                 sessions.append(session)
+            else:
+                log_debug(f"Entry {i} rejected (no valid session)")
 
     except (json.JSONDecodeError, IOError) as e:
+        log_error(f"Could not read {index_file}: {e}")
         print(f"Warning: Could not read {index_file}: {e}")
 
     return sessions
@@ -118,16 +127,23 @@ def _load_sessions_from_index(project_dir: Path, index_file: Path) -> List[Sessi
 def _parse_session_entry(entry: Dict[str, Any], project_dir: Path) -> Optional[Session]:
     """Parse a session entry from sessions-index.json."""
     try:
-        session_id = entry.get('sessionId', '')
+        # Try multiple possible key names for session ID
+        session_id = entry.get('sessionId') or entry.get('session_id') or entry.get('id', '')
         if not session_id:
+            log_debug(f"No sessionId found in entry with keys: {list(entry.keys())}")
             return None
 
-        # Parse timestamps
-        created = _parse_datetime(entry.get('created', ''))
-        modified = _parse_datetime(entry.get('modified', ''))
+        log_debug(f"Parsing session: {session_id[:8]}...")
+
+        # Parse timestamps - try multiple formats
+        created_str = entry.get('created') or entry.get('createdAt') or entry.get('timestamp', '')
+        modified_str = entry.get('modified') or entry.get('modifiedAt') or entry.get('lastModified', '')
+
+        created = _parse_datetime(created_str)
+        modified = _parse_datetime(modified_str) if modified_str else created
 
         # Get project path - decode from directory name if needed
-        project_path = entry.get('projectPath', '')
+        project_path = entry.get('projectPath') or entry.get('project_path') or entry.get('cwd', '')
         if not project_path:
             project_path = _decode_project_path(project_dir.name)
 
@@ -136,13 +152,14 @@ def _parse_session_entry(entry: Dict[str, Any], project_dir: Path) -> Optional[S
             project_path=project_path,
             created=created,
             modified=modified,
-            custom_title=entry.get('summary', '') or entry.get('customTitle', ''),
-            first_prompt=entry.get('firstPrompt', ''),
-            message_count=entry.get('messageCount', 0),
-            git_branch=entry.get('gitBranch', ''),
+            custom_title=entry.get('summary') or entry.get('customTitle') or entry.get('title', ''),
+            first_prompt=entry.get('firstPrompt') or entry.get('first_prompt', ''),
+            message_count=entry.get('messageCount') or entry.get('message_count', 0),
+            git_branch=entry.get('gitBranch') or entry.get('git_branch', ''),
         )
 
     except Exception as e:
+        log_error(f"Could not parse session entry: {e}")
         print(f"Warning: Could not parse session entry: {e}")
         return None
 
