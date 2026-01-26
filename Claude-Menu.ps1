@@ -3492,14 +3492,16 @@ function Show-SessionMenu {
         # Get model - on Refresh, read from session file to detect changes
         # Otherwise, use fast cached sources (background.txt or session-mapping.json)
         $model = ""
+        $modelFromSessionFile = ""  # Keep raw session file model for background comparison
 
         if ($IsRefresh) {
             # On refresh: read from session file to get current model
             # (user can change model mid-session, so we need fresh data)
-            $model = Get-ModelFromSession -SessionId $session.sessionId -ProjectPath $session.projectPath
+            $modelFromSessionFile = Get-ModelFromSession -SessionId $session.sessionId -ProjectPath $session.projectPath
+            $model = $modelFromSessionFile
         }
 
-        # If not refresh, or if session file didn't have model info, use cached sources
+        # If not refresh, or if session file didn't have model info, use cached sources for DISPLAY
         if (-not $model) {
             # First try background.txt (fast file read)
             if ($wtProfile) {
@@ -3551,8 +3553,9 @@ function Show-SessionMenu {
         $gitRepo = Get-GitRepoName -Path $session.projectPath
 
         # Check if any background parameters have changed and regenerate if needed (only on refresh)
+        # Pass the RAW model from session file (not fallback-cached value) for accurate comparison
         if ($IsRefresh -and $wtProfile) {
-            $wasUpdated = Update-BackgroundIfChanged -Session $session -WTProfileName $wtProfile -CurrentModel $model
+            $wasUpdated = Update-BackgroundIfChanged -Session $session -WTProfileName $wtProfile -CurrentModel $modelFromSessionFile
             if ($wasUpdated) {
                 $updatedBackgrounds += $title
             }
