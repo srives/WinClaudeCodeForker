@@ -2,6 +2,54 @@
 
 All notable changes to Windows Claude Code Forker will be documented in this file.
 
+## [1.10.6] - 2026-01-25
+
+### New Features
+
+#### Background Image Diagnostics System
+- **dIagnose Option** - New 'I' key in Windows Terminal Profile Management menu
+- **5-Section Diagnostic Report** - Comprehensive analysis of background image configuration:
+  - Session Data (title, ID, path, model, branch, computer:user, forked-from)
+  - File Paths (background.png and background.txt existence with timestamps)
+  - Windows Terminal Profile (GUID, background path, path style validation)
+  - Background.txt Contents (all stored values displayed)
+  - Value Comparison (stored vs current with difference highlighting)
+- **Path Style Detection** - Identifies Linux-style (forward slash) vs Windows-style (backslash) paths
+- **Interactive Fix Option** - Press 'F' to immediately fix incorrect path styles
+
+#### Automatic Path Normalization
+- **Normalize-WTBackgroundPaths Function** - Scans all Claude-* profiles during refresh
+- **Auto-Fix Linux Paths** - Converts forward slashes to backslashes automatically
+- **Refresh Integration** - Path normalization runs on every Refresh (R key)
+- **Fixed Path Reports** - Shows which profiles had paths corrected
+
+### Bug Fixes
+
+#### Windows Terminal Path Style Fix
+- **Fixed 7 Locations** - All backgroundImage assignments now use Windows-style backslashes
+- **Root Cause** - Code was converting `\` to `/` for "JSON compatibility" (incorrect assumption)
+- **Impact** - Background images were not displaying because Windows Terminal requires backslash paths
+
+#### Computer:User Comparison Fix
+- **Fixed Inconsistency** - Background creation used colon (`:`) but comparison used backslash (`\`)
+- **Before** - Stored: `A6:steve`, Current: `A6\steve` (always showed as different)
+- **After** - Both now use colon: `A6:steve` (proper comparison)
+- **Impact** - Refresh no longer falsely reports all sessions as updated
+
+### Improvements
+
+#### Context-Aware Menu Messages
+- **Windows Terminal Config Menu** - Shows: "Windows Terminal will cache images." (red) + "Background image changes need a Windows Terminal restart." (gray)
+- **Main Menu** - Shows original: "A newly forked session shows in [brackets]..." message
+
+### Anti-Fragility Improvements
+- Edge case detection for path style mismatches
+- Self-healing path normalization on refresh
+- Consistent separator usage across codebase
+- Diagnostic tools for troubleshooting background image issues
+
+---
+
 ## [1.10.5] - 2026-01-25
 
 ### New Features

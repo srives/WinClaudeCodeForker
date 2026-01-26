@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "1.10.5"
+$Global:ScriptVersion = "1.10.6"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -1779,6 +1779,87 @@ function Test-SystemValidation {
         Write-TestResult "Column Consistency Check" "FAIL" $_.Exception.Message
     }
 
+    # Test 56: Silent Parameter on Background Functions
+    # Verifies that background image functions support -Silent parameter for suppressing output
+    try {
+        $functionsWithSilent = @(
+            "New-UniformBackgroundImage",
+            "New-SessionBackgroundImage",
+            "New-ContinueSessionBackgroundImage"
+        )
+
+        $missing = @()
+        foreach ($funcName in $functionsWithSilent) {
+            $func = Get-Command $funcName -ErrorAction SilentlyContinue
+            if ($func) {
+                $params = $func.Parameters
+                if (-not $params.ContainsKey('Silent')) {
+                    $missing += $funcName
+                }
+            } else {
+                $missing += "$funcName (function not found)"
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            Write-TestResult "Silent Parameter Support" "PASS" "All 3 background functions have -Silent parameter"
+        } else {
+            Write-TestResult "Silent Parameter Support" "FAIL" "Missing Silent parameter: $($missing -join ', ')"
+        }
+    } catch {
+        Write-TestResult "Silent Parameter Support" "FAIL" $_.Exception.Message
+    }
+
+    # Test 57: UpdatedBackgrounds Collection in Code
+    # Verifies the code structure includes UpdatedBackgrounds collection, return, and display below sub-menu
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $scriptContent = Get-Content $scriptPath -Raw
+
+            $checks = @()
+
+            # Check for updatedBackgrounds initialization
+            if ($scriptContent -match '\$updatedBackgrounds\s*=\s*@\(\)') {
+                $checks += "init"
+            }
+
+            # Check for updatedBackgrounds collection (adding to array)
+            if ($scriptContent -match '\$updatedBackgrounds\s*\+=') {
+                $checks += "collect"
+            }
+
+            # Check for UpdatedBackgrounds in return value
+            if ($scriptContent -match 'UpdatedBackgrounds\s*=\s*\$updatedBackgrounds') {
+                $checks += "return"
+            }
+
+            # Check for display of updated backgrounds (should be in Get-ArrowKeyNavigation)
+            if ($scriptContent -match 'Updated background images:') {
+                $checks += "display"
+            }
+
+            # Check for UpdatedBackgrounds parameter in Get-ArrowKeyNavigation
+            if ($scriptContent -match '\[array\]\$UpdatedBackgrounds\s*=\s*@\(\)') {
+                $checks += "param"
+            }
+
+            if ($checks.Count -eq 5) {
+                Write-TestResult "UpdatedBackgrounds Flow" "PASS" "All 5 components present (init, collect, return, param, display)"
+            } else {
+                $missing = @("init", "collect", "return", "param", "display") | Where-Object { $checks -notcontains $_ }
+                Write-TestResult "UpdatedBackgrounds Flow" "FAIL" "Missing: $($missing -join ', ')"
+            }
+        } else {
+            Write-TestResult "UpdatedBackgrounds Flow" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "UpdatedBackgrounds Flow" "FAIL" $_.Exception.Message
+    }
+
     # Summary
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
@@ -1845,11 +1926,10 @@ function Show-AboutScreen {
     Write-Host "---=====+#@%*=+*@@@@@@%%%@@@#+================" -ForegroundColor Cyan
     Write-Host "==========+#@@@%@@@@@@%%@@%*==================" -ForegroundColor Cyan
     Write-Host "---====++===++*#@@@@%%%@@@%*+++=============++" -ForegroundColor Cyan
-    Write-Host "*###%%%%%##%%%%%%%%%%##%@@@@@%%%%%%%%%%%%%%%@@" -ForegroundColor Cyan
+  # Write-Host "*###%%%%%##%%%%%%%%%%##%@@@@@%%%%%%%%%%%%%%%@@" -ForegroundColor Cyan
+    Write-Host " https://github.com/srives/WinClaudeCodeForker" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "By: S. Rives" -ForegroundColor Gray
-    Write-Host "GitHub: " -NoNewline -ForegroundColor Gray
-    Write-Host "https://github.com/srives/WinClaudeCodeForker" -ForegroundColor Cyan
     $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
 }
 
@@ -3305,7 +3385,12 @@ function Show-SessionMenu {
 
     Write-Host "Claude Code Session Manager with Win Terminal Forking, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
     Write-Host "Current directory: $PWD" -ForegroundColor DarkGray
-    Write-Host "* A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it." -ForegroundColor DarkGray
+    if ($Title -eq "WIN TERMINAL CONFIG") {
+        Write-Host "Windows Terminal will cache images." -NoNewline -ForegroundColor Red
+        Write-Host " Background image changes need a Windows Terminal restart." -ForegroundColor DarkGray
+    } else {
+        Write-Host "* A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it." -ForegroundColor DarkGray
+    }
 
     # Calculate status information
     $totalSessions = $Sessions.Count
@@ -3344,6 +3429,7 @@ function Show-SessionMenu {
     # Build display rows - always start numbering at 1
     $rows = @()
     $displayNum = 1
+    $updatedBackgrounds = @()  # Collect session names whose backgrounds were updated
 
     # LimitFeature: Load column config to check if Limit column is enabled
     $rowColumnConfig = Get-ColumnConfiguration
@@ -3466,7 +3552,10 @@ function Show-SessionMenu {
 
         # Check if any background parameters have changed and regenerate if needed (only on refresh)
         if ($IsRefresh -and $wtProfile) {
-            $null = Update-BackgroundIfChanged -Session $session -WTProfileName $wtProfile -CurrentModel $model
+            $wasUpdated = Update-BackgroundIfChanged -Session $session -WTProfileName $wtProfile -CurrentModel $model
+            if ($wasUpdated) {
+                $updatedBackgrounds += $title
+            }
         }
 
         $rows += [PSCustomObject]@{
@@ -3715,6 +3804,7 @@ function Show-SessionMenu {
         OnlyWithProfiles = $OnlyWithProfiles
         TotalPages = $totalPages
         CurrentPage = $Global:CurrentPage
+        UpdatedBackgrounds = $updatedBackgrounds
     }
 }
 
@@ -3859,7 +3949,8 @@ function Get-ArrowKeyNavigation {
         [int]$FirstRowY = 0,
         [int]$BoxWidth = 0,
         [bool]$OnlyWithProfiles = $false,
-        [int]$TotalPages = 1
+        [int]$TotalPages = 1,
+        [array]$UpdatedBackgrounds = @()
     )
 
     if ($null -eq $MenuRows) { $MenuRows = @() }
@@ -4033,6 +4124,12 @@ function Get-ArrowKeyNavigation {
     }
 
     Write-Host ""
+
+    # Display updated backgrounds notification below sub-menu (if any were updated during refresh)
+    if ($UpdatedBackgrounds -and $UpdatedBackgrounds.Count -gt 0) {
+        $sessionList = $UpdatedBackgrounds -join ", "
+        Write-Host "Updated background images: $sessionList" -ForegroundColor Cyan
+    }
 
     # Capture cursor position BEFORE displaying "Last command" (for sub-menu positioning)
     # This is where dialog output should start - right after the sub-menu
@@ -4940,8 +5037,8 @@ function Start-ContinueSession {
                 }
 
                 if ($profileIndex -ge 0) {
-                    $imagePath = $bgPath -replace '\\', '/'
-                    $settings.profiles.list[$profileIndex].backgroundImage = $imagePath
+                    # Use Windows-style backslash paths for Windows Terminal
+                    $settings.profiles.list[$profileIndex].backgroundImage = $bgPath
                     $jsonContent = $settings | ConvertTo-Json -Depth 10
                     Write-DebugFileOperation -FilePath $Global:WTSettingsPath -Content $jsonContent -Operation "UpdateWTProfile"  # FILE-DEBUG
                     $jsonContent | Set-Content $Global:WTSettingsPath -Encoding UTF8
@@ -5308,6 +5405,9 @@ function Get-SessionManagementChoice {
     Write-Host "elete - Delete Windows Terminal profile | " -NoNewline -ForegroundColor Gray
     Write-Host "B" -NoNewline -ForegroundColor Yellow
     Write-Host "ackground - Remove background image from profile | " -NoNewline -ForegroundColor Gray
+    Write-Host "d" -NoNewline -ForegroundColor Gray
+    Write-Host "I" -NoNewline -ForegroundColor Yellow
+    Write-Host "agnose | " -NoNewline -ForegroundColor Gray
     Write-Host "A" -NoNewline -ForegroundColor Yellow
     Write-Host "bort" -NoNewline -ForegroundColor Gray
 
@@ -5331,6 +5431,7 @@ function Get-SessionManagementChoice {
             'R' { Write-Host ""; return 'regenerate' }
             'D' { Write-Host ""; return 'delete' }
             'B' { Write-Host ""; return 'remove-background' }
+            'I' { Write-Host ""; return 'diagnose' }
             'A' { Write-Host ""; return 'abort' }
             default {
                 # Invalid choice - silently ignore
@@ -6662,6 +6763,68 @@ function Backup-WTSettings {
     return $backupPath
 }
 
+function Normalize-WTBackgroundPaths {
+    <#
+    .SYNOPSIS
+        Normalizes all Windows Terminal profile background image paths to use Windows-style backslashes
+    .DESCRIPTION
+        Scans all Claude-* profiles in Windows Terminal settings and converts any forward-slash
+        paths to backslash paths. Returns count of profiles that were fixed.
+    .RETURNS
+        Hashtable with Fixed (count) and ProfileNames (array of fixed profile names)
+    #>
+
+    $result = @{
+        Fixed = 0
+        ProfileNames = @()
+    }
+
+    try {
+        if (-not (Test-Path $Global:WTSettingsPath)) {
+            Write-DebugInfo "WT settings not found, skipping path normalization" -Color Yellow
+            return $result
+        }
+
+        $settingsJson = Get-Content $Global:WTSettingsPath -Raw
+        $settings = $settingsJson | ConvertFrom-Json
+
+        $modified = $false
+
+        for ($i = 0; $i -lt $settings.profiles.list.Count; $i++) {
+            $profile = $settings.profiles.list[$i]
+
+            # Only check Claude-* profiles
+            if ($profile.name -and $profile.name -like "Claude-*" -and $profile.backgroundImage) {
+                $bgPath = $profile.backgroundImage
+
+                # Check if path contains forward slashes
+                if ($bgPath -match '/') {
+                    # Convert to Windows-style backslashes
+                    $newPath = $bgPath -replace '/', '\'
+                    $settings.profiles.list[$i].backgroundImage = $newPath
+
+                    $result.Fixed++
+                    $result.ProfileNames += $profile.name
+
+                    Write-DebugInfo "  Fixed path for $($profile.name): $bgPath -> $newPath" -Color Green
+                    $modified = $true
+                }
+            }
+        }
+
+        if ($modified) {
+            # Save changes
+            $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+            Write-DebugInfo "Normalized $($result.Fixed) background image path(s) to Windows style" -Color Green
+        }
+
+    } catch {
+        Write-ErrorLog "Error normalizing WT background paths: $_"
+    }
+
+    return $result
+}
+
 function Test-JsonStructure {
     <#
     .SYNOPSIS
@@ -6761,16 +6924,14 @@ function Add-WTProfile {
 
         # Create new profile object with all properties
         if ($BackgroundImage) {
-            # Ensure path uses forward slashes for JSON compatibility
-            $imagePath = $BackgroundImage -replace '\\', '/'
-
+            # Use Windows-style backslash paths for Windows Terminal
             $newProfile = [PSCustomObject]@{
                 guid = $newGuid
                 name = $finalName
                 commandline = "%SystemRoot%\System32\cmd.exe"
                 startingDirectory = $normalizedStartDir
                 hidden = $false
-                backgroundImage = $imagePath
+                backgroundImage = $BackgroundImage
                 backgroundImageOpacity = 0.3
                 backgroundImageStretchMode = "uniformToFill"
                 useAcrylic = $false
@@ -7244,7 +7405,9 @@ function New-UniformBackgroundImage {
         [string]$DirectoryPath,
 
         [Parameter(Mandatory=$true)]
-        [string]$OutputPath
+        [string]$OutputPath,
+
+        [switch]$Silent
     )
 
     try {
@@ -7360,7 +7523,9 @@ function New-UniformBackgroundImage {
         $fontSmall.Dispose()
         $textBrush.Dispose()
 
-        Write-ColorText "Background image created: $OutputPath" -Color Green
+        if (-not $Silent) {
+            Write-ColorText "Background image created: $OutputPath" -Color Green
+        }
         return $OutputPath
 
     } catch {
@@ -7393,7 +7558,8 @@ function New-SessionBackgroundImage {
         [switch]$IsFork,
         [string]$GitBranch = $null,
         [string]$Model = $null,
-        [string]$ProjectPath = ""
+        [string]$ProjectPath = "",
+        [switch]$Silent
     )
 
     try {
@@ -7421,7 +7587,8 @@ function New-SessionBackgroundImage {
             -GitBranch $GitBranch `
             -Model $Model `
             -DirectoryPath $ProjectPath `
-            -OutputPath $outputPath
+            -OutputPath $outputPath `
+            -Silent:$Silent
 
         # Save tracking
         if ($IsFork) {
@@ -7455,7 +7622,8 @@ function New-ContinueSessionBackgroundImage {
         [string]$SessionName,
         [string]$GitBranch = $null,
         [string]$Model = $null,
-        [string]$ProjectPath = ""
+        [string]$ProjectPath = "",
+        [switch]$Silent
     )
 
     try {
@@ -7480,7 +7648,8 @@ function New-ContinueSessionBackgroundImage {
             -GitBranch $GitBranch `
             -Model $Model `
             -DirectoryPath $ProjectPath `
-            -OutputPath $outputPath
+            -OutputPath $outputPath `
+            -Silent:$Silent
 
         # Save tracking
         Save-BackgroundTracking -SessionName $SessionName -BackgroundPath $outputPath -TextContent $SessionName -ImageType "continue"
@@ -7526,9 +7695,8 @@ function Update-SessionBackgroundImage {
             # Detect git branch
             $gitBranch = Get-GitBranch -Path $Session.projectPath
 
-            # Get model from session mapping if available
-            $sessionEntry = Get-SessionMappingEntry -SessionId $Session.sessionId
-            $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
+            # Get model from actual session file (not mapping - mapping may be stale/empty)
+            $modelName = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
 
             $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
         } else {
@@ -7538,9 +7706,8 @@ function Update-SessionBackgroundImage {
             # Detect git branch
             $gitBranch = Get-GitBranch -Path $Session.projectPath
 
-            # Get model from session mapping if available
-            $sessionEntry = Get-SessionMappingEntry -SessionId $Session.sessionId
-            $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
+            # Get model from actual session file (not mapping - mapping may be stale/empty)
+            $modelName = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
 
             $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
         }
@@ -7559,8 +7726,8 @@ function Update-SessionBackgroundImage {
         }
 
         if ($profileIndex -ge 0) {
-            $imagePath = $bgPath -replace '\\', '/'
-            $settings.profiles.list[$profileIndex].backgroundImage = $imagePath
+            # Use Windows-style backslash paths for Windows Terminal
+            $settings.profiles.list[$profileIndex].backgroundImage = $bgPath
             $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
             Write-ColorText "Updated Windows Terminal profile with new background" -Color Green
             return $true
@@ -7731,6 +7898,273 @@ function Get-AllValuesFromBackgroundTxt {
     return $null
 }
 
+function Show-BackgroundDiagnostics {
+    <#
+    .SYNOPSIS
+        Shows detailed diagnostic information about a session's background image configuration
+    .DESCRIPTION
+        Displays session data, background image paths, text file contents, and validates
+        that all values match between WT profile, background files, and current session data.
+    .PARAMETER Session
+        The session object
+    .PARAMETER WTProfileName
+        The Windows Terminal profile name (e.g., "Claude-MySession")
+    #>
+    param(
+        [object]$Session,
+        [string]$WTProfileName
+    )
+
+    Clear-Host
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  BACKGROUND IMAGE DIAGNOSTICS" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+
+    # Extract session name from WT profile
+    $sessionName = $WTProfileName -replace '^Claude-', ''
+
+    # === SECTION 1: Session Data ===
+    Write-ColorText "--- SESSION DATA ---" -Color Yellow
+    Write-Host "Session Title:    " -NoNewline -ForegroundColor Gray
+    Write-Host "$($Session.customTitle)" -ForegroundColor White
+    Write-Host "Session ID:       " -NoNewline -ForegroundColor Gray
+    Write-Host "$($Session.sessionId)" -ForegroundColor White
+    Write-Host "Project Path:     " -NoNewline -ForegroundColor Gray
+    Write-Host "$($Session.projectPath)" -ForegroundColor White
+    Write-Host "WT Profile Name:  " -NoNewline -ForegroundColor Gray
+    Write-Host "$WTProfileName" -ForegroundColor White
+
+    # Get current values
+    $currentModel = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
+    $currentBranch = Get-GitBranch -Path $Session.projectPath
+    $currentComputerUser = "$env:COMPUTERNAME`:$env:USERNAME"
+
+    Write-Host "Current Model:    " -NoNewline -ForegroundColor Gray
+    Write-Host "$(if ($currentModel) { $currentModel } else { '(none)' })" -ForegroundColor White
+    Write-Host "Current Branch:   " -NoNewline -ForegroundColor Gray
+    Write-Host "$(if ($currentBranch) { $currentBranch } else { '(none)' })" -ForegroundColor White
+    Write-Host "Computer\User:    " -NoNewline -ForegroundColor Gray
+    Write-Host "$currentComputerUser" -ForegroundColor White
+
+    # Check if forked
+    $forkInfo = Get-ForkedFromInfo -SessionId $Session.sessionId
+    $currentForkedFrom = ""
+    if ($forkInfo -and $forkInfo.ForkedFrom) {
+        $allSessions = Get-AllClaudeSessions
+        $parentSession = $allSessions | Where-Object { $_.sessionId -eq $forkInfo.ForkedFrom }
+        $currentForkedFrom = if ($parentSession -and $parentSession.customTitle) {
+            $parentSession.customTitle
+        } else {
+            '(deleted or unnamed)'
+        }
+        Write-Host "Forked From:      " -NoNewline -ForegroundColor Gray
+        Write-Host "$currentForkedFrom" -ForegroundColor White
+    }
+    Write-Host ""
+
+    # === SECTION 2: File Paths ===
+    Write-ColorText "--- FILE PATHS ---" -Color Yellow
+    $bgImagePath = Join-Path $Global:MenuPath "$sessionName\background.png"
+    $bgTxtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
+
+    Write-Host "Background Image: " -NoNewline -ForegroundColor Gray
+    Write-Host "$bgImagePath" -ForegroundColor White
+    Write-Host "  Exists:         " -NoNewline -ForegroundColor Gray
+    if (Test-Path $bgImagePath) {
+        $fileInfo = Get-Item $bgImagePath
+        Write-Host "YES" -NoNewline -ForegroundColor Green
+        Write-Host " ($($fileInfo.Length) bytes, modified $($fileInfo.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')))" -ForegroundColor DarkGray
+    } else {
+        Write-Host "NO" -ForegroundColor Red
+    }
+
+    Write-Host "Background Text:  " -NoNewline -ForegroundColor Gray
+    Write-Host "$bgTxtPath" -ForegroundColor White
+    Write-Host "  Exists:         " -NoNewline -ForegroundColor Gray
+    if (Test-Path $bgTxtPath) {
+        $txtFileInfo = Get-Item $bgTxtPath
+        Write-Host "YES" -NoNewline -ForegroundColor Green
+        Write-Host " ($($txtFileInfo.Length) bytes, modified $($txtFileInfo.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')))" -ForegroundColor DarkGray
+    } else {
+        Write-Host "NO" -ForegroundColor Red
+    }
+    Write-Host ""
+
+    # === SECTION 3: Windows Terminal Profile ===
+    Write-ColorText "--- WINDOWS TERMINAL PROFILE ---" -Color Yellow
+    $wtBgPath = ""
+    try {
+        $settingsJson = Get-Content $Global:WTSettingsPath -Raw
+        $settings = $settingsJson | ConvertFrom-Json
+        $wtProfile = $settings.profiles.list | Where-Object { $_.name -eq $WTProfileName }
+
+        if ($wtProfile) {
+            Write-Host "Profile Found:    " -NoNewline -ForegroundColor Gray
+            Write-Host "YES" -ForegroundColor Green
+            Write-Host "Profile GUID:     " -NoNewline -ForegroundColor Gray
+            Write-Host "$($wtProfile.guid)" -ForegroundColor White
+
+            $wtBgPath = $wtProfile.backgroundImage
+            Write-Host "Background Path:  " -NoNewline -ForegroundColor Gray
+            if ($wtBgPath) {
+                Write-Host "$wtBgPath" -ForegroundColor White
+
+                # Check for Linux-style path (forward slashes)
+                $hasLinuxPath = $wtBgPath -match '/'
+                if ($hasLinuxPath) {
+                    Write-Host "  Path Style:     " -NoNewline -ForegroundColor Gray
+                    Write-Host "LINUX (forward slashes) - NEEDS FIX!" -ForegroundColor Red
+                } else {
+                    Write-Host "  Path Style:     " -NoNewline -ForegroundColor Gray
+                    Write-Host "Windows (backslashes) - OK" -ForegroundColor Green
+                }
+
+                # Convert forward slashes to backslashes for comparison
+                $wtBgPathNormalized = $wtBgPath -replace '/', '\'
+
+                # Check if it matches the expected path
+                Write-Host "  Path Match:     " -NoNewline -ForegroundColor Gray
+                if ($wtBgPathNormalized -eq $bgImagePath) {
+                    Write-Host "YES" -ForegroundColor Green
+                } else {
+                    Write-Host "NO - MISMATCH!" -ForegroundColor Red
+                    Write-Host "    Expected: $bgImagePath" -ForegroundColor Red
+                }
+
+                # Check if the file at that path exists
+                Write-Host "  File Exists:    " -NoNewline -ForegroundColor Gray
+                if (Test-Path $wtBgPathNormalized) {
+                    Write-Host "YES" -ForegroundColor Green
+                } else {
+                    Write-Host "NO - FILE NOT FOUND!" -ForegroundColor Red
+                }
+
+                # Offer to fix Linux-style path
+                if ($hasLinuxPath) {
+                    Write-Host ""
+                    Write-Host "  " -NoNewline
+                    Write-Host "F" -NoNewline -ForegroundColor Yellow
+                    Write-Host "ix path style? (F/N): " -NoNewline -ForegroundColor Cyan
+                    $fixKey = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    if ($fixKey.Character.ToString().ToUpper() -eq 'F') {
+                        # Fix the path
+                        for ($pi = 0; $pi -lt $settings.profiles.list.Count; $pi++) {
+                            if ($settings.profiles.list[$pi].name -eq $WTProfileName) {
+                                $settings.profiles.list[$pi].backgroundImage = $wtBgPathNormalized
+                                $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+                                Write-Host "FIXED!" -ForegroundColor Green
+                                break
+                            }
+                        }
+                    } else {
+                        Write-Host "Skipped" -ForegroundColor DarkGray
+                    }
+                }
+            } else {
+                Write-Host "(not set)" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "Profile Found:    " -NoNewline -ForegroundColor Gray
+            Write-Host "NO - PROFILE NOT FOUND!" -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "Error reading WT settings: $_" -ForegroundColor Red
+    }
+    Write-Host ""
+
+    # === SECTION 4: Background Text File Contents ===
+    Write-ColorText "--- BACKGROUND.TXT CONTENTS ---" -Color Yellow
+    $storedValues = Get-AllValuesFromBackgroundTxt -WTProfileName $WTProfileName
+
+    if ($storedValues) {
+        Write-Host "Session:          " -NoNewline -ForegroundColor Gray
+        Write-Host "$(if ($storedValues.Session) { $storedValues.Session } else { '(empty)' })" -ForegroundColor White
+        Write-Host "Forked From:      " -NoNewline -ForegroundColor Gray
+        Write-Host "$(if ($storedValues.ForkedFrom) { $storedValues.ForkedFrom } else { '(empty)' })" -ForegroundColor White
+        Write-Host "Computer:User:    " -NoNewline -ForegroundColor Gray
+        Write-Host "$(if ($storedValues.ComputerUser) { $storedValues.ComputerUser } else { '(empty)' })" -ForegroundColor White
+        Write-Host "Branch:           " -NoNewline -ForegroundColor Gray
+        Write-Host "$(if ($storedValues.Branch) { $storedValues.Branch } else { '(empty)' })" -ForegroundColor White
+        Write-Host "Model:            " -NoNewline -ForegroundColor Gray
+        Write-Host "$(if ($storedValues.Model) { $storedValues.Model } else { '(empty)' })" -ForegroundColor White
+        Write-Host "Directory:        " -NoNewline -ForegroundColor Gray
+        Write-Host "$(if ($storedValues.Directory) { $storedValues.Directory } else { '(empty)' })" -ForegroundColor White
+    } else {
+        Write-Host "(No background.txt file found or unable to parse)" -ForegroundColor Yellow
+    }
+    Write-Host ""
+
+    # === SECTION 5: Value Comparison ===
+    Write-ColorText "--- VALUE COMPARISON (Stored vs Current) ---" -Color Yellow
+    $differences = @()
+
+    if ($storedValues) {
+        # Session name
+        $storedSession = if ($storedValues.Session) { $storedValues.Session } else { "" }
+        if ($storedSession -ne $sessionName) {
+            $differences += @{ Field = "Session"; Stored = $storedSession; Current = $sessionName }
+        }
+
+        # Model
+        $storedModel = if ($storedValues.Model) { $storedValues.Model } else { "" }
+        $currModel = if ($currentModel) { $currentModel } else { "" }
+        if ($storedModel -ne $currModel) {
+            $differences += @{ Field = "Model"; Stored = $storedModel; Current = $currModel }
+        }
+
+        # Branch
+        $storedBranch = if ($storedValues.Branch) { $storedValues.Branch } else { "" }
+        $currBranch = if ($currentBranch) { $currentBranch } else { "" }
+        if ($storedBranch -ne $currBranch) {
+            $differences += @{ Field = "Branch"; Stored = $storedBranch; Current = $currBranch }
+        }
+
+        # Computer:User
+        $storedCU = if ($storedValues.ComputerUser) { $storedValues.ComputerUser } else { "" }
+        if ($storedCU -ne $currentComputerUser) {
+            $differences += @{ Field = "Computer:User"; Stored = $storedCU; Current = $currentComputerUser }
+        }
+
+        # Directory
+        $storedDir = if ($storedValues.Directory) { $storedValues.Directory } else { "" }
+        if ($storedDir -ne $Session.projectPath) {
+            $differences += @{ Field = "Directory"; Stored = $storedDir; Current = $Session.projectPath }
+        }
+
+        # Forked From (only if this is a forked session)
+        if ($forkInfo -and $forkInfo.ForkedFrom) {
+            $storedForked = if ($storedValues.ForkedFrom) { $storedValues.ForkedFrom } else { "" }
+            $currForked = if ($currentForkedFrom) { $currentForkedFrom } else { "" }
+            if ($storedForked -ne $currForked) {
+                $differences += @{ Field = "Forked From"; Stored = $storedForked; Current = $currForked }
+            }
+        }
+
+        if ($differences.Count -eq 0) {
+            Write-Host "All values match!" -ForegroundColor Green
+        } else {
+            Write-Host "DIFFERENCES FOUND:" -ForegroundColor Red
+            foreach ($diff in $differences) {
+                Write-Host "  $($diff.Field):" -ForegroundColor Yellow
+                Write-Host "    Stored:  " -NoNewline -ForegroundColor Gray
+                Write-Host "'$(if ($diff.Stored) { $diff.Stored } else { '(empty)' })'" -ForegroundColor Red
+                Write-Host "    Current: " -NoNewline -ForegroundColor Gray
+                Write-Host "'$(if ($diff.Current) { $diff.Current } else { '(empty)' })'" -ForegroundColor Green
+            }
+        }
+    } else {
+        Write-Host "(Cannot compare - no background.txt file)" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+    Write-Host "Press any key to return..." -ForegroundColor DarkGray
+    $null = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
+
 function Update-BackgroundIfChanged {
     <#
     .SYNOPSIS
@@ -7769,7 +8203,7 @@ function Update-BackgroundIfChanged {
 
         # Get current values
         $currentBranch = Get-GitBranch -Path $Session.projectPath
-        $currentComputerUser = "$env:COMPUTERNAME\$env:USERNAME"
+        $currentComputerUser = "$env:COMPUTERNAME`:$env:USERNAME"
         $currentDirectory = $Session.projectPath
 
         # Check if this is a forked session and get parent name
@@ -7788,27 +8222,47 @@ function Update-BackgroundIfChanged {
         }
 
         # Build list of changes
+        # Detect changes when values DIFFER (including when one is empty and other is not)
         $changes = @()
 
-        if ($storedValues.Model -and $CurrentModel -and $storedValues.Model -ne $CurrentModel) {
-            $changes += "Model: '$($storedValues.Model)' -> '$CurrentModel'"
+        # Model: detect if stored != current (including empty -> value or value -> empty)
+        $storedModel = if ($storedValues.Model) { $storedValues.Model } else { "" }
+        $currModel = if ($CurrentModel) { $CurrentModel } else { "" }
+        if ($storedModel -ne $currModel) {
+            $changes += "Model: '$storedModel' -> '$currModel'"
         }
-        if ($storedValues.Branch -and $currentBranch -and $storedValues.Branch -ne $currentBranch) {
-            $changes += "Branch: '$($storedValues.Branch)' -> '$currentBranch'"
+
+        # Branch: detect if stored != current
+        $storedBranch = if ($storedValues.Branch) { $storedValues.Branch } else { "" }
+        $currBranch = if ($currentBranch) { $currentBranch } else { "" }
+        if ($storedBranch -ne $currBranch) {
+            $changes += "Branch: '$storedBranch' -> '$currBranch'"
         }
-        if ($storedValues.ComputerUser -and $storedValues.ComputerUser -ne $currentComputerUser) {
-            $changes += "Computer:User: '$($storedValues.ComputerUser)' -> '$currentComputerUser'"
+
+        # ComputerUser: always required, detect any difference
+        $storedCU = if ($storedValues.ComputerUser) { $storedValues.ComputerUser } else { "" }
+        if ($storedCU -ne $currentComputerUser) {
+            $changes += "Computer:User: '$storedCU' -> '$currentComputerUser'"
         }
-        if ($storedValues.Directory -and $storedValues.Directory -ne $currentDirectory) {
-            $changes += "Directory: '$($storedValues.Directory)' -> '$currentDirectory'"
+
+        # Directory: always required, detect any difference
+        $storedDir = if ($storedValues.Directory) { $storedValues.Directory } else { "" }
+        if ($storedDir -ne $currentDirectory) {
+            $changes += "Directory: '$storedDir' -> '$currentDirectory'"
         }
-        if ($storedValues.ForkedFrom -and $currentForkedFrom -and $storedValues.ForkedFrom -ne $currentForkedFrom) {
-            $changes += "ForkedFrom: '$($storedValues.ForkedFrom)' -> '$currentForkedFrom'"
+
+        # ForkedFrom: only compare if this is actually a forked session
+        if ($forkInfo -and $forkInfo.ForkedFrom) {
+            $storedForked = if ($storedValues.ForkedFrom) { $storedValues.ForkedFrom } else { "" }
+            $currForked = if ($currentForkedFrom) { $currentForkedFrom } else { "" }
+            if ($storedForked -ne $currForked) {
+                $changes += "ForkedFrom: '$storedForked' -> '$currForked'"
+            }
         }
 
         # Log comparison results
-        Write-DebugInfo "    Stored: Model='$($storedValues.Model)', Branch='$($storedValues.Branch)'" -Color DarkGray
-        Write-DebugInfo "    Current: Model='$CurrentModel', Branch='$currentBranch'" -Color DarkGray
+        Write-DebugInfo "    Stored: Model='$storedModel', Branch='$storedBranch', Dir='$storedDir'" -Color DarkGray
+        Write-DebugInfo "    Current: Model='$currModel', Branch='$currBranch', Dir='$currentDirectory'" -Color DarkGray
 
         if ($changes.Count -eq 0) {
             Write-DebugInfo "    No changes detected" -Color DarkGray
@@ -7828,13 +8282,13 @@ function Update-BackgroundIfChanged {
                           -Model $CurrentModel `
                           -GitBranch $currentBranch
 
-        # Regenerate background image
+        # Regenerate background image (silent - we'll report updates after menu renders)
         if ($forkInfo -and $forkInfo.ForkedFrom) {
             # Fork session
-            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath
+            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath -Silent
         } else {
             # Non-fork session
-            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath -Silent
         }
 
         # Update Windows Terminal profile with new image path
@@ -7843,8 +8297,8 @@ function Update-BackgroundIfChanged {
 
         for ($i = 0; $i -lt $settings.profiles.list.Count; $i++) {
             if ($settings.profiles.list[$i].name -eq $WTProfileName) {
-                $imagePath = $bgPath -replace '\\', '/'
-                $settings.profiles.list[$i].backgroundImage = $imagePath
+                # Use Windows-style backslash paths for Windows Terminal
+                $settings.profiles.list[$i].backgroundImage = $bgPath
                 $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
                 Write-DebugInfo "    Regenerated background for '$WTProfileName'" -Color Green
                 break
@@ -9498,8 +9952,8 @@ function Show-RegenerateBackgroundsMenu {
 
             for ($i = 0; $i -lt $settings.profiles.list.Count; $i++) {
                 if ($settings.profiles.list[$i].name -eq $item.WTProfileName) {
-                    $imagePath = $bgPath -replace '\\', '/'
-                    $settings.profiles.list[$i].backgroundImage = $imagePath
+                    # Use Windows-style backslash paths for Windows Terminal
+                    $settings.profiles.list[$i].backgroundImage = $bgPath
                     $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
                     break
                 }
@@ -9613,8 +10067,8 @@ function Set-BackgroundFromFile {
         }
 
         if ($profileIndex -ge 0) {
-            $imagePath = $ImageFilePath -replace '\\', '/'
-            $settings.profiles.list[$profileIndex].backgroundImage = $imagePath
+            # Use Windows-style backslash paths for Windows Terminal
+            $settings.profiles.list[$profileIndex].backgroundImage = $ImageFilePath
             $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
 
             # Save tracking
@@ -9879,7 +10333,9 @@ function Start-MainMenu {
         }
 
         # Get user selection using arrow-key navigation
-        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -ShowAllInDeleteMode $showAllInDeleteMode -HasBypassPermissions $hasBypassPermissions -FirstRowY $firstRowY -BoxWidth $boxWidth -OnlyWithProfiles $onlyWithProfilesActual -TotalPages $menuResult.TotalPages
+        # Pass updated backgrounds list to navigation function so it displays below the sub-menu
+        $updatedBgs = if ($menuResult.UpdatedBackgrounds) { $menuResult.UpdatedBackgrounds } else { @() }
+        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -ShowAllInDeleteMode $showAllInDeleteMode -HasBypassPermissions $hasBypassPermissions -FirstRowY $firstRowY -BoxWidth $boxWidth -OnlyWithProfiles $onlyWithProfilesActual -TotalPages $menuResult.TotalPages -UpdatedBackgrounds $updatedBgs
 
         # Handle result
         switch ($result.Type) {
@@ -10009,6 +10465,15 @@ function Start-MainMenu {
                 $selectedIndex = 0
                 $reloadSessions = $true
                 $isRefresh = $true  # Signal to check model changes from session files
+
+                # Normalize any Linux-style paths to Windows-style in WT profiles
+                $pathFixes = Normalize-WTBackgroundPaths
+                if ($pathFixes.Fixed -gt 0) {
+                    Write-Host ""
+                    Write-Host "Fixed background image paths: " -NoNewline -ForegroundColor Cyan
+                    Write-Host ($pathFixes.ProfileNames -join ", ") -ForegroundColor Yellow
+                }
+
                 continue
             }
 
@@ -10176,8 +10641,8 @@ function Start-MainMenu {
                                             }
 
                                             if ($profileIndex -ge 0) {
-                                                $imagePath = $bgPath -replace '\\', '/'
-                                                $settings.profiles.list[$profileIndex].backgroundImage = $imagePath
+                                                # Use Windows-style backslash paths for Windows Terminal
+                                                $settings.profiles.list[$profileIndex].backgroundImage = $bgPath
                                                 $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
                                                 Write-Host ""
                                                 Write-ColorText "Background image created and applied successfully!" -Color Green
@@ -10295,6 +10760,11 @@ function Start-MainMenu {
                                 }
 
                                 Read-Host "Press Enter to continue"
+                                continue
+                            }
+                            'diagnose' {
+                                # Show diagnostic information about the background image
+                                Show-BackgroundDiagnostics -Session $session -WTProfileName $wtProfileName
                                 continue
                             }
                             'launch' {
