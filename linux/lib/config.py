@@ -83,6 +83,22 @@ def log_error(message: str):
 # Use JSON instead of YAML to avoid extra dependency
 # YAML would require PyYAML which isn't always installed
 
+# Default column visibility - matches Windows version
+DEFAULT_COLUMNS = {
+    'row_num': True,      # # column
+    'session': True,      # Session name
+    'model': True,        # Model (opus/sonnet/haiku)
+    'messages': True,     # Message count
+    'cost': True,         # Cost
+    'created': True,      # Created date
+    'modified': True,     # Modified date
+    'forked_from': True,  # Parent session if forked (enabled by default now)
+    'git_branch': False,  # Git branch
+    'notes': False,       # Session notes
+    'path': True,         # Project path
+}
+
+
 @dataclass
 class Config:
     """Application configuration."""
@@ -93,12 +109,20 @@ class Config:
     debug: bool = False
     sort_column: int = 0
     sort_descending: bool = True
+    columns: Dict[str, bool] = field(default_factory=lambda: DEFAULT_COLUMNS.copy())
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Config':
         """Create Config from dictionary, ignoring unknown keys."""
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in valid_keys}
+
+        # Merge column config with defaults (to handle new columns)
+        if 'columns' in filtered:
+            merged_columns = DEFAULT_COLUMNS.copy()
+            merged_columns.update(filtered['columns'])
+            filtered['columns'] = merged_columns
+
         return cls(**filtered)
 
 

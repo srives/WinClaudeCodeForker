@@ -4,11 +4,12 @@ Provides arrow-key navigation and session management interface.
 """
 
 import curses
-from typing import List, Optional, Callable, Tuple
+from typing import List, Optional, Callable, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum, auto
 
 from .session import Session
+from .config import get_config, DEFAULT_COLUMNS
 
 
 class MenuAction(Enum):
@@ -26,6 +27,7 @@ class MenuAction(Enum):
     COST_ANALYSIS = auto()
     DEBUG = auto()
     CONFIG = auto()
+    ABOUT = auto()
 
 
 @dataclass
@@ -94,11 +96,53 @@ class SessionMenu:
 
     def _init_colors(self):
         """Initialize color pairs."""
-        curses.init_pair(1, curses.COLOR_CYAN, -1)      # Title
+        curses.init_pair(1, curses.COLOR_CYAN, -1)      # Title / menu text
         curses.init_pair(2, curses.COLOR_GREEN, -1)     # Selected
         curses.init_pair(3, curses.COLOR_YELLOW, -1)    # Warning
-        curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Highlight
+        curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Highlight row
         curses.init_pair(5, curses.COLOR_MAGENTA, -1)   # Model
+        curses.init_pair(6, curses.COLOR_WHITE, -1)     # Menu key letter (bright)
+
+    def _draw_menu_item(self, stdscr, y: int, x: int, word: str, key_char: str) -> int:
+        """
+        Draw a menu item with the key character highlighted.
+        Returns the new x position after drawing.
+
+        Args:
+            stdscr: curses window
+            y: row position
+            x: column position
+            word: the word to display (e.g., "New", "Continue")
+            key_char: the character that activates it (e.g., "n", "c")
+
+        Example: _draw_menu_item(stdscr, 10, 5, "New", "n")
+                 displays "New" with "N" in white and "ew" in cyan
+
+        If key is not in word, shows "key:word" format (e.g., "x:Delete")
+        """
+        key_lower = key_char.lower()
+        word_lower = word.lower()
+
+        # Find position of key in word
+        key_pos = word_lower.find(key_lower)
+
+        try:
+            if key_pos == -1:
+                # Key not in word, show as "key:word" format
+                stdscr.addstr(y, x, key_char, curses.color_pair(6) | curses.A_BOLD)
+                stdscr.addstr(y, x + 1, ":", curses.color_pair(1))
+                stdscr.addstr(y, x + 2, word, curses.color_pair(1))
+                return x + 2 + len(word)
+            else:
+                # Draw parts: before key, key (highlighted), after key
+                if key_pos > 0:
+                    stdscr.addstr(y, x, word[:key_pos], curses.color_pair(1))
+                stdscr.addstr(y, x + key_pos, word[key_pos], curses.color_pair(6) | curses.A_BOLD)
+                if key_pos < len(word) - 1:
+                    stdscr.addstr(y, x + key_pos + 1, word[key_pos + 1:], curses.color_pair(1))
+                return x + len(word)
+        except curses.error:
+            return x + len(word)
 
     def _draw_header(self, stdscr):
         """Draw the menu header."""
@@ -122,26 +166,53 @@ class SessionMenu:
         max_y, max_x = stdscr.getmaxyx()
         start_y = 4
 
+        # Leave room for footer (1 line if wide, 2 if narrow)
+        hints_full_len = 140  # Approximate length of single-line hints
+        footer_lines = 1 if max_x >= hints_full_len else 2
+
         # Get visible sessions
         visible = self._get_visible_sessions()
 
         for i, session in enumerate(visible):
-            if start_y + i >= max_y - 3:
+            if start_y + i >= max_y - (footer_lines + 1):
                 break
 
             is_selected = (self.page_start + i) == self.selected_index
-            self._draw_session_row(stdscr, start_y + i, session, is_selected, max_x)
+            row_num = self.page_start + i + 1  # 1-indexed row number
+            self._draw_session_row(stdscr, start_y + i, session, is_selected, max_x, row_num)
 
-    def _draw_session_row(self, stdscr, y: int, session: Session, is_selected: bool, max_x: int):
-        """Draw a single session row."""
-        # Build row data
-        row_data = [
-            session.display_name[:25],
-            session.model[:8] if session.model else '',
-            str(session.message_count),
-            session.modified.strftime('%m/%d %H:%M'),
-            session.project_path[-30:] if len(session.project_path) > 30 else session.project_path,
-        ]
+    def _draw_session_row(self, stdscr, y: int, session: Session, is_selected: bool, max_x: int, row_num: int = 0):
+        """Draw a single session row based on column config."""
+        # Build row data dynamically based on visible columns
+        visible_cols = self._get_visible_columns()
+        row_data = []
+
+        for key, header, width in visible_cols:
+            if key == 'row_num':
+                row_data.append(str(row_num))
+            elif key == 'session':
+                row_data.append(session.display_name[:width])
+            elif key == 'model':
+                row_data.append(session.model[:width] if session.model else '')
+            elif key == 'messages':
+                row_data.append(str(session.message_count))
+            elif key == 'cost':
+                row_data.append(f"${session.cost:.2f}" if session.cost > 0 else '')
+            elif key == 'created':
+                row_data.append(session.created.strftime('%m/%d %H:%M'))
+            elif key == 'modified':
+                row_data.append(session.modified.strftime('%m/%d %H:%M'))
+            elif key == 'forked_from':
+                row_data.append(session.forked_from[:width] if session.forked_from else '')
+            elif key == 'git_branch':
+                row_data.append(session.git_branch[:width] if session.git_branch else '')
+            elif key == 'notes':
+                row_data.append(session.notes[:width] if session.notes else '')
+            elif key == 'path':
+                path = session.project_path
+                row_data.append(path[-width:] if len(path) > width else path)
+            else:
+                row_data.append('')
 
         row_str = self._format_row(row_data, max_x - 4)
 
@@ -160,23 +231,101 @@ class SessionMenu:
         """Draw the menu footer with key hints."""
         max_y, max_x = stdscr.getmaxyx()
 
-        # Key hints - two lines for more options
-        hints1 = "↑↓:Nav | Enter:Select | n:New | c:Continue | f:Fork | x:Delete"
-        hints2 = "r:Refresh | i:Debug/Info | q:Quit | 1-5:Sort"
+        # Menu items: (word, key_char) - key_char will be highlighted
+        # Using descriptive words where the key letter is part of the word
+        menu_items_row1 = [
+            ("↑↓", None),      # Special - no key highlight
+            ("Enter", None),   # Special - no key highlight
+            ("New", "n"),
+            ("Continue", "c"),
+            ("Fork", "f"),
+            ("Delete", "x"),   # x key for delete
+            ("Rename", "e"),   # e key for edit/rename
+        ]
+        menu_items_row2 = [
+            ("Hide", "h"),
+            ("Cost", "o"),     # o is in Cost
+            ("Debug", "d"),
+            ("Refresh", "r"),
+            ("About", "a"),
+            ("Quit", "q"),
+        ]
+
+        # Calculate if we can fit on one line
+        # Rough estimate: each item + separator
+        total_len = sum(len(w) + 3 for w, _ in menu_items_row1 + menu_items_row2)
 
         try:
-            stdscr.addstr(max_y - 3, 2, hints1, curses.color_pair(1))
-            stdscr.addstr(max_y - 2, 2, hints2, curses.color_pair(1))
+            if max_x >= total_len + 4:
+                # Single line
+                y = max_y - 2
+                x = 2
+                all_items = menu_items_row1 + menu_items_row2
+                for i, (word, key) in enumerate(all_items):
+                    if key:
+                        x = self._draw_menu_item(stdscr, y, x, word, key)
+                    else:
+                        stdscr.addstr(y, x, word, curses.color_pair(1))
+                        x += len(word)
+                    # Add separator except after last item
+                    if i < len(all_items) - 1:
+                        stdscr.addstr(y, x, " | ", curses.color_pair(1))
+                        x += 3
+            else:
+                # Two lines
+                for row_num, items in enumerate([menu_items_row1, menu_items_row2]):
+                    y = max_y - 3 + row_num
+                    x = 2
+                    for i, (word, key) in enumerate(items):
+                        if key:
+                            x = self._draw_menu_item(stdscr, y, x, word, key)
+                        else:
+                            stdscr.addstr(y, x, word, curses.color_pair(1))
+                            x += len(word)
+                        # Add separator except after last item in row
+                        if i < len(items) - 1:
+                            stdscr.addstr(y, x, " | ", curses.color_pair(1))
+                            x += 3
         except curses.error:
             pass
 
+    # Column definitions: (config_key, header, width)
+    COLUMN_DEFS = [
+        ('row_num', '#', 3),
+        ('session', 'Session', 25),
+        ('model', 'Model', 8),
+        ('messages', 'Msgs', 5),
+        ('cost', 'Cost', 8),
+        ('created', 'Created', 12),
+        ('modified', 'Modified', 12),
+        ('forked_from', 'Forked From', 20),
+        ('git_branch', 'Git', 15),
+        ('notes', 'Notes', 15),
+        ('path', 'Path', 30),
+    ]
+
+    def _get_visible_columns(self) -> List[Tuple[str, str, int]]:
+        """Get list of visible columns based on config."""
+        config = get_config()
+        columns = config.columns if hasattr(config, 'columns') else DEFAULT_COLUMNS
+
+        visible = []
+        for key, header, width in self.COLUMN_DEFS:
+            if columns.get(key, True):  # Default to visible
+                visible.append((key, header, width))
+        return visible
+
     def _get_column_headers(self) -> List[str]:
-        """Get column header labels."""
-        return ['Session', 'Model', 'Msgs', 'Modified', 'Path']
+        """Get column header labels based on config."""
+        return [header for _, header, _ in self._get_visible_columns()]
+
+    def _get_column_widths(self) -> List[int]:
+        """Get column widths based on config."""
+        return [width for _, _, width in self._get_visible_columns()]
 
     def _format_row(self, columns: List[str], max_width: int, is_header: bool = False) -> str:
-        """Format a row with fixed column widths."""
-        widths = [25, 8, 5, 12, 35]  # Column widths
+        """Format a row with column widths from config."""
+        widths = self._get_column_widths()
         parts = []
 
         for i, (col, width) in enumerate(zip(columns, widths)):
@@ -236,8 +385,8 @@ class SessionMenu:
         elif key == ord('q') or key == ord('Q') or key == 27:  # 27 = ESC
             return (None, MenuAction.QUIT)
 
-        # Sort by column (1-5)
-        elif ord('1') <= key <= ord('5'):
+        # Sort by column (1-7)
+        elif ord('1') <= key <= ord('7'):
             col = key - ord('1')
             if self.sort_column == col:
                 self.sort_descending = not self.sort_descending
@@ -245,6 +394,27 @@ class SessionMenu:
                 self.sort_column = col
                 self.sort_descending = True
             self._sort_sessions()
+
+        # Hide unnamed toggle
+        elif key == ord('h') or key == ord('H'):
+            return (None, MenuAction.TOGGLE_HIDDEN)
+
+        # Cost analysis
+        elif key == ord('o') or key == ord('O'):
+            return (None, MenuAction.COST_ANALYSIS)
+
+        # Column config
+        elif key == ord('g') or key == ord('G'):
+            return (None, MenuAction.CONFIG)
+
+        # About
+        elif key == ord('a') or key == ord('A'):
+            return (None, MenuAction.ABOUT)
+
+        # Rename (e for edit)
+        elif key == ord('e') or key == ord('E'):
+            if self.sessions:
+                return (self.sessions[self.selected_index], MenuAction.RENAME)
 
         return None
 
@@ -264,17 +434,27 @@ class SessionMenu:
             self.page_start = self.selected_index - self.page_size + 1
 
     def _sort_sessions(self):
-        """Sort sessions by the current sort column."""
-        sort_keys = [
-            lambda s: s.display_name.lower(),
-            lambda s: s.model.lower() if s.model else '',
-            lambda s: s.message_count,
-            lambda s: s.modified,
-            lambda s: s.project_path.lower(),
-        ]
+        """Sort sessions by the current sort column based on visible columns."""
+        # Map column keys to sort functions
+        sort_key_map = {
+            'row_num': lambda s: 0,  # No sort
+            'session': lambda s: s.display_name.lower(),
+            'model': lambda s: s.model.lower() if s.model else '',
+            'messages': lambda s: s.message_count,
+            'cost': lambda s: s.cost,
+            'created': lambda s: s.created,
+            'modified': lambda s: s.modified,
+            'forked_from': lambda s: s.forked_from.lower() if s.forked_from else '',
+            'git_branch': lambda s: s.git_branch.lower() if s.git_branch else '',
+            'notes': lambda s: s.notes.lower() if s.notes else '',
+            'path': lambda s: s.project_path.lower(),
+        }
 
-        if 0 <= self.sort_column < len(sort_keys):
-            self.sessions.sort(key=sort_keys[self.sort_column], reverse=self.sort_descending)
+        visible_cols = self._get_visible_columns()
+        if 0 <= self.sort_column < len(visible_cols):
+            col_key = visible_cols[self.sort_column][0]
+            sort_fn = sort_key_map.get(col_key, lambda s: 0)
+            self.sessions.sort(key=sort_fn, reverse=self.sort_descending)
 
 
 class SessionActionMenu:

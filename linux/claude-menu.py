@@ -30,7 +30,7 @@ lib_dir = Path(__file__).parent / 'lib'
 sys.path.insert(0, str(lib_dir))
 
 from lib.config import get_config_manager, get_config, get_claude_projects_path, get_all_claude_paths, setup_logging, log_debug, log_info, log_error, get_debug_log_path
-from lib.session import get_all_sessions, get_git_branch, get_session_model, Session
+from lib.session import get_all_sessions, get_git_branch, get_session_model, get_session_cost, Session
 from lib.menu import SessionMenu, SessionActionMenu, MenuAction
 from lib.image import create_background_image, BackgroundInfo
 from lib.terminal import get_adapter, detect_terminal, is_wsl
@@ -149,11 +149,12 @@ def show_debug_menu():
     print("  5. View debug log (last 50 lines)")
     print("  6. Clear debug log")
     print("  7. Scan for sessions (verbose)")
-    print("  8. Back to main menu")
+    print("  8. Dump raw session JSONL (debug parsing)")
+    print("  9. Back to main menu")
     print("")
 
     try:
-        choice = input("Select [1-8]: ").strip()
+        choice = input("Select [1-9]: ").strip()
 
         if choice == '1':
             detected = detect_terminal()
@@ -274,6 +275,72 @@ def show_debug_menu():
             print(f"\nTotal sessions discovered: {len(sessions)}")
             input("\nPress Enter to continue...")
 
+        elif choice == '8':
+            # Dump raw session content for debugging
+            print("\nDump Raw Session JSONL Content")
+            print("=" * 50)
+
+            projects_path = get_claude_projects_path()
+            if not projects_path.exists():
+                print(f"Projects path does not exist: {projects_path}")
+                input("\nPress Enter to continue...")
+            else:
+                # Find first session file
+                session_files = list(projects_path.glob('**/*.jsonl'))
+                if not session_files:
+                    print("No session files found.")
+                    input("\nPress Enter to continue...")
+                else:
+                    print(f"Found {len(session_files)} session file(s)")
+                    for i, sf in enumerate(session_files[:5], 1):
+                        print(f"  {i}. {sf} ({sf.stat().st_size:,} bytes)")
+
+                    print("\nSelect file to dump (1-5), or press Enter for first:")
+                    file_choice = input("> ").strip()
+                    idx = int(file_choice) - 1 if file_choice.isdigit() else 0
+                    idx = max(0, min(idx, len(session_files) - 1))
+
+                    session_file = session_files[idx]
+                    print(f"\n{'=' * 60}")
+                    print(f"FILE: {session_file}")
+                    print(f"SIZE: {session_file.stat().st_size:,} bytes")
+                    print(f"{'=' * 60}\n")
+
+                    print("First 10 lines (formatted JSON):\n")
+                    try:
+                        with open(session_file, 'r', encoding='utf-8') as f:
+                            for line_num, line in enumerate(f, 1):
+                                if line_num > 10:
+                                    print(f"\n... ({line_num - 1}+ more lines)")
+                                    break
+                                try:
+                                    entry = json.loads(line)
+                                    print(f"--- Line {line_num} ---")
+                                    print(f"Type: {entry.get('type', 'NO TYPE')}")
+                                    print(f"Keys: {list(entry.keys())}")
+
+                                    # Show relevant fields for debugging
+                                    if 'model' in entry:
+                                        print(f"model: {entry['model']}")
+                                    if 'message' in entry:
+                                        msg = entry['message']
+                                        if isinstance(msg, dict):
+                                            print(f"message keys: {list(msg.keys())}")
+                                            if 'model' in msg:
+                                                print(f"message.model: {msg['model']}")
+                                            if 'usage' in msg:
+                                                print(f"message.usage: {msg['usage']}")
+                                    if 'usage' in entry:
+                                        print(f"usage: {entry['usage']}")
+                                    print()
+                                except json.JSONDecodeError as e:
+                                    print(f"Line {line_num}: JSON ERROR: {e}")
+                                    print(f"  Raw: {line[:200]}...")
+                    except IOError as e:
+                        print(f"Error reading file: {e}")
+
+                    input("\nPress Enter to continue...")
+
     except KeyboardInterrupt:
         print("\nCancelled.")
 
@@ -338,6 +405,7 @@ def run_menu_loop() -> int:
     """Run the main menu loop."""
     config = get_config()
     log_info("Entering main menu loop")
+    hide_unnamed = False
 
     while True:
         # Load sessions
@@ -347,14 +415,34 @@ def run_menu_loop() -> int:
         log_info(f"Loaded {len(sessions)} sessions")
 
         # Enrich sessions with additional info
+        log_debug(f"Enriching {len(sessions)} sessions with model/cost data...")
+        sessions_with_files = 0
+        sessions_with_model = 0
         for session in sessions:
+            # Verify session file exists
+            if session._session_file and session._session_file.exists():
+                sessions_with_files += 1
+            else:
+                log_debug(f"Session {session.session_id[:8]} has no valid _session_file")
+
             if not session.model:
                 session.model = get_session_model(session)
+            if session.model:
+                sessions_with_model += 1
             if not session.git_branch:
                 session.git_branch = get_git_branch(session.project_path)
+            if session.cost == 0:
+                session.cost = get_session_cost(session)
+
+        log_debug(f"Enrichment complete: {sessions_with_files}/{len(sessions)} have valid files, {sessions_with_model}/{len(sessions)} have models")
+
+        # Filter unnamed if toggled
+        if hide_unnamed:
+            sessions = [s for s in sessions if s.custom_title or s.first_prompt]
 
         # Show main menu
         menu = SessionMenu()
+        menu.show_hidden = not hide_unnamed
         selected_session, action = menu.run(sessions)
 
         # Handle action
@@ -371,6 +459,20 @@ def run_menu_loop() -> int:
         elif action == MenuAction.REFRESH:
             continue  # Loop will reload sessions
 
+        elif action == MenuAction.TOGGLE_HIDDEN:
+            hide_unnamed = not hide_unnamed
+            status = "hidden" if hide_unnamed else "shown"
+            print(f"Unnamed sessions now {status}")
+
+        elif action == MenuAction.COST_ANALYSIS:
+            show_cost_analysis(sessions)
+
+        elif action == MenuAction.CONFIG:
+            show_column_config()
+
+        elif action == MenuAction.ABOUT:
+            show_about()
+
         elif action == MenuAction.CONTINUE and selected_session:
             handle_continue(selected_session)
 
@@ -379,6 +481,9 @@ def run_menu_loop() -> int:
 
         elif action == MenuAction.DELETE and selected_session:
             handle_delete(selected_session)
+
+        elif action == MenuAction.RENAME and selected_session:
+            handle_rename(selected_session)
 
         elif selected_session:
             # Show session action menu
@@ -466,28 +571,43 @@ def handle_new_session():
 
 def handle_continue(session: Session):
     """Continue an existing session."""
+    log_info(f"handle_continue() called for session: {session.session_id[:8]}")
     print(f"\nContinuing session: {session.display_name}")
 
     config = get_config()
+    log_debug(f"Terminal type: {config.terminal}")
+
     adapter = get_adapter(config.terminal)
+    log_debug(f"Adapter: {adapter.name}, available: {adapter.is_available()}")
 
     # Build claude resume command
     cmd = f"claude --resume {session.session_id}"
+    log_debug(f"Command: {cmd}")
 
     # For direct mode or if no profile exists, run directly
-    if config.terminal == 'direct':
+    if config.terminal == 'direct' or not adapter.is_available():
+        log_debug(f"Direct mode: chdir to {session.project_path}")
         os.chdir(session.project_path)
+        log_debug(f"Running: {cmd}")
         os.system(cmd)
     elif session.custom_title and adapter.profile_exists(session.custom_title):
-        adapter.launch_session(session.custom_title, command=cmd, working_dir=session.project_path)
+        log_debug(f"Using existing profile: {session.custom_title}")
+        result = adapter.launch_session(session.custom_title, command=cmd, working_dir=session.project_path)
+        log_debug(f"Launch result: {result}")
+        if not result:
+            log_error("Failed to launch, falling back to direct")
+            os.chdir(session.project_path)
+            os.system(cmd)
     else:
         # Launch directly
+        log_debug(f"No profile, running directly in {session.project_path}")
         os.chdir(session.project_path)
         os.system(cmd)
 
 
 def handle_fork(session: Session):
     """Fork a session."""
+    log_info(f"handle_fork() called for session: {session.session_id[:8]}")
     print(f"\nForking session: {session.display_name}")
     print("Enter name for forked session:")
 
@@ -498,10 +618,25 @@ def handle_fork(session: Session):
             input("Press Enter to continue...")
             return
 
+        log_debug(f"Fork name: {name}")
         config = get_config()
+        log_debug(f"Terminal type: {config.terminal}")
+
         adapter = get_adapter(config.terminal)
+        log_debug(f"Adapter: {adapter.name}, available: {adapter.is_available()}")
+
+        # Check if adapter is available
+        if not adapter.is_available():
+            log_error(f"Terminal '{config.terminal}' is not available, falling back to direct mode")
+            print(f"Warning: {config.terminal} not available, running in current terminal")
+            cmd = f"claude --resume {session.session_id}"
+            os.chdir(session.project_path)
+            log_debug(f"Running command: {cmd} in {session.project_path}")
+            os.system(cmd)
+            return
 
         # Create background image
+        log_debug(f"Creating background image for fork...")
         bg_info = BackgroundInfo(
             session_name=name,
             directory=session.project_path,
@@ -510,24 +645,44 @@ def handle_fork(session: Session):
             model=session.model,
         )
         bg_path = create_background_image(bg_info)
+        log_debug(f"Background image: {bg_path}")
 
         # Create profile
-        adapter.create_profile(name, session.project_path, str(bg_path) if bg_path else None)
+        log_debug(f"Creating profile: {name}")
+        profile_result = adapter.create_profile(name, session.project_path, str(bg_path) if bg_path else None)
+        log_debug(f"Profile created: {profile_result}")
 
         # Launch with Claude resume
         cmd = f"claude --resume {session.session_id}"
+        log_debug(f"Launch command: {cmd}")
 
         if config.terminal == 'direct':
             print(f"Forked session '{name}' ready.")
+            log_debug(f"Direct mode: chdir to {session.project_path}")
             os.chdir(session.project_path)
+            log_debug(f"Running: {cmd}")
             os.system(cmd)
         else:
-            adapter.launch_session(name, command=cmd, working_dir=session.project_path)
-            print(f"Forked session '{name}' launched in new terminal.")
+            log_debug(f"Launching via adapter: {adapter.name}")
+            result = adapter.launch_session(name, command=cmd, working_dir=session.project_path)
+            log_debug(f"Launch result: {result}")
+            if result:
+                print(f"Forked session '{name}' launched in new terminal.")
+            else:
+                log_error(f"Failed to launch session, falling back to direct mode")
+                print(f"Failed to launch in {config.terminal}, running in current terminal...")
+                os.chdir(session.project_path)
+                os.system(cmd)
             input("Press Enter to continue...")
 
     except KeyboardInterrupt:
         print("\nFork cancelled.")
+    except Exception as e:
+        log_error(f"handle_fork() error: {e}")
+        print(f"\nError during fork: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Press Enter to continue...")
 
 
 def handle_delete(session: Session):
@@ -618,6 +773,139 @@ Dependencies:
 
 Config file: ~/.config/claude-menu/config.json
 """)
+
+
+def show_cost_analysis(sessions):
+    """Display cost analysis for all sessions."""
+    print("\n" + "=" * 70)
+    print("Cost Analysis")
+    print("=" * 70)
+    print(f"{'Session':<30} {'Cost':>10} {'Model':<8} {'Messages':>8}")
+    print("-" * 70)
+
+    total_cost = 0.0
+    for session in sorted(sessions, key=lambda s: s.cost, reverse=True):
+        if session.cost > 0:
+            name = session.display_name[:28]
+            print(f"{name:<30} ${session.cost:>8.2f} {session.model:<8} {session.message_count:>8}")
+            total_cost += session.cost
+
+    print("-" * 70)
+    print(f"{'TOTAL':<30} ${total_cost:>8.2f}")
+    print("=" * 70)
+
+    print("\nPricing (per 1M tokens):")
+    print("  Sonnet: $3 input, $15 output, $0.30 cache write, $3.75 cache read")
+    print("  Opus:   $15 input, $75 output, $1.875 cache write, $18.75 cache read")
+    print("  Haiku:  $0.25 input, $1.25 output, $0.03 cache write, $0.30 cache read")
+
+    input("\nPress Enter to continue...")
+
+
+def show_column_config():
+    """Show column configuration menu - toggle columns on/off."""
+    from lib.config import DEFAULT_COLUMNS
+
+    config_mgr = get_config_manager()
+    config = config_mgr.load()
+
+    # Column display names
+    column_names = {
+        'row_num': '# (Row Number)',
+        'session': 'Session Name',
+        'model': 'Model',
+        'messages': 'Messages',
+        'cost': 'Cost',
+        'created': 'Created',
+        'modified': 'Modified',
+        'forked_from': 'Forked From',
+        'git_branch': 'Git Branch',
+        'notes': 'Notes',
+        'path': 'Path',
+    }
+
+    # Get current columns or use defaults
+    columns = config.columns if hasattr(config, 'columns') else DEFAULT_COLUMNS.copy()
+
+    while True:
+        print("\n" + "=" * 50)
+        print("Column Configuration")
+        print("=" * 50)
+        print("\nToggle columns on/off (press number to toggle):\n")
+
+        col_keys = list(column_names.keys())
+        for i, key in enumerate(col_keys, 1):
+            status = "[X]" if columns.get(key, True) else "[ ]"
+            print(f"  {i:2}. {status} {column_names[key]}")
+
+        print("\n  s. Save and exit")
+        print("  c. Cancel")
+
+        try:
+            choice = input("\nSelect [1-11/s/c]: ").strip().lower()
+
+            if choice == 's':
+                # Save configuration
+                config.columns = columns
+                config_mgr.save()
+                print("\nColumn configuration saved.")
+                input("Press Enter to continue...")
+                return
+            elif choice == 'c':
+                print("\nCancelled - changes not saved.")
+                input("Press Enter to continue...")
+                return
+            elif choice.isdigit():
+                idx = int(choice) - 1
+                if 0 <= idx < len(col_keys):
+                    key = col_keys[idx]
+                    columns[key] = not columns.get(key, True)
+                    status = "enabled" if columns[key] else "disabled"
+                    print(f"\n{column_names[key]} {status}")
+        except (ValueError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return
+
+
+def show_about():
+    """Show about screen with ASCII art."""
+    import os
+    os.system('clear' if os.name != 'nt' else 'cls')
+
+    print("\033[93mClaude Code Session Manager with Terminal Forking\033[0m")
+    print(f"\033[90mVersion: {VERSION} (Linux)\033[0m")
+    print()
+    # ASCII art in cyan
+    cyan = "\033[96m"
+    reset = "\033[0m"
+    print(f"{cyan}=**=---========--------===--=====--==-------=={reset}")
+    print(f"{cyan}==*#*==-=====++==-==============-------======={reset}")
+    print(f"{cyan}--==-----=+++**++++++##*=*##*%%+=-------===--={reset}")
+    print(f"{cyan}---=-----+#*+=###%%#++++*#%@@@#==-=--==--=---={reset}")
+    print(f"{cyan}--==-----=+=====%@@@@@@@%%@@@%*=-----==------={reset}")
+    print(f"{cyan}---====--=-=======*%@@@@@@@@@@#====--========={reset}")
+    print(f"{cyan}----------====+======+%@@@@@@@%+============={reset}")
+    print(f"{cyan}---=---==--==++-=-==+%@@@@@@@@*====+*+=-======{reset}")
+    print(f"{cyan}------=---==++++-====*@@@@@@@@@%+======++====={reset}")
+    print(f"{cyan}-----==----=+++======*#@@%@@@@%%+======+======{reset}")
+    print(f"{cyan}-=--=------==+++====*%%@@%%%@@%%+============={reset}")
+    print(f"{cyan}----=------==++====+%@@@@@@%%%%%+============={reset}")
+    print(f"{cyan}---=-------==++==*%#%%@@@@@@@@@@%============={reset}")
+    print(f"{cyan}-----------==+++#@@@@%%%@@@@@@@@@#=======+++*+{reset}")
+    print(f"{cyan}----------=-=+*%@@@@@@%*+#@@@@%@@@#=======+++={reset}")
+    print(f"{cyan}-----=------==%@@@@@@@%**+#@%*+=+%@#=====+##+={reset}")
+    print(f"{cyan}*#*+=--------*@@@%@@@@@@%%@@%+====+##*===+##*+{reset}")
+    print(f"{cyan}--==#*=----==%@@@@@@@%%@@@@@@*====**%*+===+==={reset}")
+    print(f"{cyan}==--=*#=----=*@@@@@@%%%%@@@@@%+=====+=====+==={reset}")
+    print(f"{cyan}=----=*%*=---*%@@@@@@%%%@@@@@%+============+=={reset}")
+    print(f"{cyan}--==--=+%#=--=#@@@@@@%%#%@@@@*======-========={reset}")
+    print(f"{cyan}---=====+#@%*=+*@@@@@@%%%@@@#+================{reset}")
+    print(f"{cyan}==========+#@@@%@@@@@@%%@@%*=================={reset}")
+    print(f"{cyan}---====++===++*#@@@@%%%@@@%*+++=============++{reset}")
+    print(f"{cyan} https://github.com/srives/WinClaudeCodeForker{reset}")
+    print()
+    print("\033[90mBy: S. Rives\033[0m")
+    input()
 
 
 if __name__ == '__main__':
