@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "2.0.5"
+$Global:ScriptVersion = "2.0.8"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -3165,6 +3165,186 @@ function Show-CostAnalysis {
     Write-Host ""
 }
 
+function Find-DeadSessions {
+    <#
+    .SYNOPSIS
+        Finds sessions whose .jsonl files no longer exist on disk
+    .DESCRIPTION
+        Checks every non-archived session to see if its conversation file still exists.
+        Returns sessions that are dead (missing or empty .jsonl file).
+    #>
+    param(
+        [array]$Sessions
+    )
+
+    $deadSessions = @()
+
+    foreach ($session in $Sessions) {
+        # Skip already-archived sessions
+        $archiveStatus = Get-SessionArchiveStatus -SessionId $session.sessionId
+        if ($archiveStatus.Archived) {
+            continue
+        }
+
+        # Check if the .jsonl file exists
+        $isValid = Test-SessionFileValid -SessionId $session.sessionId -ProjectPath $session.projectPath
+        if (-not $isValid) {
+            $deadSessions += $session
+        }
+    }
+
+    return $deadSessions
+}
+
+function Show-PurgeMenu {
+    <#
+    .SYNOPSIS
+        Shows dead sessions and offers bulk archive or delete
+    #>
+    param(
+        [array]$Sessions
+    )
+
+    Write-Host ""
+    Write-ColorText "========================================" -Color Cyan
+    Write-ColorText "  PURGE DEAD SESSIONS" -Color Cyan
+    Write-ColorText "========================================" -Color Cyan
+    Write-Host ""
+
+    Write-Host "Scanning sessions for missing conversation files..." -ForegroundColor Yellow
+    Write-Host ""
+
+    $deadSessions = Find-DeadSessions -Sessions $Sessions
+
+    if ($deadSessions.Count -eq 0) {
+        Write-ColorText "No dead sessions found. All sessions have valid conversation files." -Color Green
+        Write-Host ""
+        Read-Host "Press Enter to continue"
+        return
+    }
+
+    # Display the dead sessions
+    Write-Host "  #  Session                          Project Path" -ForegroundColor Cyan
+    Write-Host "  -  -------                          ------------" -ForegroundColor DarkGray
+
+    $counter = 1
+    foreach ($session in $deadSessions) {
+        $title = if ($session.customTitle) {
+            $session.customTitle
+        } elseif ($session.trackedName) {
+            "[$($session.trackedName)]"
+        } else {
+            "(unnamed)"
+        }
+
+        # Truncate for display
+        $displayTitle = if ($title.Length -gt 32) { $title.Substring(0, 29) + "..." } else { $title.PadRight(32) }
+        $displayPath = if ($session.projectPath.Length -gt 40) { "..." + $session.projectPath.Substring($session.projectPath.Length - 37) } else { $session.projectPath }
+
+        $num = "$counter".PadLeft(3)
+        Write-Host "$num  " -NoNewline -ForegroundColor White
+        Write-Host "$displayTitle  " -NoNewline -ForegroundColor Gray
+        Write-Host "$displayPath" -ForegroundColor DarkGray
+        $counter++
+    }
+
+    Write-Host ""
+    Write-ColorText "Found $($deadSessions.Count) dead session(s) (archived sessions excluded)" -Color Yellow
+    Write-Host ""
+
+    # Prompt for action
+    Write-Host 'A' -NoNewline -ForegroundColor Yellow
+    Write-Host "rchive All" -NoNewline -ForegroundColor Gray
+    Write-Host " | " -NoNewline -ForegroundColor Gray
+    Write-Host 'D' -NoNewline -ForegroundColor Yellow
+    Write-Host "elete All" -NoNewline -ForegroundColor Gray
+    Write-Host " | " -NoNewline -ForegroundColor Gray
+    Write-Host "Esc" -NoNewline -ForegroundColor Yellow
+    Write-Host " Abort " -NoNewline -ForegroundColor Gray
+
+    while ($true) {
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        $char = $key.Character.ToString().ToUpper()
+
+        # Esc = abort
+        if ($key.VirtualKeyCode -eq 27) {
+            Write-Host ""
+            Write-Host ""
+            Write-ColorText "Purge cancelled." -Color Yellow
+            Write-Host ""
+            Read-Host "Press Enter to continue"
+            return
+        }
+
+        if ($char -eq 'A') {
+            Write-Host ""
+            Write-Host ""
+            Write-ColorText "Archiving $($deadSessions.Count) dead session(s)..." -Color Cyan
+            $archived = 0
+            foreach ($session in $deadSessions) {
+                try {
+                    Set-SessionArchiveStatus -SessionId $session.sessionId -Archived $true
+                    $archived++
+                } catch {
+                    Write-ColorText "  Failed to archive: $($session.sessionId) - $_" -Color Red
+                }
+            }
+            Write-Host ""
+            Write-ColorText "Archived $archived of $($deadSessions.Count) dead session(s)." -Color Green
+            Write-Host ""
+            Read-Host "Press Enter to continue"
+            return
+        }
+
+        if ($char -eq 'D') {
+            # Confirm deletion
+            Write-Host ""
+            Write-Host ""
+            Write-ColorText "WARNING: This will permanently delete $($deadSessions.Count) session(s) and their tracking data." -Color Red
+            Write-Host ""
+            Write-Host 'Y' -NoNewline -ForegroundColor Yellow
+            Write-Host "es | " -NoNewline -ForegroundColor Gray
+            Write-Host 'N' -NoNewline -ForegroundColor Yellow
+            Write-Host "o " -NoNewline -ForegroundColor Gray
+
+            while ($true) {
+                $confirmKey = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                $confirmChar = $confirmKey.Character.ToString().ToUpper()
+
+                if ($confirmKey.VirtualKeyCode -eq 27 -or $confirmChar -eq 'N') {
+                    Write-Host ""
+                    Write-Host ""
+                    Write-ColorText "Deletion cancelled." -Color Yellow
+                    Write-Host ""
+                    Read-Host "Press Enter to continue"
+                    return
+                }
+
+                if ($confirmKey.VirtualKeyCode -eq 13 -or $confirmChar -eq 'Y') {
+                    Write-Host ""
+                    Write-Host ""
+                    Write-ColorText "Deleting $($deadSessions.Count) dead session(s)..." -Color Cyan
+                    $deleted = 0
+                    foreach ($session in $deadSessions) {
+                        try {
+                            $wtProfile = Get-WTProfileName -SessionTitle $session.customTitle -SessionId $session.sessionId
+                            $null = Remove-Session -Session $session -WTProfileName $wtProfile
+                            $deleted++
+                        } catch {
+                            Write-ColorText "  Failed to delete: $($session.sessionId) - $_" -Color Red
+                        }
+                    }
+                    Write-Host ""
+                    Write-ColorText "Deleted $deleted of $($deadSessions.Count) dead session(s)." -Color Green
+                    Write-Host ""
+                    Read-Host "Press Enter to continue"
+                    return
+                }
+            }
+        }
+    }
+}
+
 #endregion
 
 #region Session Discovery
@@ -3728,7 +3908,7 @@ function Get-SessionActivityMarker {
         $sessionFile = Join-Path $Global:ClaudeProjectsPath "$encodedPath\$SessionId.jsonl"
 
         if (-not (Test-Path $sessionFile)) {
-            return ""
+            return [char]0x2620  # Skull - dead session (missing .jsonl file)
         }
 
         # Get file modification time
@@ -4584,6 +4764,7 @@ function Show-SessionMenu {
         TotalPages = $totalPages
         CurrentPage = $Global:CurrentPage
         UpdatedBackgrounds = $updatedBackgrounds
+        VisibleColumnMap = $headerToColumn
     }
 }
 
@@ -4729,7 +4910,8 @@ function Get-ArrowKeyNavigation {
         [int]$BoxWidth = 0,
         [bool]$OnlyWithProfiles = $false,
         [int]$TotalPages = 1,
-        [array]$UpdatedBackgrounds = @()
+        [array]$UpdatedBackgrounds = @(),
+        [array]$VisibleColumnMap = @()
     )
 
     if ($null -eq $MenuRows) { $MenuRows = @() }
@@ -4823,6 +5005,9 @@ function Get-ArrowKeyNavigation {
         Write-Host 'O' -NoNewline -ForegroundColor Yellow
         Write-Host "st" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'P' -NoNewline -ForegroundColor Yellow
+        Write-Host "urge" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'D' -NoNewline -ForegroundColor $debugColor
         Write-Host "ebug" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
@@ -4875,6 +5060,9 @@ function Get-ArrowKeyNavigation {
         Write-Host "c" -NoNewline -ForegroundColor Gray
         Write-Host 'O' -NoNewline -ForegroundColor Yellow
         Write-Host "st" -NoNewline -ForegroundColor Gray
+        Write-Host " | " -NoNewline -ForegroundColor Gray
+        Write-Host 'P' -NoNewline -ForegroundColor Yellow
+        Write-Host "urge" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'D' -NoNewline -ForegroundColor $debugColor
         Write-Host "ebug" -NoNewline -ForegroundColor Gray
@@ -5154,6 +5342,11 @@ function Get-ArrowKeyNavigation {
                     return @{ Type = 'CostAnalysis'; Index = $selectedIndex }
                 }
 
+                # Purge dead sessions
+                if ($char -eq 'P' -and -not $DeleteMode) {
+                    return @{ Type = 'Purge'; Index = $selectedIndex }
+                }
+
                 # Refresh
                 if ($char -eq 'R') {
                     return @{ Type = 'Refresh'; Index = $selectedIndex }
@@ -5191,8 +5384,16 @@ function Get-ArrowKeyNavigation {
                 }
 
                 # Easter egg: Number keys for column sorting (1-9, 0 for column 10)
+                # Maps key press to VISIBLE column position, not hardcoded column numbers
                 if ($char -match '^[0-9]$') {
-                    $columnNum = if ($char -eq '0') { 10 } else { [int]$char }
+                    $keyNum = if ($char -eq '0') { 10 } else { [int]$char }
+
+                    # Use visible column map if available - key 1 sorts the 1st visible column, etc.
+                    if ($VisibleColumnMap.Count -gt 0 -and $keyNum -le $VisibleColumnMap.Count) {
+                        $columnNum = $VisibleColumnMap[$keyNum - 1]
+                    } else {
+                        $columnNum = $keyNum
+                    }
 
                     # If this is the first sort (no column selected yet), start with ascending
                     # Otherwise, toggle sort direction every time any column is pressed
@@ -11113,7 +11314,7 @@ function Start-MainMenu {
         # Get user selection using arrow-key navigation
         # Pass updated backgrounds list to navigation function so it displays below the sub-menu
         $updatedBgs = if ($menuResult.UpdatedBackgrounds) { $menuResult.UpdatedBackgrounds } else { @() }
-        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -ShowAllInDeleteMode $showAllInDeleteMode -HasBypassPermissions $hasBypassPermissions -FirstRowY $firstRowY -BoxWidth $boxWidth -OnlyWithProfiles $onlyWithProfilesActual -TotalPages $menuResult.TotalPages -UpdatedBackgrounds $updatedBgs
+        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -ShowAllInDeleteMode $showAllInDeleteMode -HasBypassPermissions $hasBypassPermissions -FirstRowY $firstRowY -BoxWidth $boxWidth -OnlyWithProfiles $onlyWithProfilesActual -TotalPages $menuResult.TotalPages -UpdatedBackgrounds $updatedBgs -VisibleColumnMap $menuResult.VisibleColumnMap
 
         # Handle result
         switch ($result.Type) {
@@ -11233,6 +11434,14 @@ function Start-MainMenu {
             'CostAnalysis' {
                 # Show cost analysis report
                 Show-CostAnalysis -Sessions $sessions
+                $selectedIndex = 0
+                $reloadSessions = $true
+                continue
+            }
+
+            'Purge' {
+                # Show purge menu for dead sessions
+                Show-PurgeMenu -Sessions $sessions
                 $selectedIndex = 0
                 $reloadSessions = $true
                 continue
