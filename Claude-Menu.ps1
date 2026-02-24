@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "2.0.0"
+$Global:ScriptVersion = "2.0.5"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -420,6 +420,57 @@ function Get-ClaudeCLIPath {
     }
 
     return $null
+}
+
+function Start-WTClaude {
+    <#
+    .SYNOPSIS
+        Launches Claude in Windows Terminal by setting the profile commandline directly.
+    .DESCRIPTION
+        Windows Terminal cannot reliably pass executable paths with arguments through its
+        command line (wt.exe). Instead, this function writes the full claude command into
+        the WT profile's commandline field in settings.json, then opens the profile.
+    #>
+    param(
+        [string]$ClaudePath,
+        [string]$Arguments,
+        [string]$ProfileGuid,
+        [string]$WorkingDirectory
+    )
+
+    # Build the command that the profile should run
+    $fullCommand = "`"$ClaudePath`""
+    if ($Arguments) {
+        $fullCommand = "`"$ClaudePath`" $Arguments"
+    }
+
+    if ($ProfileGuid) {
+        # Update the profile's commandline in settings.json
+        try {
+            $settingsJson = Get-Content $Global:WTSettingsPath -Raw
+            $settings = $settingsJson | ConvertFrom-Json
+
+            $profile = $settings.profiles.list | Where-Object { $_.guid -eq $ProfileGuid } | Select-Object -First 1
+            if ($profile) {
+                $profile.commandline = $fullCommand
+                $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+            }
+        } catch {
+            Write-DebugInfo "  Failed to update profile commandline: $_" -Color Red
+        }
+
+        # Just open the profile - it already has the right command
+        Start-Process wt.exe -ArgumentList "-p `"$ProfileGuid`" -d `"$WorkingDirectory`""
+    } else {
+        # No profile - write a launch script instead
+        $launchDir = Join-Path $Global:MenuPath "launch"
+        if (-not (Test-Path $launchDir)) {
+            New-Item -ItemType Directory -Path $launchDir -Force | Out-Null
+        }
+        $launchScript = Join-Path $launchDir "claude-launch.cmd"
+        Set-Content -Path $launchScript -Value "@$fullCommand" -Force
+        Start-Process wt.exe -ArgumentList "-d `"$WorkingDirectory`" `"$launchScript`""
+    }
 }
 
 function Test-ClaudeCLI {
@@ -5472,7 +5523,7 @@ function Start-NewSession {
         $claudePath = Get-ClaudeCLIPath
 
         # Launch Claude in Windows Terminal with default profile
-        & wt.exe -d "$targetDirectory" -- "$claudePath"
+        Start-WTClaude -ClaudePath $claudePath -WorkingDirectory $targetDirectory
 
         # Store command for display
         $Global:LastClaudeCommand = "claude (new session in $targetDirectory)"
@@ -5559,7 +5610,7 @@ function Start-NewSession {
         $claudePath = Get-ClaudeCLIPath
 
         # Launch Windows Terminal WITHOUT --session-id (let Claude create its own)
-        Start-Process -FilePath "wt.exe" -ArgumentList "-p", "`"$profileGuid`"", "-d", "`"$projectPath`"", "--", "`"$claudePath`"", "--model", "`"$model`"" -NoNewWindow
+        Start-WTClaude -ClaudePath $claudePath -Arguments "--model $model" -ProfileGuid $profileGuid -WorkingDirectory $projectPath
 
         # Store simplified command for display
         $Global:LastClaudeCommand = "claude --model `"$model`""
@@ -5794,7 +5845,7 @@ function Start-ContinueSession {
             Write-ColorText "Launching terminal with profile: $wtProfileName" -Color Cyan
             Write-Host ""
 
-            & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+            Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
             Write-DebugInfo "  Launched successfully" -Color Green
 
             # Store simplified command for display
@@ -5848,7 +5899,7 @@ function Start-ContinueSession {
                 # Launch in new Windows Terminal profile
                 $profileGuid = $profile.guid
                 $claudePath = Get-ClaudeCLIPath
-                & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
 
                 # Store simplified command for display
                 $Global:LastClaudeCommand = "claude --resume $displayName"
@@ -5863,7 +5914,7 @@ function Start-ContinueSession {
 
                 # Fallback to Windows Terminal with default profile
                 $claudePath = Get-ClaudeCLIPath
-                & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
 
                 # Store command for display
                 $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -5915,7 +5966,7 @@ function Start-ContinueSession {
 
                 # Launch in Windows Terminal with default profile
                 $claudePath = Get-ClaudeCLIPath
-                & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
 
                 # Store command for display
                 $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -6036,7 +6087,7 @@ function Start-ContinueSession {
                         Write-ColorText "Launching terminal with profile: $actualProfileName" -Color Cyan
                         Write-Host ""
 
-                        & wt.exe -p "$profileGuid" -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
                         Write-DebugInfo "  Windows Terminal launched" -Color Green
 
                         # Store simplified command for display
@@ -6054,7 +6105,7 @@ function Start-ContinueSession {
                         # Fallback to Windows Terminal with default profile
                         Write-DebugInfo "  Launching Windows Terminal with default profile (fallback)" -Color Yellow
                         $claudePath = Get-ClaudeCLIPath
-                        & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
 
                         # Store command for display
                         $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -6070,7 +6121,7 @@ function Start-ContinueSession {
                     # Fallback to Windows Terminal with default profile
                     Write-DebugInfo "  Launching Windows Terminal with default profile (exception fallback)" -Color Yellow
                     $claudePath = Get-ClaudeCLIPath
-                    & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                    Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
 
                     # Store command for display
                     $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -6085,7 +6136,7 @@ function Start-ContinueSession {
                 # Fallback to Windows Terminal with default profile
                 Write-DebugInfo "  Launching Windows Terminal with default profile (no background image)" -Color Yellow
                 $claudePath = Get-ClaudeCLIPath
-                & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
 
                 # Store command for display
                 $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -6104,7 +6155,7 @@ function Start-ContinueSession {
             Write-DebugInfo "    Command: $claudePath --resume $($Session.sessionId)"
 
             # Launch in Windows Terminal with default profile
-            & wt.exe -d "$($Session.projectPath)" -- "$claudePath" --resume $Session.sessionId
+            Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
 
             # Store command for display
             $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -7442,7 +7493,7 @@ function Start-ForkSession {
 
         # Launch Windows Terminal with the new profile
         # Using both --fork-session and --session-id to control the new session's ID
-        & wt.exe -p "$profileGuid" -d "$projectPath" -- "$claudePath" --resume $oldSessionId --fork-session --session-id $newSessionId --model $model
+        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $oldSessionId --fork-session --session-id $newSessionId --model $model" -ProfileGuid $profileGuid -WorkingDirectory $projectPath
 
         # Store simplified command for display (use old session name if available)
         $displayOldName = if ($oldName -ne "(unnamed)") { $oldName } else { $oldSessionId }
