@@ -1,4 +1,4 @@
-# Claude Code Session Manager v2.0.1
+# Claude Code Session Manager v2.1.1
 
 A visual session manager for Claude Code CLI with fork/continue workflows and background watermarks.
 
@@ -142,7 +142,7 @@ TOTAL                     $27.35   4.5M    1.5M    24.6M   88%
 | 3         haiku   api-redesign      28        01/17      $2.45       |
 +──────────────────────────────────────────────────────────────────────+
 
-New Session | Win Terminal Config | Hide Unnamed | Cost | Debug | Refresh | eXit
+New Session | Win Terminal Config | Hide Unnamed | cOst | Purge | Debug | Refresh | eXit
 ```
 
 ### WIN TERMINAL Background Images Show
@@ -164,7 +164,10 @@ following information:
 
 ### Column Configuration
 Press **G** to customize which columns appear.
-Easter Egg: Press 1, 2, 3, 4, etc. to sort on a column.
+Press 1, 2, 3, etc. to sort by the Nth visible column.
+
+### Purge Dead Sessions
+Press **P** to scan for sessions whose conversation files no longer exist on disk. Dead sessions show a skull (☠) in the Active column. Purge lets you bulk archive or bulk delete them.
 
 ### Validation System
 Built-in self-protection with 80 automated tests

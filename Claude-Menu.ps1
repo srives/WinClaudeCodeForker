@@ -21,7 +21,7 @@
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "2.0.8"
+$Global:ScriptVersion = "2.1.1"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -45,8 +45,26 @@ $Global:SessionMappingCache = $null  # Cache for session-mapping.json
 $Global:SessionMappingCacheTime = $null  # When the mapping cache was last updated
 $Global:ProfileRegistryCache = $null  # Cache for profile-registry.json
 $Global:ProfileRegistryCacheTime = $null  # When the profile registry cache was last updated
-$Global:SortColumn = 0  # 0 = no sort, 1-10 = column number
+$Global:SortColumn = ""  # Empty = no sort, otherwise sort property name (e.g. 'Title', 'Model')
 $Global:SortDescending = $false
+
+# Master column definitions - single source of truth for all column logic
+# ConfigKey = key in column-config.json, Header = display name, SortProperty = row data property, Width = column width
+$Global:ColumnDefinitions = @(
+    @{ ConfigKey = 'Active';      Header = 'Active';       SortProperty = 'Active';       Width = 6 }
+    @{ ConfigKey = 'Limit';       Header = 'Limit';        SortProperty = 'LimitValue';   Width = 6 }
+    @{ ConfigKey = 'Model';       Header = 'Model';        SortProperty = 'Model';        Width = 8 }
+    @{ ConfigKey = 'Session';     Header = 'Session';      SortProperty = 'Title';        Width = 30 }
+    @{ ConfigKey = 'Notes';       Header = 'Notes';        SortProperty = 'Notes';        Width = 10 }
+    @{ ConfigKey = 'Messages';    Header = 'Messages';     SortProperty = 'Messages';     Width = 8 }
+    @{ ConfigKey = 'Created';     Header = 'Created';      SortProperty = 'CreatedDate';  Width = 12 }
+    @{ ConfigKey = 'Modified';    Header = 'Modified';     SortProperty = 'ModifiedDate'; Width = 12 }
+    @{ ConfigKey = 'Cost';        Header = 'Cost';         SortProperty = 'CostValue';    Width = 8 }
+    @{ ConfigKey = 'WinTerminal'; Header = 'Win Terminal';  SortProperty = 'Profile';      Width = 25 }
+    @{ ConfigKey = 'ForkedFrom';  Header = 'Forked From';  SortProperty = 'ForkTree';     Width = 25 }
+    @{ ConfigKey = 'Git';         Header = 'Git Repo';     SortProperty = 'GitRepo';      Width = 20 }
+    @{ ConfigKey = 'Path';        Header = 'Path';         SortProperty = 'Path';         Width = 0 }
+)
 $Global:PromptEndY = 0  # Store where prompts end for sub-menu positioning
 $Global:CurrentPage = 1  # Current page for pagination
 
@@ -438,6 +456,12 @@ function Start-WTClaude {
         [string]$WorkingDirectory
     )
 
+    # Validate Claude CLI path
+    if (-not $ClaudePath -or -not (Test-Path $ClaudePath)) {
+        Write-ColorText "ERROR: Claude CLI not found at '$ClaudePath'. Is Claude Code installed?" -Color Red
+        return
+    }
+
     # Build the command that the profile should run
     $fullCommand = "`"$ClaudePath`""
     if ($Arguments) {
@@ -454,6 +478,9 @@ function Start-WTClaude {
             if ($profile) {
                 $profile.commandline = $fullCommand
                 $settings | ConvertTo-Json -Depth 10 | Set-Content $Global:WTSettingsPath -Encoding UTF8
+                $Global:WTSettingsCache = $null  # Invalidate cache after writing
+            } else {
+                Write-DebugInfo "  Profile GUID '$ProfileGuid' not found in settings.json" -Color Yellow
             }
         } catch {
             Write-DebugInfo "  Failed to update profile commandline: $_" -Color Red
@@ -467,7 +494,8 @@ function Start-WTClaude {
         if (-not (Test-Path $launchDir)) {
             New-Item -ItemType Directory -Path $launchDir -Force | Out-Null
         }
-        $launchScript = Join-Path $launchDir "claude-launch.cmd"
+        $launchId = [Guid]::NewGuid().ToString().Substring(0, 8)
+        $launchScript = Join-Path $launchDir "claude-launch-$launchId.cmd"
         Set-Content -Path $launchScript -Value "@$fullCommand" -Force
         Start-Process wt.exe -ArgumentList "-d `"$WorkingDirectory`" `"$launchScript`""
     }
@@ -3320,7 +3348,7 @@ function Show-PurgeMenu {
                     return
                 }
 
-                if ($confirmKey.VirtualKeyCode -eq 13 -or $confirmChar -eq 'Y') {
+                if ($confirmChar -eq 'Y') {
                     Write-Host ""
                     Write-Host ""
                     Write-ColorText "Deleting $($deadSessions.Count) dead session(s)..." -Color Cyan
@@ -4070,8 +4098,8 @@ function Write-SessionMenuHeader {
         $headers = @("Session", "Messages", "Created", "Modified", "Cost", "WT Profile", "Color Scheme", "Path")
         $headerWidths = @(30, 8, 12, 12, 8, 20, 20, $pathWidth)
 
-        # Map header index to global column number: Session=3, Messages=5, Created=6, Modified=7, Cost=8, WTProfile=9, ColorScheme=none, Path=11
-        $headerToColumn = @(3, 5, 6, 7, 8, 9, 0, 11)
+        # Sort property for each header position (for highlight)
+        $headerSortProps = @('Title', 'Messages', 'CreatedDate', 'ModifiedDate', 'CostValue', 'Profile', '', 'Path')
 
         # Top border
         Write-Host ("+" + ("-" * ($BoxWidth - 2)) + "+") -ForegroundColor DarkGray
@@ -4096,7 +4124,7 @@ function Write-SessionMenuHeader {
                 $headerText = $headerText.Substring(0, $actualWidth)
             }
 
-            $color = if ($headerToColumn[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
+            $color = if ($headerSortProps[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
             Write-Host ("{0,-$actualWidth}" -f $headerText) -NoNewline -ForegroundColor $color
 
             # Add space separator if not last column and room available
@@ -4119,76 +4147,17 @@ function Write-SessionMenuHeader {
         # Calculate path width
         $pathWidth = Get-DynamicPathWidth -BoxWidth $BoxWidth -ColumnConfig $columnConfig
 
-        # Build dynamic headers and track sort column mapping
+        # Build headers from master column definitions - only visible columns
         $headers = @()
         $headerWidths = @()
-        $headerToColumn = @()
+        $headerSortProps = @()
 
-        if ($columnConfig.Active) {
-            $headers += "Active"
-            $headerWidths += 6
-            $headerToColumn += 1
-        }
-        # LimitFeature: Add Limit column header if enabled
-        if ($columnConfig.Limit) {
-            $headers += "Limit"
-            $headerWidths += 6
-            $headerToColumn += 2
-        }
-        if ($columnConfig.Model) {
-            $headers += "Model"
-            $headerWidths += 8
-            $headerToColumn += 3
-        }
-        if ($columnConfig.Session) {
-            $headers += "Session"
-            $headerWidths += 30
-            $headerToColumn += 4
-        }
-        if ($columnConfig.Notes) {
-            $headers += "Notes"
-            $headerWidths += 10
-            $headerToColumn += 5
-        }
-        if ($columnConfig.Messages) {
-            $headers += "Messages"
-            $headerWidths += 8
-            $headerToColumn += 6
-        }
-        if ($columnConfig.Created) {
-            $headers += "Created"
-            $headerWidths += 12
-            $headerToColumn += 7
-        }
-        if ($columnConfig.Modified) {
-            $headers += "Modified"
-            $headerWidths += 12
-            $headerToColumn += 8
-        }
-        if ($columnConfig.Cost) {
-            $headers += "Cost"
-            $headerWidths += 8
-            $headerToColumn += 9
-        }
-        if ($columnConfig.WinTerminal) {
-            $headers += "Win Terminal"
-            $headerWidths += 25
-            $headerToColumn += 10
-        }
-        if ($columnConfig.ForkedFrom) {
-            $headers += "Forked From"
-            $headerWidths += 25
-            $headerToColumn += 11
-        }
-        if ($columnConfig.Git) {
-            $headers += "Git Repo"
-            $headerWidths += 20
-            $headerToColumn += 12
-        }
-        if ($columnConfig.Path) {
-            $headers += "Path"
-            $headerWidths += $pathWidth
-            $headerToColumn += 13
+        foreach ($colDef in $Global:ColumnDefinitions) {
+            if ($columnConfig[$colDef.ConfigKey]) {
+                $headers += $colDef.Header
+                $headerWidths += if ($colDef.ConfigKey -eq 'Path') { $pathWidth } else { $colDef.Width }
+                $headerSortProps += $colDef.SortProperty
+            }
         }
 
         # Top border
@@ -4214,7 +4183,7 @@ function Write-SessionMenuHeader {
                 $headerText = $headerText.Substring(0, $actualWidth)
             }
 
-            $color = if ($headerToColumn[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
+            $color = if ($headerSortProps[$i] -eq $Global:SortColumn) { "Yellow" } else { "Cyan" }
             Write-Host ("{0,-$actualWidth}" -f $headerText) -NoNewline -ForegroundColor $color
 
             # Add space separator if not last column and room available
@@ -4542,32 +4511,12 @@ function Show-SessionMenu {
         }
     }
 
-    # Sort rows if a column is selected (easter egg feature)
-    # LimitFeature: Added Limit column (2), shifted all others
-    if ($Global:SortColumn -gt 0 -and $rows.Count -gt 0) {
-        $sortProperty = switch ($Global:SortColumn) {
-            1 { 'Active' }      # Active marker
-            2 { 'LimitValue' }  # LimitFeature: Context usage percentage (numeric)
-            3 { 'Model' }       # Model name
-            4 { 'Title' }       # Session title
-            5 { 'Notes' }       # Notes
-            6 { 'Messages' }    # Message count
-            7 { 'CreatedDate' } # Created date (use date object for proper sorting)
-            8 { 'ModifiedDate' }# Modified date (use date object for proper sorting)
-            9 { 'CostValue' }   # Cost (numeric value)
-            10 { 'Profile' }    # Win Terminal profile
-            11 { 'ForkTree' }   # Forked from
-            12 { 'GitRepo' }    # Git repository
-            13 { 'Path' }       # Path
-            default { $null }
-        }
-
-        if ($sortProperty) {
-            if ($Global:SortDescending) {
-                $rows = $rows | Sort-Object -Property $sortProperty -Descending
-            } else {
-                $rows = $rows | Sort-Object -Property $sortProperty
-            }
+    # Sort rows if a column is selected
+    if ($Global:SortColumn -and $rows.Count -gt 0) {
+        if ($Global:SortDescending) {
+            $rows = $rows | Sort-Object -Property $Global:SortColumn -Descending
+        } else {
+            $rows = $rows | Sort-Object -Property $Global:SortColumn
         }
     }
 
@@ -4764,7 +4713,6 @@ function Show-SessionMenu {
         TotalPages = $totalPages
         CurrentPage = $Global:CurrentPage
         UpdatedBackgrounds = $updatedBackgrounds
-        VisibleColumnMap = $headerToColumn
     }
 }
 
@@ -4910,8 +4858,7 @@ function Get-ArrowKeyNavigation {
         [int]$BoxWidth = 0,
         [bool]$OnlyWithProfiles = $false,
         [int]$TotalPages = 1,
-        [array]$UpdatedBackgrounds = @(),
-        [array]$VisibleColumnMap = @()
+        [array]$UpdatedBackgrounds = @()
     )
 
     if ($null -eq $MenuRows) { $MenuRows = @() }
@@ -5383,30 +5330,33 @@ function Get-ArrowKeyNavigation {
                     return @{ Type = 'RegenerateBackgrounds'; Index = $selectedIndex }
                 }
 
-                # Easter egg: Number keys for column sorting (1-9, 0 for column 10)
-                # Maps key press to VISIBLE column position, not hardcoded column numbers
+                # Number keys for column sorting - sorts the Nth VISIBLE column
                 if ($char -match '^[0-9]$') {
                     $keyNum = if ($char -eq '0') { 10 } else { [int]$char }
 
-                    # Use visible column map if available - key 1 sorts the 1st visible column, etc.
-                    if ($VisibleColumnMap.Count -gt 0 -and $keyNum -le $VisibleColumnMap.Count) {
-                        $columnNum = $VisibleColumnMap[$keyNum - 1]
-                    } else {
-                        $columnNum = $keyNum
+                    # Get visible columns from the master definitions
+                    $columnConfig = Get-ColumnConfiguration
+                    $visibleColumns = @()
+                    foreach ($colDef in $Global:ColumnDefinitions) {
+                        if ($columnConfig[$colDef.ConfigKey]) {
+                            $visibleColumns += $colDef
+                        }
                     }
 
-                    # If this is the first sort (no column selected yet), start with ascending
-                    # Otherwise, toggle sort direction every time any column is pressed
-                    if ($Global:SortColumn -eq 0) {
-                        $Global:SortDescending = $false  # First sort is ascending
-                    } else {
-                        $Global:SortDescending = -not $Global:SortDescending  # Toggle direction
+                    # If key number is within visible column count, sort by that column
+                    if ($keyNum -le $visibleColumns.Count) {
+                        $sortProp = $visibleColumns[$keyNum - 1].SortProperty
+
+                        # Same column = toggle direction; new column = ascending
+                        if ($sortProp -eq $Global:SortColumn) {
+                            $Global:SortDescending = -not $Global:SortDescending
+                        } else {
+                            $Global:SortDescending = $false
+                        }
+
+                        $Global:SortColumn = $sortProp
+                        return @{ Type = 'SortColumn'; Index = $selectedIndex }
                     }
-
-                    $Global:SortColumn = $columnNum
-
-                    # Return to redraw menu with new sort
-                    return @{ Type = 'SortColumn'; Index = $selectedIndex }
                 }
             }
 
@@ -11314,7 +11264,7 @@ function Start-MainMenu {
         # Get user selection using arrow-key navigation
         # Pass updated backgrounds list to navigation function so it displays below the sub-menu
         $updatedBgs = if ($menuResult.UpdatedBackgrounds) { $menuResult.UpdatedBackgrounds } else { @() }
-        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -ShowAllInDeleteMode $showAllInDeleteMode -HasBypassPermissions $hasBypassPermissions -FirstRowY $firstRowY -BoxWidth $boxWidth -OnlyWithProfiles $onlyWithProfilesActual -TotalPages $menuResult.TotalPages -UpdatedBackgrounds $updatedBgs -VisibleColumnMap $menuResult.VisibleColumnMap
+        $result = Get-ArrowKeyNavigation -MenuRows $displayRows -CurrentIndex $selectedIndex -ShowUnnamed $showUnnamed -HasWTProfiles $hasWTProfiles -DeleteMode $deleteMode -ShowAllInDeleteMode $showAllInDeleteMode -HasBypassPermissions $hasBypassPermissions -FirstRowY $firstRowY -BoxWidth $boxWidth -OnlyWithProfiles $onlyWithProfilesActual -TotalPages $menuResult.TotalPages -UpdatedBackgrounds $updatedBgs
 
         # Handle result
         switch ($result.Type) {

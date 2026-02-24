@@ -1,6 +1,39 @@
 # Version Information
 
-## Current Version: 2.0.1 (2026-01-26)
+## Current Version: 2.1.1 (2026-02-24)
+
+### Release Notes
+
+This release fixes compatibility with Claude Code's new native .exe binary, adds a Purge feature for dead sessions, and fixes column sorting to work correctly with hidden columns.
+
+#### Claude CLI .exe Compatibility
+- Claude Code updated from a `.cmd` Node.js shim to a native `claude.exe` binary
+- Windows Terminal cannot pass .exe paths with arguments through its command line
+- New `Start-WTClaude` function writes the full claude command into the WT profile's `commandline` field in settings.json before launching
+- Works with both old `.cmd` and new `.exe` Claude CLI
+
+#### Purge Dead Sessions (P Key)
+- Press P in main menu to scan for sessions whose `.jsonl` files no longer exist on disk
+- Dead sessions show skull (U+2620) in the Active column
+- Bulk Archive All or Delete All with confirmation
+- Already-archived sessions are excluded from the scan
+
+#### Column Sort Fix
+- Number keys now sort the Nth VISIBLE column, not a hardcoded column number
+- `$Global:ColumnDefinitions` is a single source of truth for all column metadata (header, width, sort property)
+- Pressing the same column toggles ascending/descending; pressing a new column starts ascending
+- Eliminated all hardcoded column-to-number mapping throughout the codebase
+
+#### Bug Fixes
+- Enter key no longer confirms bulk deletion in Purge (only Y confirms)
+- Unique `.cmd` launch filenames prevent race conditions for profile-less sessions
+- WT settings cache invalidated after `Start-WTClaude` writes to settings.json
+- Claude CLI path validated before launch attempts
+- Profile GUID not found now logged as warning instead of silent failure
+
+---
+
+## Previous Version: 2.0.1 (2026-01-26)
 
 ### Release Notes
 

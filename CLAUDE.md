@@ -4,7 +4,7 @@
 
 **Windows Claude Code Forker** (aka Claude Code Session Manager) is a PowerShell-based session manager for Claude Code CLI with deep Windows Terminal integration. It enables visual session management, forking workflows, cost tracking, and custom terminal backgrounds.
 
-**Current Version:** 2.0.1
+**Current Version:** 2.1.1
 **Author:** S. Rives
 **Created:** January 2026
 **Platform:** Windows 10/11 with PowerShell 5.1+
@@ -119,6 +119,8 @@ $Global:TokenUsageCache       # Cached token usage for performance
 $Global:ModelCache            # Cached models to avoid re-parsing
 $Global:WTSettingsCache       # Cached WT settings
 $Global:SessionMappingCache   # Cached session mappings
+$Global:ColumnDefinitions     # Master column definitions (single source of truth)
+$Global:SortColumn            # Sort property name (e.g. 'Title', 'Model')
 ```
 
 ### Data Files
@@ -204,7 +206,10 @@ All data stored in `~/.claude-menu/`:
 - `Start-NewSession` - Creates a new Claude session
 - `Start-ContinueSession` - Resumes an existing session
 - `Start-ForkSession` - Forks a session with new profile
+- `Start-WTClaude` - Launches Claude in WT (writes commandline to profile, avoids WT argument parsing bugs)
 - `Rename-ClaudeSession` - Renames with all metadata updates
+- `Find-DeadSessions` - Finds sessions whose .jsonl files no longer exist
+- `Show-PurgeMenu` - Bulk archive/delete dead sessions
 
 ### Windows Terminal
 - `Add-WTProfile` - Creates a Windows Terminal profile
@@ -232,11 +237,12 @@ All data stored in `~/.claude-menu/`:
 | H/S | Hide/Show unnamed sessions |
 | Q/C | Quiet/Chatty permission mode |
 | O | Cost analysis |
+| P | Purge dead sessions |
 | D | Debug menu |
 | R | Refresh |
 | G | Column configuration |
 | PgUp/PgDn | Page navigation |
-| 1-11 | Sort by column |
+| 1-9 | Sort by Nth visible column |
 | X/Esc | Exit |
 
 ### Session Options (after selecting)
@@ -386,9 +392,35 @@ claude-menu --enable-debug
 | Cache reads | $0.30 |
 | Output | $15.00 |
 
-## Recent Work (January 26, 2026)
+## Recent Work (February 24, 2026)
 
-### Linux Port Progress
+### v2.1.1 - Claude CLI .exe Compatibility, Purge, Column Sort Fix
+
+1. **Claude CLI .exe Launch Fix** (`Start-WTClaude`)
+   - Claude CLI updated from `.cmd` shim to native `claude.exe` (Feb 2026)
+   - Windows Terminal cannot pass .exe paths + arguments through its command line
+   - Fix: writes full claude command into WT profile's `commandline` field in settings.json before launch
+   - Validates claude path exists before attempting launch
+   - Invalidates WT settings cache after writes
+
+2. **Purge Dead Sessions** (`Find-DeadSessions`, `Show-PurgeMenu`)
+   - Press P in main menu to scan for sessions whose .jsonl files are missing
+   - Lists dead sessions (excludes already-archived)
+   - Bulk Archive All or Delete All with confirmation
+   - Dead sessions show skull (U+2620) in Active column
+
+3. **Column Sort Fix** (`$Global:ColumnDefinitions`)
+   - Sort keys now map to Nth VISIBLE column, not hardcoded column numbers
+   - Master column definitions array is single source of truth for headers, widths, sort properties
+   - Same column press toggles direction; new column starts ascending
+   - Eliminated all hardcoded column-to-number mapping
+
+4. **Bug Fixes**
+   - Enter key no longer confirms bulk deletion in Purge (only Y)
+   - Unique .cmd filenames for profile-less launches (race condition fix)
+   - WT settings cache invalidated after profile commandline updates
+
+### Previous: Linux Port Progress (January 26, 2026)
 The Linux port is functional with most features working. Recent additions:
 
 1. **DirectAdapter for WSL/Headless** (`lib/terminal/direct.py`)
@@ -428,6 +460,7 @@ Session discovery in WSL - need to verify:
 
 ## Version History Highlights
 
+- **2.1.1**: Claude .exe launch fix, Purge dead sessions, column sort fix, bug fixes
 - **2.0.1**: Linux port with WSL support, debug logging, multi-path detection
 - **2.0.0**: 80 validation tests, Linux port started
 - **1.10.x**: Caching system, diagnostics, path fixes

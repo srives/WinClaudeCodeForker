@@ -2,6 +2,36 @@
 
 All notable changes to Claude Code Session Manager will be documented in this file.
 
+## [2.1.1] - 2026-02-24
+
+### Claude CLI .exe Compatibility
+- **Breaking change in Claude CLI**: Claude Code updated from `.cmd` Node.js shim to native `claude.exe`
+- Windows Terminal cannot reliably pass .exe paths with arguments through `wt.exe` command line
+- New `Start-WTClaude` function writes the full command into the WT profile's `commandline` field in settings.json
+- All 12 launch sites converted from direct `wt.exe` invocation to `Start-WTClaude`
+- Works with both `.cmd` and `.exe` versions of Claude CLI
+
+### Purge Dead Sessions
+- New **P** key in main menu to scan for dead sessions (missing `.jsonl` files)
+- Dead sessions show skull ☠ (U+2620) in Active column
+- `Find-DeadSessions` function checks each non-archived session's file existence
+- `Show-PurgeMenu` displays dead sessions with bulk Archive All / Delete All options
+- Already-archived sessions excluded from scan
+
+### Column Sort Overhaul
+- `$Global:ColumnDefinitions` master array is single source of truth for all column metadata
+- Number keys sort the Nth VISIBLE column (not hardcoded column numbers)
+- `$Global:SortColumn` now stores property name (e.g. `'Title'`) instead of magic number
+- Same column press toggles direction; new column starts ascending
+- Eliminated `$headerToColumn` mapping arrays and hardcoded switch statements
+
+### Bug Fixes
+- Enter key no longer confirms bulk deletion in Purge (only Y)
+- Unique `.cmd` launch filenames prevent race conditions for profile-less launches
+- WT settings cache invalidated after writing profile commandline
+- Claude CLI path validated before launch (clear error if not found)
+- Profile GUID not found now logs warning instead of silent fallthrough
+
 ## [2.0.0] - 2026-01-26
 
 ### Linux Port (In Progress)
