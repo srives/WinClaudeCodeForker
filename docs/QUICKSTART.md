@@ -1,13 +1,18 @@
 # Quick Start Guide
 
-Get up and running with Windows Claude Code Forker in 2 minutes!
+Get up and running with the Codex and Claude Code Session Manager in 2 minutes!
 
-## What's New in v1.4.0
-- Git branch shown on background images and in session info
-- Model name (Opus/Sonnet/Haiku) displayed on background images
-- Smart conflict resolution auto-overwrites orphaned background images
-- Choose directory when creating new sessions
-- More abort options with proper cleanup
+## What's New in v3.0.0
+- **Codex CLI Integration** - Both Claude and OpenAI Codex sessions in a unified menu
+- New **Src** column shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
+- New Session prompts "Claude | codeX | Abort" when Codex CLI is detected
+- Codex costs displayed as approximate (`~$X.XX`)
+- **Codex WT profiles & watermarks** - Continue and Fork now create `Codex-` prefixed WT profiles with background images
+- **Color-coded stats** - Session stats line split by CLI source (Claude in blue, Codex in magenta)
+- **co$t menu ($)** - Toggle cost column on/off; OFF = instant load (no .jsonl parsing)
+- **Performance optimization** - Hidden columns skip all I/O; costs lazy-loaded with progress bar
+- **158 automated tests** - Up from 80, with functional tests, data integrity, and regression tests (results copyable to clipboard)
+- Works on both Windows and Linux; graceful when Codex is not installed
 
 ## One-Line Install
 
@@ -32,7 +37,7 @@ Write-Host "`n✓ Installation complete! Look for 'Claude Session Manager' on yo
 ## First Use
 
 1. **Double-click** "Claude Session Manager" on your desktop
-2. You'll see a menu of all your Claude sessions (including unnamed ones)
+2. You'll see a menu of all your Claude and Codex sessions (including unnamed ones)
 3. **Use UP/DOWN arrows** to navigate between sessions
 4. **Press Enter** to select a session
 5. Choose:
@@ -107,6 +112,10 @@ Press **R** to reload session data
 - `[fork-name]` = Newly forked (not yet indexed by Claude)
 - `(unnamed)` = Session without a custom name
 
+**Source Column (Src):**
+- `C` = Claude session (displayed in blue)
+- `X` = Codex session (displayed in magenta)
+
 **Fork Column:**
 - `<- parent` = Forked from parent session
 
@@ -144,6 +153,14 @@ Press **R** to reload session data
 
 💡 **Tip 16**: Orphaned background images (not used by any profile) are automatically overwritten
 
+💡 **Tip 17**: Install Codex CLI to see both Claude and Codex sessions in the same menu
+
+💡 **Tip 18**: Codex sessions now get WT profiles and background watermarks too (with `Codex-` prefix)
+
+💡 **Tip 19**: Press $ to toggle the cost column -- hiding it makes the menu load instantly (no .jsonl parsing)
+
+💡 **Tip 20**: Press D > V to run 158 validation tests, then copy results to clipboard
+
 ## Keyboard Shortcuts
 
 **Navigation:**
@@ -155,6 +172,7 @@ Press **R** to reload session data
 - **W** - Windows Terminal config
 - **S** - Show unnamed sessions
 - **H** - Hide unnamed sessions
+- **$** - co$t menu (show/hide cost column, generate cost table)
 - **O** - cOst analysis report
 - **D** - Debug mode toggle
 - **Q** - Quiet mode (bypass permissions)
@@ -168,7 +186,7 @@ The script creates these files in your home directory:
 
 ```
 ~\.claude-menu\
-├── Claude-Menu.ps1              # The script (~4000 lines)
+├── Claude-Menu.ps1              # The script (~14,000+ lines)
 ├── session-mapping.json         # Session tracking
 ├── profile-registry.json        # Profile registry
 ├── background-tracking.json     # Background tracking

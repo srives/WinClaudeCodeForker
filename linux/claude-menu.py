@@ -30,7 +30,7 @@ lib_dir = Path(__file__).parent / 'lib'
 sys.path.insert(0, str(lib_dir))
 
 from lib.config import get_config_manager, get_config, get_claude_projects_path, get_all_claude_paths, setup_logging, log_debug, log_info, log_error, get_debug_log_path
-from lib.session import get_all_sessions, get_git_branch, get_session_model, get_session_cost, Session
+from lib.session import get_all_sessions, get_all_codex_sessions, get_git_branch, get_session_model, get_session_cost, Session
 from lib.menu import SessionMenu, SessionActionMenu, MenuAction
 from lib.image import create_background_image, BackgroundInfo
 from lib.terminal import get_adapter, detect_terminal, is_wsl
@@ -48,6 +48,7 @@ def check_dependencies() -> dict:
         'kitty': shutil.which('kitty') is not None,
         'konsole': shutil.which('konsole') is not None,
         'claude': shutil.which('claude') is not None,
+        'codex': shutil.which('codex') is not None,
         'wsl': is_wsl(),
     }
 
@@ -109,12 +110,18 @@ def show_debug_menu():
     if deps['wsl'] and not deps['kitty'] and not deps['konsole']:
         print("\n  ℹ WSL Mode: Using direct terminal (no GUI needed)")
 
-    print("\n[Claude CLI]")
+    print("\n[CLI Tools]")
     if deps['claude']:
         print("  Claude:       ✓ Available")
     else:
         print("  Claude:       ✗ Not found")
         print("                Install from: https://claude.ai/download")
+
+    if deps['codex']:
+        print("  Codex:        ✓ Available")
+    else:
+        print("  Codex:        ✗ Not found")
+        print("                Install from: https://openai.com/codex")
 
     print("\n[Configuration]")
     print(f"  Terminal:     {config.terminal}")
@@ -198,7 +205,9 @@ def show_debug_menu():
             status = "enabled" if config_mgr.config.debug else "disabled"
             print(f"\nDebug logging {status}.")
             if config_mgr.config.debug:
-                print(f"Log file: {get_debug_log_path()}")
+                debug_path = get_debug_log_path()
+                print(f"Log file: {debug_path}")
+                log_debug(f"Debug log: {debug_path}")
             input("\nPress Enter to continue...")
 
         elif choice == '5':
@@ -501,9 +510,26 @@ def run_menu_loop() -> int:
 
 
 def handle_new_session():
-    """Start a new Claude session."""
+    """Start a new Claude or Codex session."""
     log_info("handle_new_session() called")
-    print("\nStarting new Claude session...")
+
+    # If Codex is available, offer CLI choice
+    use_codex = False
+    if shutil.which('codex'):
+        print("\nWhich CLI? [C]laude / code[X] / [A]bort:")
+        try:
+            choice = input("> ").strip().upper()
+            if choice == 'X':
+                use_codex = True
+            elif choice == 'A':
+                print("Cancelled.")
+                return
+        except KeyboardInterrupt:
+            print("\nCancelled.")
+            return
+
+    cli_name = "Codex" if use_codex else "Claude"
+    print(f"\nStarting new {cli_name} session...")
     print("Enter the project directory (or press Enter for current directory):")
 
     try:
@@ -517,6 +543,16 @@ def handle_new_session():
             log_error(f"Directory does not exist: {directory}")
             print(f"Error: Directory does not exist: {directory}")
             input("Press Enter to continue...")
+            return
+
+        # Codex: just launch codex in directory (skip model/profile workflow)
+        if use_codex:
+            log_info(f"Launching codex in directory: {directory}")
+            original_dir = os.getcwd()
+            os.chdir(directory)
+            os.system('codex')
+            os.chdir(original_dir)
+            log_info("handle_new_session() completed (codex)")
             return
 
         # Get optional session name
@@ -570,8 +606,8 @@ def handle_new_session():
 
 
 def handle_continue(session: Session):
-    """Continue an existing session."""
-    log_info(f"handle_continue() called for session: {session.session_id[:8]}")
+    """Continue an existing session (Claude or Codex)."""
+    log_info(f"handle_continue() called for session: {session.session_id[:8]} (source={session.source})")
     print(f"\nContinuing session: {session.display_name}")
 
     config = get_config()
@@ -580,8 +616,12 @@ def handle_continue(session: Session):
     adapter = get_adapter(config.terminal)
     log_debug(f"Adapter: {adapter.name}, available: {adapter.is_available()}")
 
-    # Build claude resume command
-    cmd = f"claude --resume {session.session_id}"
+    # Build resume command based on source
+    if session.source == 'codex':
+        cmd = f"codex resume {session.session_id}"
+        log_debug(f"Codex resume: dispatching to '{cmd}' in {session.project_path}")
+    else:
+        cmd = f"claude --resume {session.session_id}"
     log_debug(f"Command: {cmd}")
 
     # For direct mode or if no profile exists, run directly
@@ -606,9 +646,18 @@ def handle_continue(session: Session):
 
 
 def handle_fork(session: Session):
-    """Fork a session."""
-    log_info(f"handle_fork() called for session: {session.session_id[:8]}")
+    """Fork a session (Claude or Codex)."""
+    log_info(f"handle_fork() called for session: {session.session_id[:8]} (source={session.source})")
     print(f"\nForking session: {session.display_name}")
+
+    # Codex has native fork command
+    if session.source == 'codex':
+        cmd = f"codex fork {session.session_id}"
+        log_debug(f"Codex fork command: {cmd}")
+        os.chdir(session.project_path)
+        os.system(cmd)
+        return
+
     print("Enter name for forked session:")
 
     try:
@@ -812,6 +861,7 @@ def show_column_config():
     # Column display names
     column_names = {
         'row_num': '# (Row Number)',
+        'source': 'Source (C=Claude, X=Codex)',
         'session': 'Session Name',
         'model': 'Model',
         'messages': 'Messages',

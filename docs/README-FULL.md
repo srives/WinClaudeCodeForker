@@ -3,38 +3,38 @@
 [Download Installer Here](https://github.com/srives/WinClaudeCodeForker/releases/tag/name), called WinClaudeForker.exe
 
 
-## What's New in v1.5.0 (2026-01-21)
+## What's New in v3.0.0 (2026-02-26)
 
 ✨ **Major Features:**
-- 📄 **Dynamic Pagination** - Menu automatically adjusts to screen size with PgUp/PgDn navigation for large session lists
-- ✏️ **Session Rename** - Press M to rename sessions and update all references (Claude index, Windows Terminal profiles)
-- 🏷️ **Tracked Name Support** - Sessions in [brackets] now properly recognized with existing Windows Terminal profiles
-- ⚡ **Simplified Mode Switching** - Clean [Y/I/N] prompts for Quiet/Chatty mode with optional detailed info
+- 🔀 **Unified Multi-CLI Dashboard** - Both Claude Code and OpenAI Codex sessions in one menu
+- 📋 **Src Column** - Shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
+- 🎨 **Codex WT Profiles & Watermarks** - Full Windows Terminal profile + background support for Codex sessions
+- 💰 **Codex Cost Tracking** - Approximate costs (`~$X.XX`) for Codex sessions
+- ✅ **158 Automated Tests** - Up from 80, with functional tests, data integrity, and regression tests (results copyable to clipboard)
 
 🛠️ **Improvements:**
-- Page indicator shows "pg 1/x" when menu spans multiple screens
-- Rename updates all locations: sessions-index.json, Windows Terminal profiles, session mapping
-- Fixed sessions with tracked names incorrectly prompting to create profiles
-- Information overload reduced - detailed explanations hidden unless requested
+- New session prompts "Claude | codeX | Abort" when Codex CLI is available
+- Color-coded stats line split by CLI source (Claude in blue, Codex in magenta)
+- CamelCase titles for Codex auto-generated session names
+- Purge & Cleanup now handles orphaned WT profiles (both Claude-* and Codex-*)
+- Profile creation prompt on Continue for named sessions without WT profiles
+- Array wrapping fix prevents `.Count` bug with single session
+- **co$t menu ($)** - Toggle cost column on/off for instant load when off
+- **Performance optimization** - Hidden columns skip all I/O; costs lazy-loaded with progress bar
+- Bug fixes: Format-Cost interpolation, token overflow [int]->[long], Format-TokenCount B suffix
 
-🔧 **Previous Release - v1.4.0:**
-- Git Branch Integration on backgrounds and session info
-- Model Display (Opus/Sonnet/Haiku) on background images
-- Smart Image Conflict Resolution with usage tracking
-- Directory Selection for new sessions with validation
+# Codex and Claude Code Session Manager
 
-# Windows Claude Code Forker
-
-Have you ever been working in Claude Code CLI and wished you could easily see and manage all your sessions across projects?
-Have you ever lost track of which session you were working on, or wanted to fork a session into its own dedicated terminal 
+Have you ever been working in Claude Code or Codex CLI and wished you could easily see and manage all your sessions across projects?
+Have you ever lost track of which session you were working on, or wanted to fork a session into its own dedicated terminal
 window with a custom background?
 
-This is for you. It is a PowerShell-based session manager for Claude Code CLI with Windows Terminal integration--a nice way 
-to start Claude Code and see everything you are working on across all sessions across your hard drive.
+This is for you. It is a PowerShell-based unified session manager for both Claude Code CLI and OpenAI Codex CLI with Windows Terminal integration--a nice way
+to see everything you are working on across all sessions across your hard drive, regardless of which AI CLI you are using.
 
 ## Features
 
-- 🔍 **Session Discovery** - Automatically finds all Claude sessions across projects
+- 🔍 **Session Discovery** - Automatically finds all Claude and Codex sessions across projects
 - 🍴 **Fork Sessions** - Create branching sessions with custom Windows Terminal profiles
 - ✏️ **Session Rename** - Rename sessions with automatic updates to all references (Claude index, Windows Terminal, session mapping)
 - 🎨 **Custom Backgrounds** - Generate or use custom background images for each session
@@ -49,6 +49,7 @@ to start Claude Code and see everything you are working on across all sessions a
 - 💰 **Cost Tracking** - Monitor token usage and costs per session with detailed analytics
 - 🐛 **Debug Mode** - Comprehensive logging and diagnostics for troubleshooting
 - ✅ **Session Validation** - Prevents errors by validating session files before operations
+- 🔀 **Codex CLI Integration** - Unified menu for both Claude and OpenAI Codex sessions (v3.0.0)
 
 ## See It In Action
 
@@ -61,7 +62,7 @@ Each forked session gets a custom Windows Terminal profile with a watermark show
 
 ### Interactive Session Management
 
-Launch the menu to see all your Claude sessions across all projects, with fork relationships, activity indicators, and quick actions.
+Launch the menu to see all your Claude and Codex sessions across all projects, with fork relationships, activity indicators, and quick actions.
 
 ![Main menu showing session list](MainMenu.png)
 *Main menu with session discovery, fork tracking, and Windows Terminal profile management*
@@ -81,7 +82,8 @@ You need **instant visual context** - and that's exactly what the background wat
 - **Windows 10/11**
 - **PowerShell 5.1+** (pre-installed on Windows)
 - **Windows Terminal** ([Download](https://aka.ms/terminal))
-- **Claude Code CLI** (Anthropic's official CLI tool)
+- **Claude Code CLI** and/or **OpenAI Codex CLI** (at least one required)
+- **Python** (optional -- required on Windows for Codex SQLite reading)
 
 ## Installation
 
@@ -136,7 +138,7 @@ Then you can run it from any terminal by typing `claude-fork`.
 When you launch the script, you'll see an interactive menu showing all your Claude sessions:
 
 ```
-Claude Code Session Manager with Win Terminal Forking, S. Rives, v.2026.1.20
+Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking, S. Rives, v.2026.1.20
 Current directory: C:\repos\myproject
 * A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it.
 Claude Sessions: 14 (Named: 0, Unnamed: 14) | Debug: OFF | Permissions: Quiet | Total Cost: $235.57
@@ -412,7 +414,7 @@ The script creates and manages these files:
 
 ```
 C:\Users\<username>\.claude-menu\
-├── Claude-Menu.ps1                  # Main script (~4000 lines)
+├── Claude-Menu.ps1                  # Main script (~14,000+ lines)
 ├── session-mapping.json             # Session to WT profile mapping
 ├── profile-registry.json            # Profile registry (legacy)
 ├── background-tracking.json         # Background image tracking

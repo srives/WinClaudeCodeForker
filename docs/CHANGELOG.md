@@ -1,6 +1,119 @@
 # Changelog
 
-All notable changes to Claude Code Session Manager will be documented in this file.
+All notable changes to Codex and Claude Code Session Manager will be documented in this file.
+
+## [3.0.0] - 2026-02-26
+
+### Codex CLI Integration
+- **Unified session menu** now shows both Claude and Codex CLI sessions side by side
+- New **Src** column displays `C` (Claude, blue) or `X` (Codex, magenta) to identify session source
+- Codex sessions discovered from SQLite database at `~/.codex/state_*.sqlite`
+- Continue dispatches to `codex resume <id>` for Codex sessions
+- Fork dispatches to `codex fork <id>` for Codex sessions
+- New session creation prompts **"Claude | codeX | Abort"** when Codex CLI is detected
+- Codex cost shown as approximate (`~$X.XX`) from aggregate token counts
+- Works on both Windows and Linux platforms
+- Graceful degradation: only Claude sessions shown when Codex CLI is not installed
+
+### Color-Coded Display
+- Title bar shows "Codex (X) and Claude Code (C)" with X in magenta and C in blue
+- Session stats line split into two color-coded segments: Claude stats in blue, Codex stats in magenta (each with own cost total)
+- Debug status and Claude Permissions moved to the "Current directory" line
+
+### Codex WT Profiles & Background Watermarks
+- Continue (codex resume) now creates/reuses a `Codex-<name>` WT profile with background watermark
+- Fork (codex fork) prompts for a name, generates fork background image, creates `Codex-<name>` WT profile
+- Codex WT profiles use `Codex-` prefix (vs `Claude-` for Claude sessions)
+- Session title derived from Codex auto-generated title (sanitized, truncated to 30 chars)
+- Codex auto-generated titles shown in [brackets] to signal provisional/auto-generated
+
+### Claude-Specific Labeling
+- Quiet/Chatty mode titles changed to "CLAUDE CODE: SWITCH TO QUIET/CHATTY MODE?" with note "(This does not affect Codex sessions.)"
+- Trusted session prompt: "Claude Code: Do you want a trusted session..."
+- Model choice prompt: "Select Claude Code model:"
+
+### Src Column in WT Config
+- Added Src column as first column in the WIN TERMINAL CONFIG view
+- Color-coded `C`/`X` markers same as main menu
+
+### .ps1 CLI Shim Support
+- `Start-WTClaude` now detects `.ps1` CLI paths (e.g. npm-installed Codex at `codex.ps1`) and wraps with `powershell -NoProfile -ExecutionPolicy Bypass -File`
+- Fixes Windows Terminal not being able to execute .ps1 files directly
+
+### CamelCase Titles for Codex Sessions
+- Codex auto-generated titles displayed in CamelCase format (e.g. `[DontFixItJustCheck]`)
+- New `Get-SessionWTTitle` function derives WT profile title from session metadata (handles sanitization, truncation to 30 chars)
+- Codex WT profile lookup uses `Get-SessionWTTitle` for consistent matching
+
+### Purge & Cleanup Enhancements
+- Renamed from "PURGE DEAD SESSIONS" to "PURGE & CLEANUP"
+- Two sections: [1] Dead Sessions, [2] Orphaned WT Profiles
+- New **W** key option: bulk remove orphaned Windows Terminal profiles (`Claude-*` and `Codex-*`)
+- New `Find-OrphanedWTProfiles` function detects WT profiles with no matching session
+- Y/N confirmation before removing profiles; options only appear when relevant
+
+### Profile Creation Prompt on Continue
+- Named sessions without a WT profile now get explicit Y/N prompt: "This session does not have a Windows Terminal profile. Would you like to create one?"
+- New shared `Get-CreateProfileChoice` function used by both named and unnamed session paths (code deduplication)
+
+### WT Config Default Changed
+- WIN TERMINAL CONFIG now shows ALL sessions by default (not just ones with profiles)
+- Users can still toggle to profiles-only with P key
+
+### PowerShell Array Wrapping Fix
+- All calls to `Get-AllClaudeSessions` and `Get-AllCodexSessions` now wrapped in `@()` to force array
+- Fixes bug where `.Count` returns `$null` when exactly 1 session exists
+- 12 call sites fixed across the codebase; Test 108 prevents regression
+
+### Codex Model Name Fix
+- Model now read from rollout JSONL `turn_context` entries (e.g. "gpt-5.2-codex")
+- Previously showed "openai" (just the provider name)
+- Falls back to `config.toml` default model, then "codex"
+
+### Codex Unix Timestamp Fix
+- Codex stores timestamps as Unix epoch integers (e.g. 1772059949), not ISO strings
+- Windows: uses `[DateTimeOffset]::FromUnixTimeSeconds()`
+- Linux: uses `datetime.fromtimestamp()`
+
+### Set-BackgroundFromFile .txt Fix
+- `Set-BackgroundFromFile` now creates a companion `background.txt` file
+- Prevents the "Background .txt/.png Pairing" validation warning for custom image backgrounds
+
+### Performance Optimization
+- **co$t menu ($ key)**: Sub-menu to show/hide cost column and generate cost table
+- When Cost column is OFF: zero .jsonl parsing, instant load
+- When Cost column is ON: costs calculated with progress counter ("Calculating costs... 14/38"), then cached
+- Hidden columns skip all I/O: Model, ForkedFrom, Cost, Git, Notes columns all gated by visibility
+- Background auto-regeneration disabled for performance (use WT Config > Diagnose manually)
+- Model detection uses fast cached sources (background.txt, session-mapping) instead of .jsonl parsing
+- Clear-Host before session reload prevents debug scroll issues
+- Cursor positioning for "Last command" display instead of blank line padding
+
+### Display Changes
+- Cost totals show in header when Cost column is on, with progress bar
+- About screen shows SYS1000.NET as clickable link (OSC 8 hyperlink)
+
+### Bug Fixes
+- **Format-Cost**: `"<$0.01"` was returning `<.01` (PowerShell `$0` variable interpolation) -- fixed to single quotes
+- **Token count overflow**: `[int]` to `[long]` for accumulators and `Format-TokenCount` parameter (prevents crash at 2.1B+ tokens)
+- **Format-TokenCount**: added B (billion) suffix for counts over 1B
+- **ConvertTo-CamelCaseTitle**: truncation increased from 20 to 30 chars for more meaningful titles
+- **Set-BackgroundFromFile**: now creates companion `.txt` file (fixes pairing warnings)
+- Removed stray `Write-Host ""` in `Get-AllClaudeSessions` (caused blank lines on refresh)
+- **Get-ModelFromBackgroundTxt**: needs to handle `Codex-` prefix (flagged as warning)
+
+### Validation Tests Expanded to 158
+- 28 tests (81-108) covering Codex integration, purge/cleanup, profile creation, array wrapping, Codex model/timestamp fixes
+- 50 new tests (109-158) covering:
+  - **Functional tests** (109-138): EXECUTE real functions with mock inputs (Format-Cost, Format-TokenCount, ConvertTo-CamelCaseTitle, Get-SessionCost, Get-SessionWTTitle, ConvertTo-Hashtable, Test-JsonStructure, Get-DynamicPathWidth, etc.)
+  - **Data integrity tests** (139-148): No duplicate session IDs, ColumnDefinitions matches config, WT profile backgrounds exist
+  - **Regression tests** (149-158): No bare Write-Host in discovery, no blank line padding, both WT prefixes checked, .ps1 wrapping, Clear-Host before reload
+- Every test section has RULE comment: "When a test fails, examine the PRODUCTION CODE first"
+- **Clipboard copy**: Validation results can be copied to clipboard (Errors only, Warnings+Errors, or All results)
+
+### Platform Notes
+- Windows requires Python for SQLite reading (Codex session discovery)
+- Linux uses built-in `sqlite3` command for Codex session discovery
 
 ## [2.1.1] - 2026-02-24
 

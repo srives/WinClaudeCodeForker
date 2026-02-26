@@ -190,6 +190,8 @@ class SessionMenu:
         for key, header, width in visible_cols:
             if key == 'row_num':
                 row_data.append(str(row_num))
+            elif key == 'source':
+                row_data.append('X' if session.source == 'codex' else 'C')
             elif key == 'session':
                 row_data.append(session.display_name[:width])
             elif key == 'model':
@@ -292,6 +294,7 @@ class SessionMenu:
     # Column definitions: (config_key, header, width)
     COLUMN_DEFS = [
         ('row_num', '#', 3),
+        ('source', 'Src', 4),
         ('session', 'Session', 25),
         ('model', 'Model', 8),
         ('messages', 'Msgs', 5),
@@ -438,6 +441,7 @@ class SessionMenu:
         # Map column keys to sort functions
         sort_key_map = {
             'row_num': lambda s: 0,  # No sort
+            'source': lambda s: s.source,
             'session': lambda s: s.display_name.lower(),
             'model': lambda s: s.model.lower() if s.model else '',
             'messages': lambda s: s.message_count,

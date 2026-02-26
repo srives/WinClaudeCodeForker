@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-**Windows Claude Code Forker** (aka Claude Code Session Manager) is a PowerShell-based session manager for Claude Code CLI with deep Windows Terminal integration. It enables visual session management, forking workflows, cost tracking, and custom terminal backgrounds.
+**Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking** is a PowerShell-based unified session manager for both Claude Code CLI and OpenAI Codex CLI with deep Windows Terminal integration. It enables visual session management across both CLIs, forking workflows, cost tracking, and custom terminal backgrounds.
 
-**Current Version:** 2.1.1
+**Current Version:** 3.0.0 (2026-02-26)
 **Author:** S. Rives
 **Created:** January 2026
 **Platform:** Windows 10/11 with PowerShell 5.1+
@@ -13,7 +13,7 @@
 
 ```
 C:\repos\Fork\
-├── Claude-Menu.ps1           # Main application (~11,800 lines PowerShell)
+├── Claude-Menu.ps1           # Main application (~14,000+ lines PowerShell)
 ├── README.md                 # User documentation
 ├── CLAUDE.md                 # This file - project knowledge base
 ├── linux/                    # Linux port (Python + shell wrappers)
@@ -51,8 +51,9 @@ C:\repos\Fork\
 ## Key Features
 
 ### Session Management
-- **Session Discovery**: Scans `~/.claude/projects/` for all Claude sessions
-- **Fork/Continue**: Branch conversations or resume existing sessions
+- **Session Discovery**: Scans `~/.claude/projects/` for all Claude sessions and `~/.codex/state_*.sqlite` for Codex sessions
+- **Unified Menu**: Both Claude and Codex sessions displayed together with Src column (`C` blue / `X` magenta)
+- **Fork/Continue**: Branch conversations or resume existing sessions (dispatches to appropriate CLI)
 - **Session Renaming**: Update session names with all metadata references
 - **Session Notes**: Add notes to any session for context
 - **Archive Status**: Mark sessions as archived
@@ -72,13 +73,23 @@ C:\repos\Fork\
 - **Arrow Key Navigation**: UP/DOWN to navigate, Enter to select
 - **Color-Coded Display**: Activity markers, model indicators, cost coloring
 - **Dynamic Pagination**: Handles hundreds of sessions with PgUp/PgDn
-- **Configurable Columns**: 11 columns, toggle visibility with G key
+- **Configurable Columns**: 12 columns (including Src), toggle visibility with G key
+- **co$t Menu**: Press $ to show/hide cost column; hiding it skips all .jsonl parsing for instant load
 - **Context Limit Warnings**: Shows usage % with color-coded severity
 
 ### Cost Tracking
 - **Per-Session Costs**: Calculate costs based on Claude Sonnet 4.5 pricing
 - **Token Analytics**: Track input, output, cache reads/writes
 - **Cache Hit Rates**: Monitor prompt caching effectiveness
+- **Lazy Loading**: Cost column can be toggled via co$t menu ($ key); when OFF, zero .jsonl parsing for instant load
+- **Progress Bar**: When Cost column is ON, costs calculated with progress counter ("Calculating costs... 14/38"), then cached
+
+### Performance Optimization
+- **Hidden Column I/O Gating**: When columns are hidden (Model, ForkedFrom, Cost, Git, Notes), all associated I/O is skipped entirely
+- **Cost Lazy-Loading**: Cost column OFF = zero .jsonl parsing; ON = calculated with progress bar, then cached
+- **Model Detection Fast Path**: Uses cached sources (background.txt, session-mapping) instead of .jsonl parsing
+- **Background Auto-Regeneration Disabled**: Background images no longer auto-regenerated on refresh (use WT Config > Diagnose manually)
+- **Clear-Host Before Reload**: Prevents debug scroll issues on session reload
 
 ## Architecture
 
@@ -100,7 +111,7 @@ The Windows version is intentionally a single PowerShell file for easy distribut
 #region Profile Registry        # ~200 lines - Legacy profile tracking
 #region Model Detection         # ~150 lines - Parse model from sessions
 #region Background Tracking     # ~300 lines - Background image metadata
-#region Validation Tests        # ~800 lines - 80 automated tests
+#region Validation Tests        # ~2000 lines - 158 automated tests
 #region Main Program            # ~200 lines - Entry point, main loop
 ```
 
@@ -176,6 +187,7 @@ All data stored in `~/.claude-menu/`:
 ```json
 {
   "Active": true,
+  "Src": true,
   "Model": true,
   "Session": true,
   "Notes": false,
@@ -193,8 +205,13 @@ All data stored in `~/.claude-menu/`:
 
 ### Session Discovery
 - `Get-AllClaudeSessions` - Discovers sessions from ~/.claude/projects/
+- `Get-AllCodexSessions` - Discovers sessions from ~/.codex/state_*.sqlite
+- `Get-CodexCLIPath` - Finds the Codex CLI executable path
+- `Get-CodexDbPath` - Finds the Codex SQLite database path
+- `Get-CodexDefaultModel` - Reads default model from Codex config.toml
 - `ConvertTo-ClaudeProjectPath` - Encodes paths (C:\repos → C--repos)
 - `ConvertFrom-ClaudeProjectPath` - Decodes paths (C--repos → C:\repos)
+- `ConvertTo-CamelCaseTitle` - Converts Codex auto-generated titles to CamelCase (truncated to 30 chars)
 
 ### Menu & Navigation
 - `Show-SessionMenu` - Renders the main session list
@@ -203,15 +220,22 @@ All data stored in `~/.claude-menu/`:
 - `Show-ColumnConfigMenu` - Column visibility configuration
 
 ### Session Operations
-- `Start-NewSession` - Creates a new Claude session
-- `Start-ContinueSession` - Resumes an existing session
-- `Start-ForkSession` - Forks a session with new profile
+- `Start-NewSession` - Creates a new Claude or Codex session (prompts when Codex available)
+- `Start-ContinueSession` - Resumes an existing session (dispatches to claude or codex CLI)
+- `Start-ForkSession` - Forks a session with new profile (dispatches to claude or codex CLI)
+- `Start-ContinueCodexSession` - Resumes a Codex session via `codex resume <id>`
+- `Start-ForkCodexSession` - Forks a Codex session via `codex fork <id>`
+- `Test-CodexCLI` - Checks if Codex CLI is installed and available
+- `Get-CodexTokenUsage` - Reads aggregate token counts from Codex SQLite database
 - `Start-WTClaude` - Launches Claude in WT (writes commandline to profile, avoids WT argument parsing bugs)
 - `Rename-ClaudeSession` - Renames with all metadata updates
 - `Find-DeadSessions` - Finds sessions whose .jsonl files no longer exist
-- `Show-PurgeMenu` - Bulk archive/delete dead sessions
+- `Find-OrphanedWTProfiles` - Finds WT profiles (Claude-*/Codex-*) with no matching session
+- `Show-PurgeMenu` - Bulk archive/delete dead sessions and remove orphaned WT profiles
+- `Get-CreateProfileChoice` - Shared Y/N prompt for creating WT profiles (used by Continue and unnamed session paths)
 
 ### Windows Terminal
+- `Get-SessionWTTitle` - Derives WT profile title from session (handles Codex CamelCase titles, sanitization, truncation)
 - `Add-WTProfile` - Creates a Windows Terminal profile
 - `Remove-WTProfile` - Deletes a profile with cleanup
 - `Get-WTProfileName` - Finds profile by session
@@ -223,7 +247,7 @@ All data stored in `~/.claude-menu/`:
 - `New-ContinueSessionBackgroundImage` - Wrapper for continued sessions
 
 ### Validation
-- `Test-SystemValidation` - Runs 80 automated tests
+- `Test-SystemValidation` - Runs 158 automated tests (results can be copied to clipboard: errors only, warnings+errors, or all)
 
 ## Menu Keys
 
@@ -236,8 +260,9 @@ All data stored in `~/.claude-menu/`:
 | W | Win Terminal Config mode |
 | H/S | Hide/Show unnamed sessions |
 | Q/C | Quiet/Chatty permission mode |
+| $ | co$t menu (show/hide cost column, generate cost table) |
 | O | Cost analysis |
-| P | Purge dead sessions |
+| P | Purge & Cleanup (dead sessions + orphaned WT profiles) |
 | D | Debug menu |
 | R | Refresh |
 | G | Column configuration |
@@ -259,13 +284,27 @@ All data stored in `~/.claude-menu/`:
 
 ## Testing
 
-The script includes 80 automated validation tests accessible via Debug menu (D → V):
+The script includes 158 automated validation tests accessible via Debug menu (D → V):
 
 - **Tests 1-15**: Infrastructure (PowerShell, CLI, directories, JSON)
 - **Tests 16-30**: Logic (functions, encoding, sanitization)
 - **Tests 31-57**: Algorithms (menu keys, sorting, edge cases)
 - **Tests 58-65**: Caching system validation
 - **Tests 66-80**: Regression prevention, keyboard handlers
+- **Tests 81-89**: Codex integration (CLI detection, session discovery, SQLite reading)
+- **Tests 90-108**: Purge/cleanup, profile creation, array wrapping, Codex model/timestamp fixes
+- **Tests 109-138**: Functional tests that EXECUTE real functions with mock inputs (Format-Cost, Format-TokenCount, ConvertTo-CamelCaseTitle, Get-SessionCost, Get-SessionWTTitle, ConvertTo-Hashtable, Test-JsonStructure, Get-DynamicPathWidth, etc.)
+- **Tests 139-148**: Data integrity tests (no duplicate session IDs, ColumnDefinitions matches config, WT profile backgrounds exist)
+- **Tests 149-158**: Regression tests (no bare Write-Host in discovery, no blank line padding, both WT prefixes checked, .ps1 wrapping, Clear-Host before reload)
+
+**Validation results can be copied to clipboard:** Errors only, Warnings+Errors, or All results.
+
+### Test Philosophy
+- Every test section has a RULE comment: "When a test fails, examine the PRODUCTION CODE first"
+- Machine-independent: Tests logic, not user configuration
+- Functional tests EXECUTE real functions with mock inputs (not just checking function existence)
+- Regression prevention: Tests that would have caught bugs we fixed
+- Data integrity: Verifies internal consistency of session data and column definitions
 
 ## Linux Port (v2.0.1 - In Progress)
 
@@ -392,9 +431,81 @@ claude-menu --enable-debug
 | Cache reads | $0.30 |
 | Output | $15.00 |
 
-## Recent Work (February 24, 2026)
+## Recent Work (February 26, 2026)
 
-### v2.1.1 - Claude CLI .exe Compatibility, Purge, Column Sort Fix
+### v3.0.0 - Codex CLI Integration, Performance Optimization, 158 Tests
+
+1. **Unified Claude + Codex Session Menu**
+   - Both Claude and OpenAI Codex CLI sessions appear together in the main menu
+   - New "Src" column shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
+   - Codex sessions discovered from SQLite database (`~/.codex/state_*.sqlite`)
+   - Title bar shows "Codex (X) and Claude Code (C)" with color-coded markers
+   - Session stats line split into two color-coded segments: Claude stats in blue, Codex stats in magenta (each with own cost total)
+   - Cost totals show in header when Cost column is on, with progress bar "Calculating costs... 14/38"
+   - About screen shows SYS1000.NET as clickable link (OSC 8 hyperlink)
+
+2. **Codex Session Operations**
+   - Continue dispatches to `codex resume <id>` for Codex sessions
+   - Fork dispatches to `codex fork <id>` for Codex sessions
+   - New session prompts "Claude | codeX | Abort" when Codex CLI is detected
+   - CamelCase titles for Codex sessions (e.g. [DontFixItJustCheckCreate])
+   - Codex model read from rollout JSONL `turn_context` entries (not generic "openai")
+   - Codex timestamps parsed as Unix epoch integers
+
+3. **Codex WT Profiles + Background Watermarks**
+   - Continue (codex resume) now creates/reuses a `Codex-<name>` WT profile with background watermark
+   - Fork (codex fork) prompts for a name, generates fork background image, creates `Codex-<name>` WT profile
+   - Codex WT profiles use `Codex-` prefix (vs `Claude-` for Claude sessions)
+   - `Get-SessionWTTitle` shared function for WT profile title derivation (handles Codex CamelCase, sanitization, truncation)
+   - All 6 call sites updated to pass Source and use `Get-SessionWTTitle`
+   - `Get-WTProfileName` accepts -Source parameter, checks both Claude-/Codex- prefixes
+   - `Get-CreateProfileChoice` shared Y/N prompt for profile creation
+   - Named sessions without profiles get explicit Y/N prompt on Continue
+
+4. **Performance Optimization**
+   - co$t menu ($ key): sub-menu to show/hide cost column and generate cost table
+   - When Cost column is OFF: zero .jsonl parsing, instant load
+   - When Cost column is ON: costs calculated with progress counter, then cached
+   - Hidden columns skip all I/O: Model, ForkedFrom, Cost, Git, Notes columns all gated by visibility
+   - Background auto-regeneration disabled for performance (use WT Config > Diagnose manually)
+   - Model detection uses fast cached sources (background.txt, session-mapping) instead of .jsonl parsing
+   - Clear-Host before session reload prevents debug scroll issues
+   - Cursor positioning for "Last command" display instead of blank line padding
+
+5. **Display Changes**
+   - Title: "Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking"
+   - Debug/Permissions moved to "Current directory" line
+   - Session stats line color-coded: Claude in blue, Codex in magenta, with per-CLI cost totals
+
+6. **Claude-Specific Feature Labeling**
+   - Quiet/Chatty mode: "CLAUDE CODE: SWITCH TO QUIET/CHATTY MODE?" with note "(This does not affect Codex sessions.)"
+   - Trusted session prompt: "Claude Code: Do you want a trusted session..."
+   - Model choice prompt: "Select Claude Code model:"
+
+7. **Purge & Cleanup Enhancements** (`Show-PurgeMenu`, `Find-OrphanedWTProfiles`)
+    - Renamed from "PURGE DEAD SESSIONS" to "PURGE & CLEANUP"
+    - Two sections: [1] Dead Sessions, [2] Orphaned WT Profiles
+    - W key to bulk remove orphaned Windows Terminal profiles (Claude-* and Codex-*)
+    - `Find-OrphanedWTProfiles` function checks Claude-* and Codex-* profiles
+
+8. **Bug Fixes**
+   - `Format-Cost`: `"<$0.01"` was returning `<.01` (PowerShell $0 variable interpolation) -- fixed to single quotes
+   - Token count overflow: `[int]` to `[long]` for accumulators and `Format-TokenCount` parameter (prevents crash at 2.1B+ tokens)
+   - `Format-TokenCount`: added B (billion) suffix for counts over 1B
+   - PowerShell array wrapping: all `Get-AllClaudeSessions`/`Get-AllCodexSessions` calls wrapped in `@()` (fixes `.Count` returning `$null` for single items)
+   - `ConvertTo-CamelCaseTitle`: truncation increased from 20 to 30 chars for more meaningful titles
+   - `Set-BackgroundFromFile`: now creates companion .txt file (fixes pairing warnings)
+   - Removed stray `Write-Host ""` in `Get-AllClaudeSessions` (caused blank lines on refresh)
+   - `Get-ModelFromBackgroundTxt`: needs to handle Codex- prefix (flagged as warning)
+
+9. **Validation Tests Expanded to 158**
+   - Functional tests that EXECUTE real functions with mock inputs (Format-Cost, Format-TokenCount, ConvertTo-CamelCaseTitle, Get-SessionCost, Get-SessionWTTitle, ConvertTo-Hashtable, Test-JsonStructure, Get-DynamicPathWidth, etc.)
+   - Data integrity tests (no duplicate session IDs, ColumnDefinitions matches config, WT profile backgrounds exist)
+   - Regression tests (no bare Write-Host in discovery, no blank line padding, both WT prefixes checked, .ps1 wrapping, Clear-Host before reload)
+   - Every test section has RULE comment: "When a test fails, examine the PRODUCTION CODE first"
+   - Validation results can be copied to clipboard: Errors only, Warnings+Errors, or All results
+
+### Previous: v2.1.1 - Claude CLI .exe Compatibility, Purge, Column Sort Fix (February 24, 2026)
 
 1. **Claude CLI .exe Launch Fix** (`Start-WTClaude`)
    - Claude CLI updated from `.cmd` shim to native `claude.exe` (Feb 2026)
@@ -460,6 +571,7 @@ Session discovery in WSL - need to verify:
 
 ## Version History Highlights
 
+- **3.0.0**: Codex CLI integration, unified Claude + Codex menu, performance optimization (hidden columns skip I/O, cost lazy-loading), co$t menu, 158 tests with clipboard copy, CamelCase titles, bug fixes (Format-Cost, token overflow, array wrapping)
 - **2.1.1**: Claude .exe launch fix, Purge dead sessions, column sort fix, bug fixes
 - **2.0.1**: Linux port with WSL support, debug logging, multi-path detection
 - **2.0.0**: 80 validation tests, Linux port started

@@ -2,13 +2,13 @@
 
 ## Overview
 
-**Windows Claude Code Forker** is a single-file PowerShell application for managing Claude Code CLI sessions with Windows Terminal integration.
+**Codex and Claude Code Session Manager** is a single-file PowerShell application for managing both Claude Code CLI and OpenAI Codex CLI sessions with Windows Terminal integration.
 
 ## Files
 
 ```
 WinClaudeCodeForker/
-├── Claude-Menu.ps1          # Main application (92KB, ~2500 lines)
+├── Claude-Menu.ps1          # Main application (~14,000+ lines PowerShell)
 ├── README.md                # User documentation
 ├── INSTALL.md               # Installation guide
 ├── QUICKSTART.md            # Quick start guide
@@ -88,6 +88,22 @@ The script is organized into logical regions:
 #region Model Detection
   - Get-ModelFromSession
 
+#region Codex Integration
+  - Get-AllCodexSessions
+  - Get-CodexCLIPath
+  - Get-CodexDbPath
+  - Get-CodexDefaultModel
+  - Start-ContinueCodexSession
+  - Start-ForkCodexSession
+  - Get-CodexTokenUsage
+  - Test-CodexCLI
+  - ConvertTo-CamelCaseTitle
+
+#region Profile Helpers
+  - Get-SessionWTTitle
+  - Get-CreateProfileChoice
+  - Find-OrphanedWTProfiles
+
 #region Session Deletion
   - Remove-Session
 
@@ -109,7 +125,7 @@ The script is organized into logical regions:
 The script creates and manages these files in `~\.claude-menu\`:
 
 ### session-mapping.json
-Maps Claude session IDs to Windows Terminal profiles.
+Maps Claude and Codex session IDs to Windows Terminal profiles.
 
 ```json
 {
@@ -117,11 +133,13 @@ Maps Claude session IDs to Windows Terminal profiles.
   "sessions": [
     {
       "sessionId": "uuid",
-      "wtProfileName": "Claude-name",
+      "wtProfileName": "Claude-name or Codex-name",
       "projectPath": "C:\\repos",
       "model": "sonnet",
       "forkedFrom": "parent-uuid",
-      "created": "2026-01-19T..."
+      "created": "2026-01-19T...",
+      "source": "claude|codex",
+      "codex_tokens_used": 0
     }
   ]
 }
@@ -170,7 +188,9 @@ Tracks background images and their content.
 - **PowerShell 5.1+** - Scripting language
 - **.NET System.Drawing** - Image generation
 - **Windows Terminal JSON API** - Profile management
-- **Claude CLI** - Session management
+- **Claude CLI** - Claude session management
+- **Codex CLI** (optional) - Codex session management
+- **Python / sqlite3** - Codex SQLite database reading
 
 ## Design Decisions
 
@@ -184,7 +204,7 @@ Tracks background images and their content.
 - Simple versioning
 
 **Cons:**
-- Large file size (~92KB, ~2500 lines)
+- Large file size (~14,000+ lines)
 - Harder to navigate/maintain
 - No code splitting
 
@@ -204,13 +224,14 @@ Tracks background images and their content.
 - Some users unfamiliar with it
 - Execution policy restrictions
 
-**Conclusion**: Perfect fit for Windows Terminal integration.
+**Conclusion**: Perfect fit for Windows Terminal integration and multi-CLI session management.
 
 ### Why Not Python/Node.js?
 
 - Would require installation
 - More complex distribution
 - No significant benefits for this use case
+- Note: Python is used as an optional dependency for Codex SQLite database reading on Windows
 
 ## Development Guidelines
 

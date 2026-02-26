@@ -1,10 +1,11 @@
-# Claude Code Session Manager - Linux
+# Codex and Claude Code Session Manager - Linux
 
-A terminal-based session manager for Claude Code CLI on Linux, with support for session discovery, fork/continue workflows, and background watermark images.
+A terminal-based session manager for Claude Code CLI and OpenAI Codex CLI on Linux, with support for session discovery, fork/continue workflows, and background watermark images.
 
 ## Features
 
-- **Session Discovery**: Automatically finds all Claude Code sessions
+- **Session Discovery**: Automatically finds all Claude Code sessions (and Codex sessions when Codex CLI is installed)
+- **Unified Menu**: Both Claude and Codex sessions shown together with a Src column (`C`/`X`, color-coded)
 - **Fork/Continue**: Continue existing sessions or fork them with new names
 - **Background Watermarks**: Display session info as terminal background images (requires GUI terminal)
 - **Multiple Terminals**: Support for Kitty, Konsole, and direct mode (WSL/SSH)
@@ -16,8 +17,9 @@ A terminal-based session manager for Claude Code CLI on Linux, with support for 
 - Python 3.8+
 - Claude Code CLI (`claude` command)
 
-### Optional (for background images)
-- PIL/Pillow (`pip3 install pillow`) OR ImageMagick (`convert` command)
+### Optional
+- **Codex CLI** (`codex` command) -- enables unified Claude + Codex session display
+- PIL/Pillow (`pip3 install pillow`) OR ImageMagick (`convert` command) -- for background images
 
 ### Terminal Emulators (for watermarks)
 - **Kitty** - Recommended, best background image support
@@ -76,9 +78,13 @@ claude-menu --debug
 | c | Continue session |
 | f | Fork session |
 | x | Delete session |
-| r | Refresh session list |
+| e | Rename session |
+| h | Hide/show unnamed sessions |
+| o | Cost analysis |
+| g | Column configuration |
 | d or i | Debug/Info menu |
-| 1-5 | Sort by column |
+| r | Refresh session list |
+| a | About screen |
 | q or Esc | Quit |
 
 ## Terminal Modes
@@ -330,6 +336,7 @@ rm -rf ~/.config/claude-menu
 
 ## Version History
 
+- **3.0.0** - Codex CLI integration: unified Claude + Codex session menu
 - **2.0.0** - Linux port with Kitty/Konsole/Direct mode support
 - Based on Windows version (Claude-Menu.ps1)
 

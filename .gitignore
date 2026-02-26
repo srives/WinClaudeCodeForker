@@ -22,6 +22,9 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# Private planning files (double-underscore suffix = do not publish)
+*__.md
+
 # Backup files
 *.backup
 *.bak

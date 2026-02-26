@@ -1,20 +1,20 @@
-# Claude Code Session Manager v2.1.1
+# Codex and Claude Code Session Manager v3.0.0
 
-A visual session manager for Claude Code CLI with fork/continue workflows and background watermarks.
+A unified visual session manager for both Claude Code CLI and OpenAI Codex CLI with fork/continue workflows and background watermarks.
 
-| Platform | Status | Terminal Support |
-|----------|--------|------------------|
-| **Windows** | ✅ Stable | Windows Terminal |
-| **Linux** | 🚧 In Progress | Kitty, Konsole, WSL |
+| Platform | Status | Terminal Support | CLI Support |
+|----------|--------|------------------|-------------|
+| **Windows** | ✅ Stable | Windows Terminal | Claude Code, Codex |
+| **Linux** | 🚧 In Progress | Kitty, Konsole, WSL | Claude Code, Codex |
 
 ---
 
 ## Windows Version
-A Claude Code Session Manager CLI tool for Windows Terminal Users.
+A unified session manager for Claude Code and Codex CLI on Windows Terminal.
 Download **[WinClaudeForker.exe](https://github.com/srives/WinClaudeCodeForker/releases)**
 
-> **Visual session management for Claude Code CLI**
-> Never lose track of your conversations. See all your sessions, fork with confidence, track your costs.
+> **Unified session management for Claude Code and Codex CLI**
+> Never lose track of your conversations. See all Claude and Codex sessions in one menu, fork with confidence, track your costs.
 
 
 ![Main Menu](docs/MainMenu.png)
@@ -23,17 +23,18 @@ Download **[WinClaudeForker.exe](https://github.com/srives/WinClaudeCodeForker/r
 
 ## 🎯 The Problem
 
-Working with multiple Claude Code sessions? Can't remember which terminal is which project? No visual way to track your conversations? Wondering how much you're spending on API calls?
+Working with multiple Claude Code and Codex sessions across different projects? Can't remember which terminal is which? No visual way to track your conversations? Wondering how much you're spending on API calls across both CLIs?
 
 ## ✨ The Solution
 
-**Windows Claude Code Forker** gives you instant visual context for all your Claude sessions:
-- 📋 See all sessions at a glance with sortable columns
+**Codex and Claude Code Session Manager** gives you a unified dashboard for all your AI coding sessions:
+- 🔀 **Unified multi-CLI dashboard** -- see all Claude and Codex sessions in one menu
+- 📋 See all sessions at a glance with sortable columns and color-coded Src column
 - 🍴 Fork conversations with custom Windows Terminal backgrounds
-- 💰 Track costs per session with detailed analytics
+- 💰 Track costs per session with detailed analytics (both CLIs)
 - 🌿 Git branch awareness in every session
 - ⚡ Lightning-fast arrow-key navigation
-- 🎨 Custom backgrounds showing session context
+- 🎨 Custom backgrounds showing session context (works for both Claude and Codex)
 
 ![Session with Watermark](docs/screenshot_watermark.png)
 *Each forked session gets a unique background: session name, parent, git branch, and model*
@@ -68,19 +69,21 @@ $Shortcut.Save()
 - PowerShell 5.1+
 - Windows Terminal
 - Claude Code CLI
+- OpenAI Codex CLI (optional -- for unified Codex session management)
+- Python (optional -- required on Windows for Codex SQLite reading)
 
 ---
 
 ## 💡 Key Features
 
 ### Session Management
-- **All Sessions Visible** - Scans your entire drive for Claude sessions
+- **All Sessions Visible** - Scans your entire drive for Claude and Codex sessions
 - **Fork with Context** - Branch conversations with custom Windows Terminal profiles
 - **Archive & Notes** - Tag sessions with notes, archive old conversations
 - **Rename Anytime** - Rename sessions and update all references automatically
 
 ### Visual Intelligence
-- **Custom Backgrounds** - Each fork gets a unique background showing:
+- **Custom Backgrounds** - Each Claude or Codex fork gets a unique background showing:
   - Session name
   - Parent session (if forked)
   - Git branch
@@ -100,7 +103,7 @@ $Shortcut.Save()
 - **Dynamic Columns** - Customize which columns appear (11 configurable columns)
 - **Pagination** - Handle hundreds of sessions with screen-aware pagination
 - **Universal Defaults** - Press Enter for default action in any menu
-- **Silent Validation** - 80 automated tests protect against bugs
+- **Silent Validation** - 158 automated tests protect against bugs (results copyable to clipboard)
 
 ---
 
@@ -108,55 +111,8 @@ $Shortcut.Save()
 
 ### Launch & Navigate
 ```
-Launch → See all sessions → Use ↑↓ to navigate → Press Enter
+Launch → See all Claude and Codex sessions → Use ↑↓ to navigate → Press Enter
 ```
-
----
-
-## 📊 Cost Analysis
-
-View detailed cost breakdown for all sessions:
-
-```
-Session                    Cost    Input   Output  Cached  Hit%
-my-big-project            $15.23   2.5M    850K    12.3M   89%
-frontend-refactor          $8.45   1.2M    420K     8.1M   87%
-api-design                 $3.67   780K    190K     4.2M   84%
-─────────────────────────────────────────────────────────────
-TOTAL                     $27.35   4.5M    1.5M    24.6M   88%
-```
-
-*Pricing: Claude Sonnet 4.5 ($3/$3.75/$0.30/$15 per 1M tokens)*
-
----
-
-## 🎨 Visual Context at a Glance
-
-### Main Menu Example
-```
-+──────────────────────────────────────────────────────────────────────+
-| #  Active Model   Session           Messages  Created    Cost        |
-+──────────────────────────────────────────────────────────────────────+
-| 1  X      sonnet  my-project        45        01/18      $1.20       |
-| 2         opus    [test-fork]       0         01/19      $0.00       |
-| 3         haiku   api-redesign      28        01/17      $2.45       |
-+──────────────────────────────────────────────────────────────────────+
-
-New Session | Win Terminal Config | Hide Unnamed | cOst | Purge | Debug | Refresh | eXit
-```
-
-### WIN TERMINAL Background Images Show
-
-This is the key feature. Seeing a watermark on the Windows Terminal is the main idea
-of this product for me (a Windows user). The screen background image watermark has the 
-following information:
-
-- **Line 1:** Session name (bold, 48pt)
-- **Line 2:** Forked from parent (if applicable)
-- **Line 3:** Git branch
-- **Line 4:** AI model (Opus/Sonnet/Haiku)
-- **Line 5:** Computer:User
-- **Line 6:** Full directory path
 
 ---
 
@@ -169,8 +125,11 @@ Press 1, 2, 3, etc. to sort by the Nth visible column.
 ### Purge Dead Sessions
 Press **P** to scan for sessions whose conversation files no longer exist on disk. Dead sessions show a skull (☠) in the Active column. Purge lets you bulk archive or bulk delete them.
 
+### co$t Menu
+Press **$** to toggle the cost column on/off. Hiding costs skips all .jsonl parsing for instant load. Showing costs pre-calculates with a progress bar, then caches.
+
 ### Validation System
-Built-in self-protection with 80 automated tests
+Built-in self-protection with 158 automated tests (copy results to clipboard)
 
 ---
 
@@ -180,6 +139,7 @@ Built-in self-protection with 80 automated tests
 - Press `R` to refresh
 - Enable debug mode with `D`
 - Check `~\.claude-menu\debug.log`
+  Under Debug, you can notepad the debug.log
 
 **Background images not showing?**
 - Open Windows Terminal Settings
@@ -225,13 +185,13 @@ Each Windows Terminal profile gets a **custom background watermark** showing:
 
 ### Professional Quality
 - **Enterprise-grade UX** - Arrow navigation, silent input handling, universal defaults
-- **80 Automated Tests** - Self-validating code protects against regressions
+- **158 Automated Tests** - Self-validating code protects against regressions (results copyable to clipboard)
 - **Comprehensive Error Handling** - Graceful recovery from failures
-- **Performance Optimized** - Caching, pagination, instant response
+- **Performance Optimized** - Caching, pagination, instant response; co$t menu ($) toggles cost column for instant load when off
 
 ### Unique Features
-- **Only professional-grade session manager** for Claude Code
-- **Cost tracking** per session (know exactly what each conversation costs)
+- **Only unified session manager for both Claude Code and Codex** -- one menu for all your AI coding sessions
+- **Cost tracking** per session (know exactly what each conversation costs, both CLIs)
 - **Visual fork tracking** with custom watermark backgrounds
 - **Windows Terminal deep integration** (profiles, backgrounds, management)
 - **Git branch awareness** in every session
@@ -267,8 +227,8 @@ a cost justification that is logical):
 **Windows Version (If Developed Traditionally):**
 - Development cost: $175,000
 - Time to market: 6-8 months
-- Lines of code: ~9,000+ PowerShell
-- Features: 50+ with 80 automated tests
+- Lines of code: ~14,000+ PowerShell
+- Features: 50+ with 158 automated tests
 
 **Linux Port (If Developed Traditionally):**
 - Development cost: $35,000-50,000
@@ -283,9 +243,27 @@ a cost justification that is logical):
 
 ---
 
+## 🔀 Codex CLI Integration (v3.0.0)
+
+The session manager now supports **OpenAI Codex CLI** alongside Claude. When Codex CLI is installed, both Claude and Codex sessions appear in a unified menu.
+
+- **Src column** shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
+- **Continue** dispatches to `codex resume <id>` for Codex sessions
+- **Fork** dispatches to `codex fork <id>` for Codex sessions
+- **New Session** prompts "Claude | codeX | Abort" when Codex is available
+- **Cost display** shows approximate costs (`~$X.XX`) for Codex sessions
+- **WT Profiles & Watermarks** for Codex sessions (`Codex-` prefix profiles with background images)
+- **Color-coded stats** -- session stats line split by CLI source (Claude in blue, Codex in magenta)
+- Works on both **Windows** and **Linux**
+- **Graceful when Codex is not installed** -- only Claude sessions are shown
+
+> **Note:** On Windows, Python is required for reading Codex's SQLite database. On Linux, the built-in `sqlite3` command is used.
+
+---
+
 ## 🐧 Linux Version (In Progress)
 
-A Linux port is under development with support for:
+A Linux port is under development with support for both Claude Code and Codex CLI sessions:
 
 - **Terminal Emulators:** Kitty, Konsole
 - **WSL Support:** Direct mode for WSL environments without GUI
@@ -326,4 +304,4 @@ See [LICENSE](docs/LICENSE) for details.
 
 ---
 
-**⭐ Star this repo if it makes your Claude Code workflow better!**
+**⭐ Star this repo if it makes your Claude Code and Codex workflow better!**

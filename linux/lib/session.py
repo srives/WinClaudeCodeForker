@@ -1,21 +1,41 @@
 """
 Session discovery for Claude Code Session Manager (Linux).
 Scans ~/.claude/projects/ to find all Claude sessions.
+Also discovers Codex sessions from SQLite database.
 """
 
 import os
 import json
+import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
 from .config import get_claude_projects_path, log_debug, log_error
+import re as _re
+
+
+def _to_camel_case(prompt: str, max_len: int = 30) -> str:
+    """Convert a prompt string to CamelCase for display (matches PowerShell ConvertTo-CamelCaseTitle)."""
+    if not prompt:
+        return ''
+    clean = _re.sub(r'[^a-zA-Z0-9\s]', '', prompt)
+    clean = _re.sub(r'\s+', ' ', clean).strip()
+    if not clean:
+        return ''
+    if len(clean) > max_len:
+        cut = clean[:max_len]
+        last_space = cut.rfind(' ')
+        if last_space > 5:
+            cut = cut[:last_space]
+        clean = cut.strip()
+    return ''.join(w.capitalize() for w in clean.split())
 
 
 @dataclass
 class Session:
-    """Represents a Claude Code session."""
+    """Represents a Claude Code or Codex session."""
     session_id: str
     project_path: str
     created: datetime
@@ -30,6 +50,8 @@ class Session:
     notes: str = ''
     cost: float = 0.0
     forked_from: str = ''  # Parent session display name if forked
+    source: str = 'claude'  # 'claude' or 'codex'
+    codex_tokens_used: int = 0  # Aggregate token count from Codex
     _session_file: Optional[Path] = None  # Actual path to session .jsonl file
 
     @property
@@ -37,6 +59,10 @@ class Session:
         """Get the display name for the session."""
         if self.custom_title:
             return self.custom_title
+        if self.source == 'codex' and self.first_prompt:
+            # Codex auto-generates titles - show in CamelCase brackets to signal provisional
+            camel = _to_camel_case(self.first_prompt)
+            return f"[{camel}]" if camel else f"[{self.session_id[:8]}]"
         if self.first_prompt:
             # Truncate first prompt to reasonable length
             prompt = self.first_prompt[:50]
@@ -52,6 +78,23 @@ class Session:
 
 
 def get_all_sessions() -> List[Session]:
+    """
+    Discover all Claude Code and Codex sessions.
+    Scans ~/.claude/projects/ for Claude sessions and ~/.codex/ for Codex sessions.
+    """
+    claude_sessions = _get_claude_sessions()
+    codex_sessions = get_all_codex_sessions()
+
+    sessions = claude_sessions + codex_sessions
+
+    # Sort merged list by modified date, newest first
+    sessions.sort(key=lambda s: s.modified, reverse=True)
+
+    log_debug(f"Total sessions found: {len(sessions)} (Claude: {len(claude_sessions)}, Codex: {len(codex_sessions)})")
+    return sessions
+
+
+def _get_claude_sessions() -> List[Session]:
     """
     Discover all Claude Code sessions.
     Scans ~/.claude/projects/ for session files.
@@ -98,10 +141,7 @@ def get_all_sessions() -> List[Session]:
                 session.is_unindexed = True
                 sessions.append(session)
 
-    # Sort by modified date, newest first
-    sessions.sort(key=lambda s: s.modified, reverse=True)
-
-    log_debug(f"Total sessions found: {len(sessions)}")
+    log_debug(f"Claude sessions found: {len(sessions)}")
     return sessions
 
 
@@ -326,7 +366,11 @@ def get_git_branch(project_path: str) -> str:
 def get_session_model(session: Session) -> str:
     """
     Extract the model from a session by reading the last assistant message.
+    For Codex sessions, returns the stored model directly.
     """
+    if session.source == 'codex':
+        return session.model or 'codex'
+
     # Use stored session file path if available, otherwise reconstruct
     if session._session_file and session._session_file.exists():
         session_file = session._session_file
@@ -428,11 +472,18 @@ def get_session_cost(session: Session) -> float:
     """
     Calculate the cost of a session based on token usage.
 
+    For Codex sessions, uses aggregate tokens_used with a blended rate estimate.
+
     Pricing (per 1M tokens):
     - Claude Sonnet: $3 input, $15 output, $0.30 cache write, $3.75 cache read
     - Claude Opus: $15 input, $75 output, $1.875 cache write, $18.75 cache read
     - Claude Haiku: $0.25 input, $1.25 output, $0.03 cache write, $0.30 cache read
     """
+    if session.source == 'codex':
+        if session.codex_tokens_used > 0:
+            return round(session.codex_tokens_used * 9.0 / 1_000_000, 4)
+        return 0.0
+
     # Use stored session file path if available, otherwise reconstruct
     if session._session_file and session._session_file.exists():
         session_file = session._session_file
@@ -533,3 +584,142 @@ def get_session_cost(session: Session) -> float:
 
     log_debug(f"get_session_cost: Calculated cost ${cost:.4f} for model {model}")
     return cost
+
+
+def _get_codex_db_path() -> Optional[Path]:
+    """Find the Codex SQLite database path (highest numbered state_*.sqlite)."""
+    codex_dir = Path.home() / '.codex'
+    if not codex_dir.exists():
+        log_debug(f"Codex: Directory does not exist: {codex_dir}")
+        return None
+    db_files = sorted(codex_dir.glob('state_*.sqlite'), reverse=True)
+    if db_files:
+        log_debug(f"Codex: Found {len(db_files)} database file(s), using: {db_files[0].name}")
+        return db_files[0]
+    log_debug(f"Codex: Directory exists but no state_*.sqlite files found in {codex_dir}")
+    return None
+
+
+def _get_codex_default_model() -> str:
+    """Read the default model from Codex config.toml if available."""
+    import re
+    config_path = Path.home() / '.codex' / 'config.toml'
+    if not config_path.exists():
+        log_debug(f"Codex: No config.toml at {config_path}, defaulting model to 'codex'")
+        return 'codex'
+    try:
+        content = config_path.read_text()
+        match = re.search(r'model\s*=\s*"([^"]+)"', content)
+        if match:
+            log_debug(f"Codex: Default model from config.toml: {match.group(1)}")
+            return match.group(1)
+        log_debug("Codex: config.toml exists but no model= line found")
+    except Exception as e:
+        log_debug(f"Codex: Error reading config.toml: {e}")
+    return 'codex'
+
+
+def _parse_codex_timestamp(value, thread_id: str, field_name: str) -> Optional[datetime]:
+    """Parse a Codex timestamp which may be a Unix epoch integer or ISO string."""
+    if not value:
+        return None
+    try:
+        # Try as Unix epoch integer first (Codex stores these as integers)
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value)
+        # Try parsing as integer string
+        ts = int(value)
+        return datetime.fromtimestamp(ts)
+    except (ValueError, TypeError, OSError):
+        pass
+    try:
+        # Try as ISO format string
+        return datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        log_debug(f"Codex: Could not parse {field_name} '{value}' for thread {thread_id}")
+        return None
+
+
+def get_all_codex_sessions() -> List[Session]:
+    """
+    Discover all Codex sessions from the SQLite database.
+    Uses Python's built-in sqlite3 module for read-only access.
+    """
+    db_path = _get_codex_db_path()
+    if not db_path:
+        log_debug("Codex: No database found")
+        return []
+
+    log_debug(f"Codex: Found database at {db_path}")
+    default_model = _get_codex_default_model()
+
+    sessions = []
+    try:
+        log_debug(f"Codex: Opening database read-only: {db_path}")
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute('''
+            SELECT id, cwd, created_at, updated_at, title, first_user_message,
+                   tokens_used, git_branch, git_sha, model_provider, archived, rollout_path
+            FROM threads
+            WHERE archived = 0 OR archived IS NULL
+        ''')
+
+        rows = cursor.fetchall()
+        log_debug(f"Codex: Query returned {len(rows)} non-archived thread(s)")
+
+        for row in rows:
+            # Codex stores timestamps as Unix epoch integers or ISO strings
+            created = _parse_codex_timestamp(row['created_at'], row['id'][:8], 'created_at')
+            modified = _parse_codex_timestamp(row['updated_at'], row['id'][:8], 'updated_at') or created
+
+            # Extract actual model from rollout JSONL (turn_context entries have 'model')
+            actual_model = None
+            rollout_path = row['rollout_path'] if row['rollout_path'] else None
+            if rollout_path and Path(rollout_path).exists():
+                try:
+                    with open(rollout_path, 'r', encoding='utf-8') as rf:
+                        for rline in rf:
+                            rentry = json.loads(rline)
+                            if rentry.get('type') == 'turn_context':
+                                payload = rentry.get('payload', {})
+                                if isinstance(payload, dict) and 'model' in payload:
+                                    actual_model = payload['model']
+                except Exception:
+                    pass
+
+            # Prefer actual model from rollout, then config.toml default, then provider name
+            model = actual_model or (default_model if default_model != 'codex' else None) or row['model_provider'] or 'codex'
+            if model == 'openai':
+                model = 'codex'  # "openai" is just a provider name, not useful as model display
+            cwd = row['cwd'] if row['cwd'] else os.getcwd()
+
+            if not row['cwd']:
+                log_debug(f"Codex: Thread {row['id'][:8]} has no cwd, falling back to {os.getcwd()}")
+
+            session = Session(
+                session_id=row['id'],
+                project_path=cwd,
+                created=created,
+                modified=modified,
+                custom_title='',  # Codex auto-generates titles; store in first_prompt instead
+                first_prompt=row['title'] or row['first_user_message'] or '',
+                model=model,
+                git_branch=row['git_branch'] or '',
+                source='codex',
+                codex_tokens_used=int(row['tokens_used']) if row['tokens_used'] else 0,
+            )
+            sessions.append(session)
+            log_debug(f"  Codex session: {row['id'][:8]}... model={model} tokens={session.codex_tokens_used} cwd={cwd}")
+
+        conn.close()
+        log_debug(f"Codex: Returning {len(sessions)} session(s)")
+
+    except sqlite3.OperationalError as e:
+        log_error(f"Codex: SQLite error (database locked or corrupt?): {e}")
+    except Exception as e:
+        log_error(f"Codex: Error reading sessions: {e}")
+        import traceback
+        log_debug(f"Codex: Traceback: {traceback.format_exc()}")
+
+    return sessions

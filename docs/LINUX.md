@@ -1,10 +1,11 @@
-# Claude Code Session Manager - Linux
+# Codex and Claude Code Session Manager - Linux
 
-A terminal-based session manager for Claude Code CLI on Linux, with support for Kitty and Konsole terminal emulators.
+A terminal-based session manager for Claude Code CLI and OpenAI Codex CLI on Linux, with support for Kitty and Konsole terminal emulators.
 
 ## Features
 
-- **Session Discovery**: Automatically finds all Claude Code sessions
+- **Session Discovery**: Automatically finds all Claude Code sessions (and Codex sessions when Codex CLI is installed)
+- **Unified Menu**: Both Claude and Codex sessions shown together with a Src column (`C`/`X`, color-coded)
 - **Fork/Continue Workflows**: Resume or fork existing sessions
 - **Background Watermarks**: Visual session identification with custom backgrounds
 - **Multiple Terminal Support**: Works with Kitty and Konsole
@@ -16,6 +17,10 @@ A terminal-based session manager for Claude Code CLI on Linux, with support for 
 
 - **Python 3.8+** (usually pre-installed on modern Linux)
 - **Claude Code CLI** (must be installed and authenticated)
+
+### Optional
+
+- **Codex CLI** (OpenAI) -- enables unified Claude + Codex session display; Codex sessions discovered from SQLite database using built-in `sqlite3`
 
 ### Terminal Emulators (at least one)
 
@@ -297,9 +302,9 @@ chmod +x ~/.local/bin/claude-menu
 
 ## Version
 
-Linux port version: 2.0.0
+Linux port version: 3.0.0
 
-Based on Claude Code Session Manager for Windows v2.0.0.
+Based on Codex and Claude Code Session Manager for Windows v3.0.0.
 
 ## License
 

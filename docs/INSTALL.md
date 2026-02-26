@@ -99,6 +99,18 @@ claude --version
 
 If not installed, follow Claude Code installation instructions.
 
+#### 4. Check Codex CLI (Optional)
+```powershell
+codex --version
+# Should return version information
+```
+
+Codex CLI is optional. When installed, Codex sessions appear alongside Claude sessions in the unified menu. On Windows, Python is also required for reading Codex's SQLite database:
+```powershell
+python --version
+# Should return Python 3.x
+```
+
 ### Installation Steps
 
 #### 1. Choose Installation Location
@@ -201,13 +213,14 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ### Script runs but shows no sessions
 
-**Problem**: No Claude sessions exist yet.
+**Problem**: No Claude or Codex sessions exist yet.
 
 **Solution**:
-1. Create a session: `claude` (in any directory)
-2. Or use: `claude --continue`
-3. Press [R] to refresh the menu
-4. Enable debug mode with [D] to see session discovery trace
+1. Create a Claude session: `claude` (in any directory)
+2. Or create a Codex session: `codex` (in any directory)
+3. Or use: `claude --continue`
+4. Press [R] to refresh the menu
+5. Enable debug mode with [D] to see session discovery trace
 
 ### "No conversation found with session ID" error
 
@@ -245,8 +258,8 @@ Remove-Item "$env:USERPROFILE\.claude-menu" -Recurse -Force
 Remove-Item "$env:USERPROFILE\Desktop\Claude Session Manager.lnk" -ErrorAction SilentlyContinue
 Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Claude Session Manager.lnk" -ErrorAction SilentlyContinue
 
-# Note: This does NOT remove your Claude sessions or Windows Terminal profiles
-# You may want to manually clean up Windows Terminal profiles starting with "Claude-"
+# Note: This does NOT remove your Claude/Codex sessions or Windows Terminal profiles
+# You may want to manually clean up Windows Terminal profiles starting with "Claude-" or "Codex-"
 ```
 
 ---

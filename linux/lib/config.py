@@ -86,6 +86,7 @@ def log_error(message: str):
 # Default column visibility - matches Windows version
 DEFAULT_COLUMNS = {
     'row_num': True,      # # column
+    'source': True,       # Source (C=Claude, X=Codex)
     'session': True,      # Session name
     'model': True,        # Model (opus/sonnet/haiku)
     'messages': True,     # Message count
