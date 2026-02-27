@@ -1,6 +1,40 @@
 # Changelog
 
-All notable changes to Codex and Claude Code Session Manager will be documented in this file.
+All notable changes to SessionForge (sf) will be documented in this file.
+
+## [3.1.0] - 2026-02-26
+
+### Token Totals & Cost Snapshots
+- **Token Totals in Header**: When Cost column is ON, each platform's stats line shows cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
+- **Persistent Cost Snapshots** (`costing.json`): Cost/token data snapshotted during calculation; survives session purging. Cost analysis (O key) shows purged session totals and lifetime spend.
+- **Batch Costing I/O**: `Open-CostingBatch`/`Close-CostingBatch` loads costing.json once, upserts in memory, writes once (avoids per-session disk I/O during cost calculation)
+
+### Critical Bug Fixes
+- **WT Backup Restore Fix:** `Test-Json -Path` in Add-WTProfile and Remove-WTProfile catch blocks was broken on ALL PowerShell versions (PS 5.1: no `Test-Json` cmdlet; PS 7+: no `-Path` parameter). If WT profile add/remove failed mid-write, backup restore always silently failed, leaving WT settings corrupted. Replaced with `ConvertFrom-Json` validation.
+- **Codex Prefix Strip Fix:** 10 hardcoded `$WTProfileName -replace '^Claude-', ''` locations silently failed for Codex profiles (`Codex-MySession` → unchanged). Background images went to wrong directories, deletions missed files. Added `Get-SessionNameFromWTProfile` utility function and replaced all 10 locations.
+
+### New Features
+- **Codex New Session WT Profiles:** Named Codex new sessions now get full Windows Terminal integration (background image, `Codex-` prefixed WT profile, launch with profile). Previously the Codex new-session path bypassed all WT integration.
+- **Auto-Refresh After New Session:** Main menu now auto-refreshes after creating a new session (previously required manual R key press)
+- **Get-SessionNameFromWTProfile:** New utility function that strips the correct platform prefix from any WT profile name, future-proofing for additional CLI integrations
+
+### Test Suite Expansion (158 → 250 tests, +58%)
+83 new tests across 6 categories:
+- **WT Safety (212-216):** Backup/restore safety nets, settings round-trip, profiles present, valid settings, normalize-paths
+- **Prefix Handling (217-222):** No hardcoded prefix strips, helper function exists and works for all platforms
+- **JSON File Safety (223-227):** All 4 data files loadable and structurally valid
+- **Resource Safety (228-230):** GDI+ disposal, StreamReader cleanup, session ID length guards
+- **Edge Cases (231-240):** Boundary conditions in core utilities (costs, tokens, CamelCase, Format-Cost)
+- **Menu Key Audit (241):** Static code analysis ensuring all handled main menu keys appear in display legend
+- **Costing JSON Persistence (242-250):** Global path, function existence, batch I/O, JSON structure validation
+
+### Cross-Platform Fixes
+- **Linux Cost Math Fix:** All three pricing tiers (Sonnet, Opus, Haiku) had cache_write and cache_read rates reversed in `linux/lib/session.py`. Cache writes are 1.25x input rate (not 0.1x) and cache reads are 0.1x (not 1.25x). Fixed all three tiers.
+
+### Housekeeping
+- Version unified to 3.1.0 across all 8 source files
+- Removed incorrect "MIT License" references (actual license is custom in docs/LICENSE)
+- Added `__pycache__/` and `*.pyc` to .gitignore, purged tracked .pyc files
 
 ## [3.0.0] - 2026-02-26
 
@@ -17,7 +51,7 @@ All notable changes to Codex and Claude Code Session Manager will be documented 
 
 ### Color-Coded Display
 - Title bar shows "Codex (X) and Claude Code (C)" with X in magenta and C in blue
-- Session stats line split into two color-coded segments: Claude stats in blue, Codex stats in magenta (each with own cost total)
+- Session stats line split into two color-coded segments: Claude stats in blue, Codex stats in magenta (each with own cost and token total)
 - Debug status and Claude Permissions moved to the "Current directory" line
 
 ### Codex WT Profiles & Background Watermarks
@@ -90,7 +124,7 @@ All notable changes to Codex and Claude Code Session Manager will be documented 
 - Cursor positioning for "Last command" display instead of blank line padding
 
 ### Display Changes
-- Cost totals show in header when Cost column is on, with progress bar
+- Cost and token totals show in header when Cost column is on, with progress bar
 - About screen shows SYS1000.NET as clickable link (OSC 8 hyperlink)
 
 ### Bug Fixes

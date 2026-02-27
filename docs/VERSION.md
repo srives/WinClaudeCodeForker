@@ -1,10 +1,21 @@
 # Version Information
 
-## Current Version: 3.0.0 (2026-02-26)
+## Current Version: 3.1.0 (2026-02-26)
 
 ### Release Notes
 
-This release adds OpenAI Codex CLI integration, performance optimization with lazy-loaded cost column, and expands validation tests from 80 to 158. The tool now serves as a unified AI coding session manager for both Claude and Codex workflows.
+This release puts token usage front and center alongside costs, adds persistent cost snapshots that survive purging, and delivers a quality/resilience overhaul: 2 critical bug fixes (WT backup restore, Codex prefix handling), 92 new tests (158→250, +58%), Codex new session WT profile support, auto-refresh after new sessions, Linux cost math corrections, and platform prefix abstraction. Built on the v3.0.0 foundation of Codex CLI integration and performance optimization.
+
+#### v3.1.0 Highlights
+
+- **Token Totals in Header:** When Cost column is ON, stats line shows per-platform cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
+- **Persistent Cost Snapshots:** `costing.json` records cost/token data per session; survives purging. Cost analysis (O key) shows lifetime totals.
+- **2 Critical Bug Fixes:** WT backup restore (broken on all PS versions) and Codex prefix strip (10 hardcoded locations)
+- **250 Automated Tests:** Up from 158 (+58%) — new categories: WT safety, prefix handling, JSON integrity, resource safety, edge cases, menu key audit, costing persistence
+- **Codex New Session WT Profiles:** Named Codex sessions now get background watermarks and WT profiles
+- **Auto-Refresh:** Main menu refreshes automatically after new session creation
+- **Linux Cost Fix:** Cache read/write rates corrected for all 3 pricing tiers
+- **Platform Abstraction:** `Get-SessionNameFromWTProfile` replaces hardcoded prefix strips
 
 #### Codex CLI Integration
 
@@ -22,8 +33,8 @@ This release adds OpenAI Codex CLI integration, performance optimization with la
 #### Color-Coded Display
 
 - **Title Bar**: Shows "Codex (X) and Claude Code (C)" with X in magenta and C in blue
-- **Session Stats Line**: Split into two color-coded segments -- Claude stats in blue, Codex stats in magenta (each with own cost total)
-- **Display Reorganization**: Debug status and Claude Permissions moved to the "Current directory" line; stats line now only shows session counts and costs
+- **Session Stats Line**: Split into two color-coded segments -- Claude stats in blue, Codex stats in magenta (each with own cost and token total, e.g., `Cost: $1,485.63, Tokens: 2.7B`)
+- **Display Reorganization**: Debug status and Claude Permissions moved to the "Current directory" line; stats line now shows session counts, costs, and token totals
 
 #### Codex WT Profiles & Background Watermarks
 
@@ -93,7 +104,7 @@ This release adds OpenAI Codex CLI integration, performance optimization with la
 
 - **co$t menu ($ key)**: Sub-menu to show/hide cost column and generate cost table
 - **Instant load when Cost OFF**: Zero .jsonl parsing when cost column is hidden
-- **Progress bar**: When Cost column is ON, costs calculated with progress counter ("Calculating costs... 14/38"), then cached
+- **Progress bar**: When Cost column is ON, costs calculated with progress counter ("Calculating costs... 14/38"), then cached. Stats line shows `Cost: $X.XX, Tokens: NNN` per platform.
 - **Hidden column I/O gating**: Model, ForkedFrom, Cost, Git, Notes columns all skip I/O when hidden
 - **Background auto-regen disabled**: Use WT Config > Diagnose manually for performance
 - **Model detection fast path**: Uses cached sources (background.txt, session-mapping) instead of .jsonl parsing

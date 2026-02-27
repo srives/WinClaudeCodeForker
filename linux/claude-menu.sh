@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Claude Code Session Manager - Bash wrapper
+# SessionForge (sf) - Bash wrapper
 # Calls the Python implementation
 #
 

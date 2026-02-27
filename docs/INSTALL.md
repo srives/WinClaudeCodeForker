@@ -20,7 +20,7 @@ Run this PowerShell command to create a desktop shortcut:
 
 ```powershell
 $WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Claude Session Manager.lnk")
+$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SessionForge.lnk")
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-ExecutionPolicy Bypass -NoProfile -File `"$env:USERPROFILE\.claude-menu\Claude-Menu.ps1`""
 $Shortcut.WorkingDirectory = "$env:USERPROFILE"
@@ -31,7 +31,7 @@ Write-Host "Shortcut created on Desktop!" -ForegroundColor Green
 
 ### Step 3: Run
 
-Double-click the "Claude Session Manager" shortcut on your desktop!
+Double-click the "SessionForge" shortcut on your desktop!
 
 ---
 
@@ -149,7 +149,7 @@ You should see the main menu appear!
 
 ```powershell
 $WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Claude Session Manager.lnk")
+$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SessionForge.lnk")
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-ExecutionPolicy Bypass -NoProfile -File `"$env:USERPROFILE\.claude-menu\Claude-Menu.ps1`""
 $Shortcut.WorkingDirectory = "$env:USERPROFILE"
@@ -161,7 +161,7 @@ $Shortcut.Save()
 ```powershell
 $WshShell = New-Object -ComObject WScript.Shell
 $startMenuPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
-$Shortcut = $WshShell.CreateShortcut("$startMenuPath\Claude Session Manager.lnk")
+$Shortcut = $WshShell.CreateShortcut("$startMenuPath\SessionForge.lnk")
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-ExecutionPolicy Bypass -NoProfile -File `"$env:USERPROFILE\.claude-menu\Claude-Menu.ps1`""
 $Shortcut.WorkingDirectory = "$env:USERPROFILE"
@@ -255,8 +255,8 @@ To completely remove the script and all data:
 Remove-Item "$env:USERPROFILE\.claude-menu" -Recurse -Force
 
 # Remove shortcuts (if created)
-Remove-Item "$env:USERPROFILE\Desktop\Claude Session Manager.lnk" -ErrorAction SilentlyContinue
-Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Claude Session Manager.lnk" -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\Desktop\SessionForge.lnk" -ErrorAction SilentlyContinue
+Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\SessionForge.lnk" -ErrorAction SilentlyContinue
 
 # Note: This does NOT remove your Claude/Codex sessions or Windows Terminal profiles
 # You may want to manually clean up Windows Terminal profiles starting with "Claude-" or "Codex-"

@@ -1,2 +1,2 @@
-# Claude Code Session Manager - Linux Port
+# SessionForge (sf) - Linux Port
 # Library modules

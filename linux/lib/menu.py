@@ -1,5 +1,5 @@
 """
-Curses-based interactive menu for Claude Code Session Manager (Linux).
+Curses-based interactive menu for SessionForge (Linux).
 Provides arrow-key navigation and session management interface.
 """
 
@@ -10,6 +10,7 @@ from enum import Enum, auto
 
 from .session import Session
 from .config import get_config, DEFAULT_COLUMNS
+from .registry import get_platform
 
 
 class MenuAction(Enum):
@@ -149,7 +150,7 @@ class SessionMenu:
         max_y, max_x = stdscr.getmaxyx()
 
         # Title
-        title = "Claude Code Session Manager"
+        title = "S E S S I O N   F O R G E"
         stdscr.addstr(0, 2, title, curses.color_pair(1) | curses.A_BOLD)
 
         # Session count
@@ -191,7 +192,7 @@ class SessionMenu:
             if key == 'row_num':
                 row_data.append(str(row_num))
             elif key == 'source':
-                row_data.append('X' if session.source == 'codex' else 'C')
+                row_data.append(get_platform(session.source)['key'])
             elif key == 'session':
                 row_data.append(session.display_name[:width])
             elif key == 'model':

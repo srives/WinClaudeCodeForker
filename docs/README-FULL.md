@@ -1,29 +1,29 @@
 # Quick Start Guide:
 
-[Download Installer Here](https://github.com/srives/WinClaudeCodeForker/releases/tag/name), called WinClaudeForker.exe
+[Download Installer Here](https://github.com/srives/SessionForge/releases/tag/name), called SessionForge.exe
 
 
-## What's New in v3.0.0 (2026-02-26)
+## What's New in v3.1.0 (2026-02-26)
+
+✨ **Quality & Resilience Overhaul:**
+- ✅ **250 Automated Tests** - Up from 158 (+58%): WT safety, prefix handling, JSON integrity, resource safety, edge cases, menu key audit, costing persistence
+- 🛡️ **2 Critical Bug Fixes** - WT backup restore (broken on all PS versions) and Codex prefix strip (10 hardcoded locations)
+- 🎨 **Codex New Session WT Profiles** - Named Codex sessions now get background watermarks and WT profiles
+- 🔄 **Auto-Refresh** - Main menu refreshes automatically after new session creation
+- 🐧 **Linux Cost Fix** - Cache read/write rates corrected for all 3 pricing tiers
+- 🔧 **Platform Abstraction** - `Get-SessionNameFromWTProfile` replaces hardcoded prefix strips
+
+## v3.0.0 Features (2026-02-26)
 
 ✨ **Major Features:**
 - 🔀 **Unified Multi-CLI Dashboard** - Both Claude Code and OpenAI Codex sessions in one menu
 - 📋 **Src Column** - Shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
 - 🎨 **Codex WT Profiles & Watermarks** - Full Windows Terminal profile + background support for Codex sessions
 - 💰 **Codex Cost Tracking** - Approximate costs (`~$X.XX`) for Codex sessions
-- ✅ **158 Automated Tests** - Up from 80, with functional tests, data integrity, and regression tests (results copyable to clipboard)
-
-🛠️ **Improvements:**
-- New session prompts "Claude | codeX | Abort" when Codex CLI is available
-- Color-coded stats line split by CLI source (Claude in blue, Codex in magenta)
-- CamelCase titles for Codex auto-generated session names
-- Purge & Cleanup now handles orphaned WT profiles (both Claude-* and Codex-*)
-- Profile creation prompt on Continue for named sessions without WT profiles
-- Array wrapping fix prevents `.Count` bug with single session
 - **co$t menu ($)** - Toggle cost column on/off for instant load when off
 - **Performance optimization** - Hidden columns skip all I/O; costs lazy-loaded with progress bar
-- Bug fixes: Format-Cost interpolation, token overflow [int]->[long], Format-TokenCount B suffix
 
-# Codex and Claude Code Session Manager
+# SessionForge (sf)
 
 Have you ever been working in Claude Code or Codex CLI and wished you could easily see and manage all your sessions across projects?
 Have you ever lost track of which session you were working on, or wanted to fork a session into its own dedicated terminal
@@ -103,12 +103,12 @@ You need **instant visual context** - and that's exactly what the background wat
    **Desktop Shortcut:**
    - Right-click Desktop → New → Shortcut
    - Target: `powershell.exe -ExecutionPolicy Bypass -File "C:\path\to\Claude-Menu.ps1"`
-   - Name: "Claude Session Manager"
+   - Name: "SessionForge"
 
    **Or use PowerShell to create it:**
    ```powershell
    $WshShell = New-Object -ComObject WScript.Shell
-   $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Claude Session Manager.lnk")
+   $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SessionForge.lnk")
    $Shortcut.TargetPath = "powershell.exe"
    $Shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$env:USERPROFILE\.claude-menu\Claude-Menu.ps1`""
    $Shortcut.WorkingDirectory = "$env:USERPROFILE"
@@ -141,7 +141,7 @@ When you launch the script, you'll see an interactive menu showing all your Clau
 Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking, S. Rives, v.2026.1.20
 Current directory: C:\repos\myproject
 * A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it.
-Claude Sessions: 14 (Named: 0, Unnamed: 14) | Debug: OFF | Permissions: Quiet | Total Cost: $235.57
+Claude Code Sessions: 14 (Named: 0, Unnamed: 14), Cost: $235.57, Tokens: 156.2M
 
 +-------------------------------------------------------------------------------------------+
 | #   Active Model   Session                        Messages  Created       Modified  Cost |
@@ -256,9 +256,10 @@ TOTALS:
 
 **Features:**
 - Per-session costs displayed in main menu
+- **Token totals per platform** in header stats line (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
 - Detailed breakdown with token counts
 - Cache hit percentage analysis
-- Total cost shown in status line
+- **Persistent cost snapshots** (`costing.json`) survive session purging; lifetime totals in cost analysis
 - Uses Claude Sonnet 4.5 pricing ($3/$3.75/$0.30/$15 per 1M tokens)
 
 ### Debug Mode

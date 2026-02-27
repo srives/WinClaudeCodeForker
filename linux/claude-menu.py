@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Claude Code Session Manager for Linux.
+SessionForge (sf) - AI Coding Session Manager for Linux.
 
-A terminal-based session manager for Claude Code CLI with support for:
+A terminal-based session manager for Claude Code and Codex CLI with support for:
 - Session discovery and listing
 - Fork/Continue workflows
 - Background watermark images
@@ -34,9 +34,10 @@ from lib.session import get_all_sessions, get_all_codex_sessions, get_git_branch
 from lib.menu import SessionMenu, SessionActionMenu, MenuAction
 from lib.image import create_background_image, BackgroundInfo
 from lib.terminal import get_adapter, detect_terminal, is_wsl
+from lib.registry import get_platform, get_installed_platforms
 
 
-VERSION = "2.0.0"
+VERSION = "3.1.0"
 
 
 def check_dependencies() -> dict:
@@ -357,7 +358,7 @@ def show_debug_menu():
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Claude Code Session Manager for Linux"
+        description="SessionForge (sf) - AI Coding Session Manager for Linux"
     )
     parser.add_argument('--version', action='store_true', help='Show version')
     parser.add_argument('--config', action='store_true', help='Show configuration')
@@ -369,7 +370,7 @@ def main():
     args = parser.parse_args()
 
     if args.version:
-        print(f"Claude Code Session Manager v{VERSION}")
+        print(f"SessionForge (sf) v{VERSION}")
         return 0
 
     # Initialize configuration
@@ -513,14 +514,24 @@ def handle_new_session():
     """Start a new Claude or Codex session."""
     log_info("handle_new_session() called")
 
-    # If Codex is available, offer CLI choice
+    # If multiple platforms installed, offer CLI choice
     use_codex = False
-    if shutil.which('codex'):
-        print("\nWhich CLI? [C]laude / code[X] / [A]bort:")
+    installed = get_installed_platforms()
+    if len(installed) > 1:
+        # Build prompt from registry
+        options = []
+        key_map = {}
+        for p in installed.values():
+            options.append(f"[{p['key']}]{p['display_name']}")
+            key_map[p['key']] = p
+        prompt_str = " / ".join(options) + " / [A]bort"
+        print(f"\nWhich CLI? {prompt_str}:")
         try:
             choice = input("> ").strip().upper()
-            if choice == 'X':
-                use_codex = True
+            if choice in key_map:
+                selected_platform = key_map[choice]
+                if selected_platform['cli_name'] == 'codex':
+                    use_codex = True
             elif choice == 'A':
                 print("Cancelled.")
                 return
@@ -528,8 +539,8 @@ def handle_new_session():
             print("\nCancelled.")
             return
 
-    cli_name = "Codex" if use_codex else "Claude"
-    print(f"\nStarting new {cli_name} session...")
+    selected = get_platform('codex') if use_codex else get_platform('claude')
+    print(f"\nStarting new {selected['display_name']} session...")
     print("Enter the project directory (or press Enter for current directory):")
 
     try:
@@ -545,12 +556,13 @@ def handle_new_session():
             input("Press Enter to continue...")
             return
 
-        # Codex: just launch codex in directory (skip model/profile workflow)
+        # Codex: just launch in directory (skip model/profile workflow)
         if use_codex:
-            log_info(f"Launching codex in directory: {directory}")
+            codex_cmd = get_platform('codex')['new_cmd']
+            log_info(f"Launching {codex_cmd} in directory: {directory}")
             original_dir = os.getcwd()
             os.chdir(directory)
-            os.system('codex')
+            os.system(codex_cmd)
             os.chdir(original_dir)
             log_info("handle_new_session() completed (codex)")
             return
@@ -579,8 +591,9 @@ def handle_new_session():
             result = adapter.create_profile(name, directory, str(bg_path) if bg_path else None)
             log_debug(f"create_profile result: {result}")
 
-            log_info(f"Launching session '{name}' with command 'claude'")
-            result = adapter.launch_session(name, command='claude', working_dir=directory)
+            claude_cmd = get_platform('claude')['new_cmd']
+            log_info(f"Launching session '{name}' with command '{claude_cmd}'")
+            result = adapter.launch_session(name, command=claude_cmd, working_dir=directory)
             log_debug(f"launch_session result: {result}")
         else:
             # Just launch Claude without profile
@@ -588,8 +601,9 @@ def handle_new_session():
             original_dir = os.getcwd()
             os.chdir(directory)
             log_debug(f"Changed to directory: {directory}")
-            log_debug("Running: claude")
-            exit_code = os.system('claude')
+            claude_cmd = get_platform('claude')['new_cmd']
+            log_debug(f"Running: {claude_cmd}")
+            exit_code = os.system(claude_cmd)
             log_debug(f"Claude exit code: {exit_code}")
             os.chdir(original_dir)
             log_debug(f"Restored directory: {original_dir}")
@@ -616,12 +630,11 @@ def handle_continue(session: Session):
     adapter = get_adapter(config.terminal)
     log_debug(f"Adapter: {adapter.name}, available: {adapter.is_available()}")
 
-    # Build resume command based on source
+    # Build resume command based on source (from PlatformRegistry)
+    platform = get_platform(session.source)
+    cmd = platform['resume_cmd'].format(session_id=session.session_id)
     if session.source == 'codex':
-        cmd = f"codex resume {session.session_id}"
         log_debug(f"Codex resume: dispatching to '{cmd}' in {session.project_path}")
-    else:
-        cmd = f"claude --resume {session.session_id}"
     log_debug(f"Command: {cmd}")
 
     # For direct mode or if no profile exists, run directly
@@ -652,7 +665,8 @@ def handle_fork(session: Session):
 
     # Codex has native fork command
     if session.source == 'codex':
-        cmd = f"codex fork {session.session_id}"
+        platform = get_platform(session.source)
+        cmd = platform['fork_cmd'].format(session_id=session.session_id)
         log_debug(f"Codex fork command: {cmd}")
         os.chdir(session.project_path)
         os.system(cmd)
@@ -678,7 +692,7 @@ def handle_fork(session: Session):
         if not adapter.is_available():
             log_error(f"Terminal '{config.terminal}' is not available, falling back to direct mode")
             print(f"Warning: {config.terminal} not available, running in current terminal")
-            cmd = f"claude --resume {session.session_id}"
+            cmd = get_platform('claude')['resume_cmd'].format(session_id=session.session_id)
             os.chdir(session.project_path)
             log_debug(f"Running command: {cmd} in {session.project_path}")
             os.system(cmd)
@@ -702,7 +716,7 @@ def handle_fork(session: Session):
         log_debug(f"Profile created: {profile_result}")
 
         # Launch with Claude resume
-        cmd = f"claude --resume {session.session_id}"
+        cmd = get_platform('claude')['resume_cmd'].format(session_id=session.session_id)
         log_debug(f"Launch command: {cmd}")
 
         if config.terminal == 'direct':
@@ -788,6 +802,7 @@ def handle_rename(session: Session):
             directory=session.project_path,
             git_branch=session.git_branch,
             model=session.model,
+            source=session.source,
         )
         bg_path = create_background_image(bg_info)
         adapter.create_profile(new_name, session.project_path, str(bg_path) if bg_path else None)
@@ -804,7 +819,7 @@ def show_config(config):
     deps = check_dependencies()
 
     print(f"""
-Claude Code Session Manager Configuration
+SessionForge (sf) Configuration
 =========================================
 Terminal:     {config.terminal}
 Shell:        {config.shell}
@@ -844,9 +859,9 @@ def show_cost_analysis(sessions):
     print("=" * 70)
 
     print("\nPricing (per 1M tokens):")
-    print("  Sonnet: $3 input, $15 output, $0.30 cache write, $3.75 cache read")
-    print("  Opus:   $15 input, $75 output, $1.875 cache write, $18.75 cache read")
-    print("  Haiku:  $0.25 input, $1.25 output, $0.03 cache write, $0.30 cache read")
+    print("  Sonnet: $3 input, $15 output, $3.75 cache write, $0.30 cache read")
+    print("  Opus:   $15 input, $75 output, $18.75 cache write, $1.50 cache read")
+    print("  Haiku:  $0.25 input, $1.25 output, $0.3125 cache write, $0.025 cache read")
 
     input("\nPress Enter to continue...")
 
@@ -922,7 +937,7 @@ def show_about():
     import os
     os.system('clear' if os.name != 'nt' else 'cls')
 
-    print("\033[93mClaude Code Session Manager with Terminal Forking\033[0m")
+    print("\033[93mSessionForge (sf) - AI Coding Session Manager with Terminal Forking\033[0m")
     print(f"\033[90mVersion: {VERSION} (Linux)\033[0m")
     print()
     # ASCII art in cyan
@@ -952,7 +967,7 @@ def show_about():
     print(f"{cyan}---=====+#@%*=+*@@@@@@%%%@@@#+================{reset}")
     print(f"{cyan}==========+#@@@%@@@@@@%%@@%*=================={reset}")
     print(f"{cyan}---====++===++*#@@@@%%%@@@%*+++=============++{reset}")
-    print(f"{cyan} https://github.com/srives/WinClaudeCodeForker{reset}")
+    print(f"{cyan} https://github.com/srives/SessionForge{reset}")
     print()
     print("\033[90mBy: S. Rives\033[0m")
     input()

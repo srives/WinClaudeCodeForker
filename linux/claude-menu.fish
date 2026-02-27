@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 #
-# Claude Code Session Manager - Fish wrapper
+# SessionForge (sf) - Fish wrapper
 # Calls the Python implementation
 #
 

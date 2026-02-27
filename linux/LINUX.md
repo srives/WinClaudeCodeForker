@@ -1,4 +1,4 @@
-# Codex and Claude Code Session Manager - Linux
+# SessionForge (sf) - Linux
 
 A terminal-based session manager for Claude Code CLI and OpenAI Codex CLI on Linux, with support for session discovery, fork/continue workflows, and background watermark images.
 

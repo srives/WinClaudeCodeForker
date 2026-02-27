@@ -1,17 +1,20 @@
 # Quick Start Guide
 
-Get up and running with the Codex and Claude Code Session Manager in 2 minutes!
+Get up and running with SessionForge (sf) in 2 minutes!
 
-## What's New in v3.0.0
+## What's New in v3.1.0
+- **Token Totals in Header** - When Cost column is ON, stats line shows per-platform cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
+- **Persistent Cost Snapshots** - `costing.json` records cost/token data; survives session purging. Cost analysis (O key) shows lifetime totals.
+- **250 Automated Tests** - Up from 158 (+58%): WT safety, prefix handling, JSON integrity, resource safety, edge cases, menu key audit, costing persistence
+- **2 Critical Bug Fixes** - WT backup restore (broken on all PS versions) and Codex prefix strip (10 hardcoded locations)
+- **Codex New Session WT Profiles** - Named Codex sessions now get background watermarks and WT profiles
+- **Auto-Refresh** - Main menu refreshes automatically after new session creation
+
+## v3.0.0 Features
 - **Codex CLI Integration** - Both Claude and OpenAI Codex sessions in a unified menu
 - New **Src** column shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
-- New Session prompts "Claude | codeX | Abort" when Codex CLI is detected
-- Codex costs displayed as approximate (`~$X.XX`)
-- **Codex WT profiles & watermarks** - Continue and Fork now create `Codex-` prefixed WT profiles with background images
-- **Color-coded stats** - Session stats line split by CLI source (Claude in blue, Codex in magenta)
-- **co$t menu ($)** - Toggle cost column on/off; OFF = instant load (no .jsonl parsing)
+- **co$t menu ($)** - Toggle cost column on/off; OFF = instant load. ON = header shows per-platform cost and token totals.
 - **Performance optimization** - Hidden columns skip all I/O; costs lazy-loaded with progress bar
-- **158 automated tests** - Up from 80, with functional tests, data integrity, and regression tests (results copyable to clipboard)
 - Works on both Windows and Linux; graceful when Codex is not installed
 
 ## One-Line Install
@@ -21,22 +24,22 @@ Copy and paste this into PowerShell:
 ```powershell
 # Create directory and copy script
 New-Item -ItemType Directory -Path "$env:USERPROFILE\.claude-menu" -Force | Out-Null
-Copy-Item "C:\repos\WinClaudeCodeForker\Claude-Menu.ps1" "$env:USERPROFILE\.claude-menu\"
+Copy-Item "C:\repos\SessionForge\Claude-Menu.ps1" "$env:USERPROFILE\.claude-menu\"
 
 # Create desktop shortcut
 $WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Claude Session Manager.lnk")
+$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SessionForge.lnk")
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-ExecutionPolicy Bypass -NoProfile -File `"$env:USERPROFILE\.claude-menu\Claude-Menu.ps1`""
 $Shortcut.WorkingDirectory = "$env:USERPROFILE"
 $Shortcut.Save()
 
-Write-Host "`n✓ Installation complete! Look for 'Claude Session Manager' on your desktop." -ForegroundColor Green
+Write-Host "`n✓ Installation complete! Look for 'SessionForge' on your desktop." -ForegroundColor Green
 ```
 
 ## First Use
 
-1. **Double-click** "Claude Session Manager" on your desktop
+1. **Double-click** "SessionForge" on your desktop
 2. You'll see a menu of all your Claude and Codex sessions (including unnamed ones)
 3. **Use UP/DOWN arrows** to navigate between sessions
 4. **Press Enter** to select a session
@@ -141,7 +144,7 @@ Press **R** to reload session data
 
 💡 **Tip 10**: The script validates session files before operations to prevent errors
 
-💡 **Tip 11**: Total cost appears in the status line at the top of the menu
+💡 **Tip 11**: Cost and token totals appear per platform in the status line (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
 
 💡 **Tip 12**: Use Quiet mode (Q) for faster workflow (bypasses permission prompts)
 
@@ -159,7 +162,7 @@ Press **R** to reload session data
 
 💡 **Tip 19**: Press $ to toggle the cost column -- hiding it makes the menu load instantly (no .jsonl parsing)
 
-💡 **Tip 20**: Press D > V to run 158 validation tests, then copy results to clipboard
+💡 **Tip 20**: Press D > V to run 250 validation tests, then copy results to clipboard
 
 ## Keyboard Shortcuts
 

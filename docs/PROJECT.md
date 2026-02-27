@@ -2,18 +2,18 @@
 
 ## Overview
 
-**Codex and Claude Code Session Manager** is a single-file PowerShell application for managing both Claude Code CLI and OpenAI Codex CLI sessions with Windows Terminal integration.
+**SessionForge (sf)** is a single-file PowerShell application for managing both Claude Code CLI and OpenAI Codex CLI sessions with Windows Terminal integration.
 
 ## Files
 
 ```
-WinClaudeCodeForker/
+SessionForge/
 ├── Claude-Menu.ps1          # Main application (~14,000+ lines PowerShell)
 ├── README.md                # User documentation
 ├── INSTALL.md               # Installation guide
 ├── QUICKSTART.md            # Quick start guide
 ├── CHANGELOG.md             # Version history
-├── LICENSE                  # MIT License
+├── LICENSE                  # License
 ├── PROJECT.md               # This file
 └── .gitignore              # Git ignore rules
 ```
@@ -355,7 +355,7 @@ For questions or issues:
 
 ## License
 
-MIT License - See LICENSE file
+See LICENSE file for terms.
 
 ---
 

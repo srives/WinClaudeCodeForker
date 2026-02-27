@@ -1,5 +1,5 @@
 """
-Background image generation for Claude Code Session Manager (Linux).
+Background image generation for SessionForge (Linux).
 Uses ImageMagick (convert) with PIL/Pillow fallback.
 """
 
@@ -12,6 +12,7 @@ from typing import Optional, Dict
 from dataclasses import dataclass
 
 from .config import get_session_background_dir
+from .registry import get_platform
 
 
 @dataclass
@@ -23,6 +24,7 @@ class BackgroundInfo:
     forked_from: Optional[str] = None
     git_branch: Optional[str] = None
     model: Optional[str] = None
+    source: str = 'claude'  # 'claude' or 'codex' - controls Platform line color
 
     def __post_init__(self):
         if not self.computer_user:
@@ -142,6 +144,18 @@ def _create_with_imagemagick(info: BackgroundInfo, output_path: Path) -> bool:
             ])
             y_pos += 50
 
+        # Platform (always shown, in canonical platform color)
+        platform = get_platform(info.source)
+        platform_text = f"Platform: {platform['display_name']}"
+        platform_color = platform['imagemagick_color']
+        annotations.extend([
+            '-fill', platform_color,
+            '-annotate', f'+200+{y_pos}', platform_text,
+        ])
+        y_pos += 50
+        # Reset fill to white for subsequent text
+        annotations.extend(['-fill', 'white'])
+
         # Directory
         annotations.extend([
             '-pointsize', '24',
@@ -222,6 +236,13 @@ def _create_with_pil(info: BackgroundInfo, output_path: Path) -> bool:
             draw.text((x_pos, y_pos), f'model: {info.model}', fill=text_color, font=font_medium)
             y_pos += 50
 
+        # Platform (always shown, in canonical platform color)
+        platform = get_platform(info.source)
+        platform_text = f"Platform: {platform['display_name']}"
+        platform_color = platform['pil_color']
+        draw.text((x_pos, y_pos), platform_text, fill=platform_color, font=font_medium)
+        y_pos += 50
+
         # Directory
         draw.text((x_pos, y_pos), info.directory, fill=text_color, font=font_small)
 
@@ -255,6 +276,7 @@ def _create_text_file(info: BackgroundInfo, output_path: Path):
         if info.model:
             lines.append(f"Model: {info.model}")
 
+        lines.append(f"Platform: {get_platform(info.source)['display_name']}")
         lines.append(f"Directory: {info.directory}")
         lines.append("")
         lines.append(f"Generated: {datetime.now().isoformat()}")
@@ -294,6 +316,7 @@ def read_background_txt(txt_path: Path) -> Optional[Dict[str, str]]:
                     'computeruser': 'computer_user',
                     'branch': 'branch',
                     'model': 'model',
+                    'platform': 'platform',
                     'directory': 'directory',
                 }
 

@@ -1,19 +1,19 @@
 #!/bin/bash
 #
-# Claude Code Session Manager - Installer for Linux
+# SessionForge (sf) - Installer for Linux
 #
-# This script installs the Claude Code Session Manager to your system.
+# This script installs SessionForge to your system.
 #
 
 set -e
 
-VERSION="2.0.0"
+VERSION="3.1.0"
 INSTALL_DIR="$HOME/.local/share/claude-menu"
 BIN_DIR="$HOME/.local/bin"
 IS_WSL=false
 
 echo "========================================"
-echo "Claude Code Session Manager v$VERSION"
+echo "SessionForge (sf) v$VERSION"
 echo "Installer for Linux"
 echo "========================================"
 echo
@@ -236,6 +236,8 @@ chmod +x "$INSTALL_DIR/claude-menu.fish"
 # Create symlinks in bin directory
 echo "Creating symlinks..."
 ln -sf "$INSTALL_DIR/claude-menu.py" "$BIN_DIR/claude-menu"
+ln -sf "$INSTALL_DIR/claude-menu.py" "$BIN_DIR/sf"
+ln -sf "$INSTALL_DIR/claude-menu.py" "$BIN_DIR/fork"
 ln -sf "$INSTALL_DIR/claude-menu.sh" "$BIN_DIR/claude-menu-bash"
 ln -sf "$INSTALL_DIR/claude-menu.fish" "$BIN_DIR/claude-menu-fish"
 
@@ -264,7 +266,9 @@ echo "Installation directory: $INSTALL_DIR"
 echo "Configuration: $CONFIG_FILE"
 echo ""
 echo "Usage:"
-echo "  claude-menu          # Run the session manager"
+echo "  sf                   # Run SessionForge (short command)"
+echo "  fork                 # Run SessionForge (alternate command)"
+echo "  claude-menu          # Run SessionForge (legacy command)"
 echo "  claude-menu --help   # Show help"
 echo ""
 

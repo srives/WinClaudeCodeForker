@@ -1,5 +1,5 @@
 """
-Configuration management for Claude Code Session Manager (Linux).
+Configuration management for SessionForge (Linux).
 Handles reading/writing config from ~/.config/claude-menu/config.yaml
 """
 

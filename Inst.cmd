@@ -2,7 +2,7 @@
 setlocal
 
 echo.
-echo Claude Code Session Forker - Installation Script
+echo SessionForge (sf) - Installation Script
 echo =================================================
 echo.
 
@@ -48,6 +48,6 @@ if exist "%SCRIPT_DIR%Claude-Menu.ps1" (
 echo.
 echo Installation complete!
 echo.
-echo To use the script, run: fork
-echo (Make sure fork.cmd is in your PATH or current directory)
+echo To use the script, run: sf  (or: fork)
+echo (Make sure sf.cmd and fork.cmd are in your PATH or current directory)
 echo.

@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-**Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking** is a PowerShell-based unified session manager for both Claude Code CLI and OpenAI Codex CLI with deep Windows Terminal integration. It enables visual session management across both CLIs, forking workflows, cost tracking, and custom terminal backgrounds.
+**SessionForge (sf)** is a PowerShell-based unified session manager for both Claude Code CLI and OpenAI Codex CLI with deep Windows Terminal integration. It enables visual session management across both CLIs, forking workflows, cost tracking, and custom terminal backgrounds. Launch with `sf` or `fork` from the command line.
 
-**Current Version:** 3.0.0 (2026-02-26)
+**Current Version:** 3.1.0 (2026-02-26)
 **Author:** S. Rives
 **Created:** January 2026
 **Platform:** Windows 10/11 with PowerShell 5.1+
@@ -43,7 +43,7 @@ C:\repos\Fork\
     ├── PROJECT.md            # Project structure
     ├── PRODUCT_ANALYSIS.md   # Development cost analysis
     ├── LINUX.md              # Linux port documentation
-    ├── LICENSE               # MIT License
+    ├── LICENSE               # License
     ├── MainMenu.png          # Screenshot
     └── screenshot_watermark.png  # Background watermark example
 ```
@@ -77,10 +77,12 @@ C:\repos\Fork\
 - **co$t Menu**: Press $ to show/hide cost column; hiding it skips all .jsonl parsing for instant load
 - **Context Limit Warnings**: Shows usage % with color-coded severity
 
-### Cost Tracking
+### Cost & Token Tracking
 - **Per-Session Costs**: Calculate costs based on Claude Sonnet 4.5 pricing
+- **Token Totals in Header**: When Cost column is ON, each platform's stats line shows cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
 - **Token Analytics**: Track input, output, cache reads/writes
 - **Cache Hit Rates**: Monitor prompt caching effectiveness
+- **Persistent Cost Snapshots**: `costing.json` records cost/token data per session so historical totals survive purging
 - **Lazy Loading**: Cost column can be toggled via co$t menu ($ key); when OFF, zero .jsonl parsing for instant load
 - **Progress Bar**: When Cost column is ON, costs calculated with progress counter ("Calculating costs... 14/38"), then cached
 
@@ -111,7 +113,7 @@ The Windows version is intentionally a single PowerShell file for easy distribut
 #region Profile Registry        # ~200 lines - Legacy profile tracking
 #region Model Detection         # ~150 lines - Parse model from sessions
 #region Background Tracking     # ~300 lines - Background image metadata
-#region Validation Tests        # ~2000 lines - 158 automated tests
+#region Validation Tests        # ~3000 lines - 250 automated tests
 #region Main Program            # ~200 lines - Entry point, main loop
 ```
 
@@ -188,6 +190,7 @@ All data stored in `~/.claude-menu/`:
 {
   "Active": true,
   "Src": true,
+  "Limit": false,
   "Model": true,
   "Session": true,
   "Notes": false,
@@ -198,6 +201,28 @@ All data stored in `~/.claude-menu/`:
   "WinTerminal": true,
   "ForkedFrom": true,
   "Path": true
+}
+```
+
+**costing.json** - Persistent cost snapshots (survives purging)
+```json
+{
+  "version": 1,
+  "entries": [{
+    "sessionId": "uuid",
+    "title": "MySession",
+    "source": "claude",
+    "projectPath": "C:\\repos\\project",
+    "cost": 1.2345,
+    "inputTokens": 50000,
+    "outputTokens": 12000,
+    "cacheCreationTokens": 8000,
+    "cacheReadTokens": 30000,
+    "totalTokens": 100000,
+    "model": "sonnet",
+    "snapshotDate": "2026-02-26T14:30:00",
+    "purged": false
+  }]
 }
 ```
 
@@ -233,6 +258,10 @@ All data stored in `~/.claude-menu/`:
 - `Find-OrphanedWTProfiles` - Finds WT profiles (Claude-*/Codex-*) with no matching session
 - `Show-PurgeMenu` - Bulk archive/delete dead sessions and remove orphaned WT profiles
 - `Get-CreateProfileChoice` - Shared Y/N prompt for creating WT profiles (used by Continue and unnamed session paths)
+- `Open-CostingBatch` / `Close-CostingBatch` - Batch costing.json I/O (load once, write once)
+- `Save-CostingEntry` - Upserts a session's cost/token snapshot into costing.json
+- `Get-CostingData` - Returns parsed costing.json
+- `Set-CostingPurged` - Marks costing entries as purged by session ID
 
 ### Windows Terminal
 - `Get-SessionWTTitle` - Derives WT profile title from session (handles Codex CamelCase titles, sanitization, truncation)
@@ -247,7 +276,7 @@ All data stored in `~/.claude-menu/`:
 - `New-ContinueSessionBackgroundImage` - Wrapper for continued sessions
 
 ### Validation
-- `Test-SystemValidation` - Runs 158 automated tests (results can be copied to clipboard: errors only, warnings+errors, or all)
+- `Test-SystemValidation` - Runs 250 automated tests (results can be copied to clipboard: errors only, warnings+errors, or all)
 
 ## Menu Keys
 
@@ -261,7 +290,6 @@ All data stored in `~/.claude-menu/`:
 | H/S | Hide/Show unnamed sessions |
 | Q/C | Quiet/Chatty permission mode |
 | $ | co$t menu (show/hide cost column, generate cost table) |
-| O | Cost analysis |
 | P | Purge & Cleanup (dead sessions + orphaned WT profiles) |
 | D | Debug menu |
 | R | Refresh |
@@ -284,7 +312,7 @@ All data stored in `~/.claude-menu/`:
 
 ## Testing
 
-The script includes 158 automated validation tests accessible via Debug menu (D → V):
+The script includes 250 automated validation tests accessible via Debug menu (D → V):
 
 - **Tests 1-15**: Infrastructure (PowerShell, CLI, directories, JSON)
 - **Tests 16-30**: Logic (functions, encoding, sanitization)
@@ -296,6 +324,14 @@ The script includes 158 automated validation tests accessible via Debug menu (D 
 - **Tests 109-138**: Functional tests that EXECUTE real functions with mock inputs (Format-Cost, Format-TokenCount, ConvertTo-CamelCaseTitle, Get-SessionCost, Get-SessionWTTitle, ConvertTo-Hashtable, Test-JsonStructure, Get-DynamicPathWidth, etc.)
 - **Tests 139-148**: Data integrity tests (no duplicate session IDs, ColumnDefinitions matches config, WT profile backgrounds exist)
 - **Tests 149-158**: Regression tests (no bare Write-Host in discovery, no blank line padding, both WT prefixes checked, .ps1 wrapping, Clear-Host before reload)
+- **Tests 159-211**: Extended functional and regression tests
+- **Tests 212-216**: WT Safety (backup/restore safety nets, settings round-trip, normalize-paths)
+- **Tests 217-222**: Prefix Handling (no hardcoded prefix strips, Get-SessionNameFromWTProfile works for all platforms)
+- **Tests 223-227**: JSON File Safety (all 4 data files loadable and structurally valid)
+- **Tests 228-230**: Resource Safety (GDI+ disposal, StreamReader cleanup, session ID length guards)
+- **Tests 231-240**: Edge Cases (boundary conditions in core utilities: costs, tokens, CamelCase, Format-Cost)
+- **Tests 241**: Menu Key Audit (static code analysis: every handled main menu key appears in display legend)
+- **Tests 242-250**: Costing JSON Persistence (global path, function existence, batch I/O, JSON structure)
 
 **Validation results can be copied to clipboard:** Errors only, Warnings+Errors, or All results.
 
@@ -433,6 +469,31 @@ claude-menu --enable-debug
 
 ## Recent Work (February 26, 2026)
 
+### v3.1.0 - Token Totals, Cost Snapshots, 250 Tests
+
+1. **Critical Bug Fixes**
+   - **WT Backup Restore:** `Test-Json -Path` broken on all PS versions (PS 5.1: no cmdlet; PS 7+: no -Path param). Replaced with `ConvertFrom-Json` validation.
+   - **Codex Prefix Strip:** 10 hardcoded `'^Claude-'` locations failed for Codex profiles. Added `Get-SessionNameFromWTProfile` utility, replaced all 10 locations.
+
+2. **New Features**
+   - **Token Totals in Header**: When Cost column is ON, stats line shows per-platform cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
+   - **Persistent Cost Snapshots** (`costing.json`): Cost/token data snapshotted during calculation; survives session purging. Cost table ($ > G) shows purged session totals and lifetime spend.
+   - **Batch Costing I/O**: `Open-CostingBatch`/`Close-CostingBatch` loads costing.json once, upserts in memory, writes once (avoids per-session disk I/O)
+   - Codex new sessions now get full WT integration (background image, `Codex-` profile, launch with profile)
+   - Auto-refresh main menu after new session creation (`$reloadSessions = $true`)
+   - `Get-SessionNameFromWTProfile` function for platform-agnostic prefix stripping
+
+3. **Test Suite Expansion (158 → 250, +58%)**
+   - 92 new tests: WT Safety, Prefix Handling, JSON File Safety, Resource Safety, Edge Cases, Menu Key Audit, Costing JSON Persistence
+   - Static code analysis test: scans own source for undisplayed main menu keys
+   - Tests now validate OUTSIDE the app boundary (WT settings, JSON files, GDI+ patterns)
+
+4. **Cross-Platform Fixes**
+   - Linux cost math: cache_write/cache_read rates were reversed for all 3 pricing tiers (Sonnet, Opus, Haiku)
+   - Version unified to 3.1.0 across all 8 files
+   - Removed incorrect "MIT License" references
+   - Added __pycache__/ to .gitignore
+
 ### v3.0.0 - Codex CLI Integration, Performance Optimization, 158 Tests
 
 1. **Unified Claude + Codex Session Menu**
@@ -440,8 +501,8 @@ claude-menu --enable-debug
    - New "Src" column shows `C` (Claude, blue) or `X` (Codex, magenta) for each session
    - Codex sessions discovered from SQLite database (`~/.codex/state_*.sqlite`)
    - Title bar shows "Codex (X) and Claude Code (C)" with color-coded markers
-   - Session stats line split into two color-coded segments: Claude stats in blue, Codex stats in magenta (each with own cost total)
-   - Cost totals show in header when Cost column is on, with progress bar "Calculating costs... 14/38"
+   - Session stats line split into two color-coded segments: Claude stats in blue, Codex stats in magenta (each with own cost and token total, e.g., `Cost: $1,485.63, Tokens: 2.7B`)
+   - Cost and token totals show in header when Cost column is on, with progress bar "Calculating costs... 14/38"
    - About screen shows SYS1000.NET as clickable link (OSC 8 hyperlink)
 
 2. **Codex Session Operations**
@@ -475,7 +536,7 @@ claude-menu --enable-debug
 5. **Display Changes**
    - Title: "Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking"
    - Debug/Permissions moved to "Current directory" line
-   - Session stats line color-coded: Claude in blue, Codex in magenta, with per-CLI cost totals
+   - Session stats line color-coded: Claude in blue, Codex in magenta, with per-CLI cost and token totals
 
 6. **Claude-Specific Feature Labeling**
    - Quiet/Chatty mode: "CLAUDE CODE: SWITCH TO QUIET/CHATTY MODE?" with note "(This does not affect Codex sessions.)"
@@ -571,6 +632,7 @@ Session discovery in WSL - need to verify:
 
 ## Version History Highlights
 
+- **3.1.0**: Token totals in header, persistent cost snapshots (costing.json), quality & resilience overhaul, 2 critical bug fixes (WT backup restore, Codex prefix strip), 250 tests (+58%), Codex new session WT profiles, auto-refresh, Linux cost math fix, platform prefix abstraction
 - **3.0.0**: Codex CLI integration, unified Claude + Codex menu, performance optimization (hidden columns skip I/O, cost lazy-loading), co$t menu, 158 tests with clipboard copy, CamelCase titles, bug fixes (Format-Cost, token overflow, array wrapping)
 - **2.1.1**: Claude .exe launch fix, Purge dead sessions, column sort fix, bug fixes
 - **2.0.1**: Linux port with WSL support, debug logging, multi-path detection
@@ -604,4 +666,4 @@ powershell -ExecutionPolicy Bypass -File "Claude-Menu.ps1"
 
 - [Claude Code Documentation](https://claude.ai/claude-code)
 - [Windows Terminal Docs](https://aka.ms/terminal)
-- [GitHub Repository](https://github.com/srives/WinClaudeCodeForker)
+- [GitHub Repository](https://github.com/srives/SessionForge)

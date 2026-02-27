@@ -1,27 +1,28 @@
 <#
 .SYNOPSIS
-    Claude Session Launcher - Interactive menu for managing Claude sessions with Windows Terminal integration
+    SessionForge (sf) - Unified AI coding session manager with Windows Terminal integration
 
 .DESCRIPTION
     Provides an interactive menu for:
-    - Discovering all Claude sessions across projects
+    - Discovering all Claude Code and Codex CLI sessions across projects
     - Starting new sessions with directory selection
     - Continuing existing sessions
     - Forking sessions with custom Windows Terminal profiles and background images
     - Git branch detection and display
-    - Model tracking and display
+    - Model tracking and cost analytics
     - Smart background image conflict resolution
+    - 241 automated self-validation tests
 
 .NOTES
     Author: S. Rives
-    Version: 1.10.8
-    Date: 2026-01-25
-    Requires: PowerShell 5.1+, Windows Terminal, Claude CLI
+    Version: 3.1.0
+    Date: 2026-02-26
+    Requires: PowerShell 5.1+, Windows Terminal, Claude CLI or Codex CLI
 #>
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "3.0.0"
+$Global:ScriptVersion = "3.1.0"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -30,6 +31,7 @@ $Global:DebugStatePath = "$Global:MenuPath\debug.txt"
 $Global:DebugLogPath = "$Global:MenuPath\debug.log"
 $Global:QuoteStatePath = "$Global:MenuPath\quote-state.json"
 $Global:ColumnConfigPath = "$Global:MenuPath\column-config.json"
+$Global:CostingPath = "$Global:MenuPath\costing.json"
 $Global:WTSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
 $Global:ClaudePath = "$env:USERPROFILE\.claude"
 $Global:LastClaudeCommand = $null
@@ -68,6 +70,110 @@ $Global:ColumnDefinitions = @(
 )
 $Global:PromptEndY = 0  # Store where prompts end for sub-menu positioning
 $Global:CurrentPage = 1  # Current page for pagination
+
+# Platform Registry - single source of truth for platform identity
+# Adding a new platform requires only: (1) a new entry here, (2) a session discovery function
+$Global:PlatformRegistry = @{
+    claude = @{
+        Key          = 'C'
+        DisplayName  = 'Claude Code'
+        Color        = 'Blue'
+        ColorRGB     = @(30, 144, 255)
+        WTPrefix     = 'Claude-'
+        CLIName      = 'claude'
+        ResumeCmd    = '--resume {0}'
+        ForkCmd      = '--resume {0} --fork-session'
+        CLIPathFunc  = 'Get-ClaudeCLIPath'
+    }
+    codex = @{
+        Key          = 'X'
+        DisplayName  = 'Codex'
+        Color        = 'Magenta'
+        ColorRGB     = @(255, 0, 255)
+        WTPrefix     = 'Codex-'
+        CLIName      = 'codex'
+        ResumeCmd    = 'resume {0}'
+        ForkCmd      = 'fork {0}'
+        CLIPathFunc  = 'Get-CodexCLIPath'
+    }
+}
+
+function Get-PlatformProperty {
+    <#
+    .SYNOPSIS
+        Looks up a single property from the PlatformRegistry for a given source.
+        Defaults to 'claude' for unknown sources.
+    #>
+    param(
+        [string]$Source,
+        [string]$Property
+    )
+    $key = if ($Global:PlatformRegistry.ContainsKey($Source)) { $Source } else { 'claude' }
+    return $Global:PlatformRegistry[$key][$Property]
+}
+
+function Get-PlatformByKey {
+    <#
+    .SYNOPSIS
+        Reverse lookup: finds a platform entry by its Key letter (e.g. 'C' or 'X').
+    #>
+    param([string]$Key)
+    foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+        if ($entry.Value.Key -eq $Key) { return $entry.Value }
+    }
+    return $Global:PlatformRegistry['claude']
+}
+
+function Get-PlatformEntry {
+    <#
+    .SYNOPSIS
+        Returns the full platform hashtable for a source. Defaults to claude.
+    #>
+    param([string]$Source)
+    $key = if ($Global:PlatformRegistry.ContainsKey($Source)) { $Source } else { 'claude' }
+    return $Global:PlatformRegistry[$key]
+}
+
+function Get-InstalledPlatforms {
+    <#
+    .SYNOPSIS
+        Returns registry entries whose CLI is available in PATH.
+    #>
+    $installed = @{}
+    foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+        if (Get-Command $entry.Value.CLIName -ErrorAction SilentlyContinue) {
+            $installed[$entry.Key] = $entry.Value
+        }
+    }
+    return $installed
+}
+
+function Get-AllWTProfilePrefixes {
+    <#
+    .SYNOPSIS
+        Returns an array of all WT profile prefixes from the registry (e.g. @('Claude-', 'Codex-')).
+    #>
+    return @($Global:PlatformRegistry.Values | ForEach-Object { $_.WTPrefix })
+}
+
+function Get-SessionNameFromWTProfile {
+    <#
+    .SYNOPSIS
+        Strips the platform prefix (Claude-, Codex-, etc.) from a WT profile name.
+        Returns the raw session name. If no known prefix matches, returns the input unchanged.
+    .EXAMPLE
+        Get-SessionNameFromWTProfile "Claude-MySession"  → "MySession"
+        Get-SessionNameFromWTProfile "Codex-FooBar"      → "FooBar"
+        Get-SessionNameFromWTProfile "Unknown-Foo"        → "Unknown-Foo"
+    #>
+    param([string]$WTProfileName)
+    foreach ($prefix in (Get-AllWTProfilePrefixes)) {
+        if ($WTProfileName.StartsWith($prefix)) {
+            return $WTProfileName.Substring($prefix.Length)
+        }
+    }
+    return $WTProfileName
+}
 
 # Trap for unhandled errors
 trap {
@@ -848,21 +954,27 @@ function Write-DebugInfo {
     .SYNOPSIS
         Writes debug information if debug mode is enabled
     .DESCRIPTION
-        Outputs to both console and debug log file with timestamp
+        Outputs to both console and debug log file with timestamp.
+        Use -Force to write to the log file even when debug mode is off
+        (e.g., validation results that should always be logged).
     #>
     param(
         [string]$Message,
-        [ConsoleColor]$Color = 'DarkGray'
+        [ConsoleColor]$Color = 'DarkGray',
+        [switch]$Force
     )
 
-    if (Get-DebugState) {
+    $debugOn = Get-DebugState
+    if ($debugOn -or $Force) {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $logMessage = "[$timestamp] $Message"
 
-        # Write to console
-        Write-Host "[DEBUG] $Message" -ForegroundColor $Color
+        # Write to console only when debug mode is actually on
+        if ($debugOn) {
+            Write-Host "[DEBUG] $Message" -ForegroundColor $Color
+        }
 
-        # Write to log file
+        # Write to log file (always when -Force, or when debug is on)
         try {
             $logMessage | Add-Content -Path $Global:DebugLogPath -Encoding UTF8
         } catch {
@@ -975,42 +1087,55 @@ function Test-SystemValidation {
     $script:ValidationPassCount = 0
     $script:ValidationFailCount = 0
     $script:ValidationWarnCount = 0
+    $script:ValidationSkipCount = 0
+    $script:ValidationTestNumber = 0
     $script:ValidationResults = @()  # Collect all results for clipboard
+    Write-DebugInfo "=== VALIDATION TESTS STARTED ===" -Force
 
     function Write-TestResult {
         param(
             [string]$TestName,
-            [string]$Status,  # PASS, FAIL, WARN
+            [string]$Status,  # PASS, FAIL, WARN, SKIP
             [string]$Message = ""
         )
+
+        $script:ValidationTestNumber++
+        $num = $script:ValidationTestNumber
 
         $statusColor = switch ($Status) {
             "PASS" { "Green" }
             "FAIL" { "Red" }
             "WARN" { "Yellow" }
+            "SKIP" { "DarkGray" }
         }
 
         Write-Host "[" -NoNewline
         Write-Host $Status -NoNewline -ForegroundColor $statusColor
         Write-Host "] " -NoNewline
+        Write-Host "#$num " -NoNewline -ForegroundColor DarkGray
         Write-Host $TestName -ForegroundColor Gray
 
         if ($Message) {
             Write-Host "        $Message" -ForegroundColor DarkGray
         }
 
-        # Store result for clipboard
-        $resultLine = "[$Status] $TestName"
+        # Store result for clipboard and write to debug log
+        $resultLine = "[$Status] #$num $TestName"
         if ($Message) { $resultLine += "`r`n        $Message" }
         $script:ValidationResults += @{ Status = $Status; Text = $resultLine }
+        Write-DebugInfo $resultLine -Force
 
         # Update counters at script scope
         switch ($Status) {
             "PASS" { $script:ValidationPassCount++ }
             "FAIL" { $script:ValidationFailCount++ }
             "WARN" { $script:ValidationWarnCount++ }
+            "SKIP" { $script:ValidationSkipCount++ }
         }
     }
+
+    Write-Host ""
+    Write-ColorText "--- Infrastructure ---" -Color Cyan
 
     # Test 1: PowerShell Version
     try {
@@ -1117,7 +1242,11 @@ function Test-SystemValidation {
             $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
             $wtSettings = Get-Content "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json" -Raw | ConvertFrom-Json
 
-            $managedProfiles = $wtSettings.profiles.list | Where-Object { $_.name -like "Claude-*" -or $_.name -like "Codex-*" }
+            $allPrefixes = Get-AllWTProfilePrefixes
+            $managedProfiles = $wtSettings.profiles.list | Where-Object {
+                $name = $_.name
+                ($allPrefixes | Where-Object { $name -like "$_*" }).Count -gt 0
+            }
             $trackedProfiles = $mapping.sessions | ForEach-Object { $_.wtProfileName }
 
             $orphaned = $managedProfiles | Where-Object { $trackedProfiles -notcontains $_.name }
@@ -1259,6 +1388,9 @@ function Test-SystemValidation {
     } catch {
         Write-TestResult "Column Configuration" "WARN" "Check failed: $($_.Exception.Message)"
     }
+
+    Write-Host ""
+    Write-ColorText "--- Logic ---" -Color Cyan
 
     # Test 16: Path Encoding Round-Trip (Bijection Test)
     try {
@@ -1566,6 +1698,9 @@ function Test-SystemValidation {
     } catch {
         Write-TestResult "Session Object Structure" "FAIL" $_.Exception.Message
     }
+
+    Write-Host ""
+    Write-ColorText "--- Algorithms ---" -Color Cyan
 
     # Test 31: Menu Keys Match Handlers
     try {
@@ -2298,6 +2433,9 @@ function Test-SystemValidation {
         Write-TestResult "UpdatedBackgrounds Flow" "FAIL" $_.Exception.Message
     }
 
+    Write-Host ""
+    Write-ColorText "--- Caching ---" -Color Cyan
+
     # Test 58: Caching Functions Exist
     try {
         $cacheFunctions = @(
@@ -2484,7 +2622,11 @@ function Test-SystemValidation {
         $wtSettingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
         if (Test-Path $wtSettingsPath) {
             $settings = Get-Content $wtSettingsPath -Raw | ConvertFrom-Json
-            $claudeProfiles = $settings.profiles.list | Where-Object { $_.name -like "Claude-*" -and $_.backgroundImage }
+            $allPrefixes = Get-AllWTProfilePrefixes
+            $claudeProfiles = $settings.profiles.list | Where-Object {
+                $name = $_.name
+                $_.backgroundImage -and ($allPrefixes | Where-Object { $name -like "$_*" }).Count -gt 0
+            }
 
             $linuxStylePaths = @()
             foreach ($profile in $claudeProfiles) {
@@ -2548,6 +2690,9 @@ function Test-SystemValidation {
     } catch {
         Write-TestResult "Loading Spinner" "FAIL" $_.Exception.Message
     }
+
+    Write-Host ""
+    Write-ColorText "--- Regression Prevention & Keyboard ---" -Color Cyan
 
     # Test 66: Enter Key Handler Pattern (VirtualKeyCode 13)
     # Verifies Enter key defaults are implemented in menus (added in v1.10.0)
@@ -2898,6 +3043,9 @@ function Test-SystemValidation {
         Write-TestResult "Refresh Returns Updates" "FAIL" $_.Exception.Message
     }
 
+    Write-Host ""
+    Write-ColorText "--- Codex Integration ---" -Color Cyan
+
     # Test 81: Codex Integration Functions Exist
     try {
         $codexFunctions = @(
@@ -3079,6 +3227,9 @@ function Test-SystemValidation {
     } catch {
         Write-TestResult "Python for SQLite" "WARN" "Check failed: $($_.Exception.Message)"
     }
+
+    Write-Host ""
+    Write-ColorText "--- Purge, Cleanup & Fixes ---" -Color Cyan
 
     # Test 90: Skull Marker for Dead Sessions
     # Verifies Get-SessionActivityMarker returns skull (U+2620) when .jsonl file is missing
@@ -3537,6 +3688,9 @@ function Test-SystemValidation {
     } catch {
         Write-TestResult "Array Wrap on Discovery" "FAIL" $_.Exception.Message
     }
+
+    Write-Host ""
+    Write-ColorText "--- Functional Tests ---" -Color Cyan
 
     # Test 109: Token Count Uses [long] Not [int]
     # Prevents overflow when total tokens exceed 2.1 billion (Int32 max)
@@ -4079,7 +4233,11 @@ function Test-SystemValidation {
     try {
         if (Test-Path $Global:WTSettingsPath) {
             $settings = Get-Content $Global:WTSettingsPath -Raw | ConvertFrom-Json
-            $managed = @($settings.profiles.list | Where-Object { $_.name -like "Claude-*" -or $_.name -like "Codex-*" })
+            $allPrefixes = Get-AllWTProfilePrefixes
+            $managed = @($settings.profiles.list | Where-Object {
+                $name = $_.name
+                ($allPrefixes | Where-Object { $name -like "$_*" }).Count -gt 0
+            })
             $missingBg = @()
             foreach ($p in $managed) {
                 if ($p.backgroundImage -and $p.backgroundImage -ne "") {
@@ -4166,8 +4324,8 @@ function Test-SystemValidation {
         Write-TestResult "No Blank Line Padding" "FAIL" $_.Exception.Message
     }
 
-    # Test 133: Get-WTProfileName Checks Both Prefixes
-    # Codex profiles use "Codex-" prefix, Claude uses "Claude-". Function must check both.
+    # Test 133: Get-WTProfileName Uses PlatformRegistry For Prefixes
+    # Function must use Get-PlatformProperty or Get-AllWTProfilePrefixes (not hardcoded "Claude-"/"Codex-").
     try {
         $scriptPath = $PSCommandPath
         if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
@@ -4176,27 +4334,22 @@ function Test-SystemValidation {
         if (Test-Path $scriptPath) {
             $lines = Get-Content $scriptPath
             $inFunction = $false
-            $hasClaudePrefix = $false
-            $hasCodexPrefix = $false
+            $usesRegistry = $false
             for ($i = 0; $i -lt $lines.Count; $i++) {
                 if ($lines[$i] -match 'function Get-WTProfileName\s*\{') { $inFunction = $true; continue }
                 if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Get-WTProfileName') { break }
-                if ($inFunction -and $lines[$i] -match '"Claude-"') { $hasClaudePrefix = $true }
-                if ($inFunction -and $lines[$i] -match '"Codex-"') { $hasCodexPrefix = $true }
+                if ($inFunction -and ($lines[$i] -match 'Get-PlatformProperty' -or $lines[$i] -match 'Get-AllWTProfilePrefixes')) { $usesRegistry = $true }
             }
-            if ($hasClaudePrefix -and $hasCodexPrefix) {
-                Write-TestResult "WTProfileName Both Prefixes" "PASS" "Get-WTProfileName checks both Claude- and Codex- prefixes"
+            if ($usesRegistry) {
+                Write-TestResult "WTProfileName Uses Registry" "PASS" "Get-WTProfileName uses PlatformRegistry for prefixes"
             } else {
-                $issues = @()
-                if (-not $hasClaudePrefix) { $issues += "Claude- prefix not checked" }
-                if (-not $hasCodexPrefix) { $issues += "Codex- prefix not checked" }
-                Write-TestResult "WTProfileName Both Prefixes" "FAIL" ($issues -join '; ')
+                Write-TestResult "WTProfileName Uses Registry" "FAIL" "Get-WTProfileName does not reference PlatformRegistry"
             }
         } else {
-            Write-TestResult "WTProfileName Both Prefixes" "SKIP" "Could not locate script file"
+            Write-TestResult "WTProfileName Uses Registry" "SKIP" "Could not locate script file"
         }
     } catch {
-        Write-TestResult "WTProfileName Both Prefixes" "FAIL" $_.Exception.Message
+        Write-TestResult "WTProfileName Uses Registry" "FAIL" $_.Exception.Message
     }
 
     # Test 134: Get-ModelFromBackgroundTxt Strips Codex Prefix
@@ -4347,6 +4500,8 @@ function Test-SystemValidation {
     # These tests call real functions and verify return values
     # with no destructive side effects (no writes to user files)
     # ================================================================
+    Write-Host ""
+    Write-ColorText "--- Data Integrity ---" -Color Cyan
 
     # Test 139: ConvertTo-Hashtable
     try {
@@ -4516,6 +4671,9 @@ function Test-SystemValidation {
         Write-TestResult "ColumnConfig All Keys + Types" "FAIL" $_.Exception.Message
     }
 
+    Write-Host ""
+    Write-ColorText "--- Functional Validation ---" -Color Cyan
+
     # Test 149: Get-SessionActivityMarker Returns Valid Markers Only
     try {
         # Call with a fake session that doesn't exist — should return skull
@@ -4674,6 +4832,2125 @@ function Test-SystemValidation {
         Write-TestResult "ModelFromSession Nonexistent" "FAIL" $_.Exception.Message
     }
 
+    # ================================================================
+    # PLATFORM REGISTRY - Tests for the centralized platform identity system
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # ================================================================
+    Write-Host ""
+    Write-ColorText "--- PlatformRegistry ---" -Color Cyan
+
+    # Test 159: PlatformRegistry Exists With Required Fields
+    try {
+        $requiredFields = @('Key', 'DisplayName', 'Color', 'ColorRGB', 'WTPrefix', 'CLIName', 'ResumeCmd', 'ForkCmd', 'CLIPathFunc')
+        $allPass = $true
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            foreach ($field in $requiredFields) {
+                if (-not $entry.Value.ContainsKey($field)) {
+                    $allPass = $false
+                    $issues += "Platform '$($entry.Key)' missing field '$field'"
+                }
+            }
+            # Validate ColorRGB has 3 elements
+            if ($entry.Value.ColorRGB -and $entry.Value.ColorRGB.Count -ne 3) {
+                $allPass = $false
+                $issues += "Platform '$($entry.Key)' ColorRGB must have 3 elements"
+            }
+        }
+        if ($allPass) {
+            $platformCount = $Global:PlatformRegistry.Count
+            Write-TestResult "PlatformRegistry Fields" "PASS" "$platformCount platforms, all $($requiredFields.Count) required fields present"
+        } else {
+            Write-TestResult "PlatformRegistry Fields" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "PlatformRegistry Fields" "FAIL" $_.Exception.Message
+    }
+
+    # Test 160: Get-PlatformProperty Returns Correct Values And Defaults
+    try {
+        $claudeKey = Get-PlatformProperty -Source 'claude' -Property 'Key'
+        $codexKey = Get-PlatformProperty -Source 'codex' -Property 'Key'
+        $unknownKey = Get-PlatformProperty -Source 'nonexistent' -Property 'Key'
+        $emptyKey = Get-PlatformProperty -Source '' -Property 'Key'
+        $claudeColor = Get-PlatformProperty -Source 'claude' -Property 'Color'
+        $codexColor = Get-PlatformProperty -Source 'codex' -Property 'Color'
+        $claudePrefix = Get-PlatformProperty -Source 'claude' -Property 'WTPrefix'
+        $codexPrefix = Get-PlatformProperty -Source 'codex' -Property 'WTPrefix'
+        $claudeDisplay = Get-PlatformProperty -Source 'claude' -Property 'DisplayName'
+        $codexDisplay = Get-PlatformProperty -Source 'codex' -Property 'DisplayName'
+
+        $issues = @()
+        if ($claudeKey -ne 'C') { $issues += "Claude Key expected 'C', got '$claudeKey'" }
+        if ($codexKey -ne 'X') { $issues += "Codex Key expected 'X', got '$codexKey'" }
+        if ($unknownKey -ne 'C') { $issues += "Unknown source should default to Claude 'C', got '$unknownKey'" }
+        if ($emptyKey -ne 'C') { $issues += "Empty source should default to Claude 'C', got '$emptyKey'" }
+        if ($claudeColor -ne 'Blue') { $issues += "Claude Color expected 'Blue', got '$claudeColor'" }
+        if ($codexColor -ne 'Magenta') { $issues += "Codex Color expected 'Magenta', got '$codexColor'" }
+        if ($claudePrefix -ne 'Claude-') { $issues += "Claude WTPrefix expected 'Claude-', got '$claudePrefix'" }
+        if ($codexPrefix -ne 'Codex-') { $issues += "Codex WTPrefix expected 'Codex-', got '$codexPrefix'" }
+        if ($claudeDisplay -ne 'Claude Code') { $issues += "Claude DisplayName expected 'Claude Code', got '$claudeDisplay'" }
+        if ($codexDisplay -ne 'Codex') { $issues += "Codex DisplayName expected 'Codex', got '$codexDisplay'" }
+
+        if ($issues.Count -eq 0) {
+            Write-TestResult "PlatformProperty Lookups" "PASS" "All 10 lookups correct, unknown/empty default to claude"
+        } else {
+            Write-TestResult "PlatformProperty Lookups" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "PlatformProperty Lookups" "FAIL" $_.Exception.Message
+    }
+
+    # Test 161: Get-AllWTProfilePrefixes Returns All Prefixes
+    try {
+        $prefixes = Get-AllWTProfilePrefixes
+        $issues = @()
+        if ($prefixes -notcontains 'Claude-') { $issues += "Missing 'Claude-'" }
+        if ($prefixes -notcontains 'Codex-') { $issues += "Missing 'Codex-'" }
+        if ($prefixes.Count -lt $Global:PlatformRegistry.Count) { $issues += "Count ($($prefixes.Count)) < registry count ($($Global:PlatformRegistry.Count))" }
+
+        if ($issues.Count -eq 0) {
+            Write-TestResult "AllWTProfilePrefixes" "PASS" "Returns $($prefixes.Count) prefixes: $($prefixes -join ', ')"
+        } else {
+            Write-TestResult "AllWTProfilePrefixes" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "AllWTProfilePrefixes" "FAIL" $_.Exception.Message
+    }
+
+    # Test 162: Get-PlatformByKey Reverse Lookup
+    try {
+        $claudeEntry = Get-PlatformByKey -Key 'C'
+        $codexEntry = Get-PlatformByKey -Key 'X'
+        $unknownEntry = Get-PlatformByKey -Key 'Z'
+
+        $issues = @()
+        if ($claudeEntry.CLIName -ne 'claude') { $issues += "Key 'C' expected CLIName 'claude', got '$($claudeEntry.CLIName)'" }
+        if ($codexEntry.CLIName -ne 'codex') { $issues += "Key 'X' expected CLIName 'codex', got '$($codexEntry.CLIName)'" }
+        if ($unknownEntry.CLIName -ne 'claude') { $issues += "Key 'Z' should default to claude, got '$($unknownEntry.CLIName)'" }
+        if ($claudeEntry.DisplayName -ne 'Claude Code') { $issues += "Key 'C' DisplayName expected 'Claude Code', got '$($claudeEntry.DisplayName)'" }
+        if ($codexEntry.DisplayName -ne 'Codex') { $issues += "Key 'X' DisplayName expected 'Codex', got '$($codexEntry.DisplayName)'" }
+
+        if ($issues.Count -eq 0) {
+            Write-TestResult "PlatformByKey Reverse" "PASS" "C->claude, X->codex, Z->claude (default)"
+        } else {
+            Write-TestResult "PlatformByKey Reverse" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "PlatformByKey Reverse" "FAIL" $_.Exception.Message
+    }
+
+    # Test 163: Get-PlatformEntry Returns Full Hashtable
+    try {
+        $claudeP = Get-PlatformEntry -Source 'claude'
+        $codexP = Get-PlatformEntry -Source 'codex'
+        $unknownP = Get-PlatformEntry -Source 'foobar'
+
+        $issues = @()
+        if ($claudeP.GetType().Name -ne 'Hashtable') { $issues += "Claude entry is not a Hashtable (got $($claudeP.GetType().Name))" }
+        if ($claudeP.Key -ne 'C') { $issues += "Claude Key expected 'C', got '$($claudeP.Key)'" }
+        if ($codexP.Key -ne 'X') { $issues += "Codex Key expected 'X', got '$($codexP.Key)'" }
+        if ($unknownP.Key -ne 'C') { $issues += "Unknown source should default to Claude, got '$($unknownP.Key)'" }
+        # Verify all fields accessible
+        $fieldCount = $claudeP.Keys.Count
+        if ($fieldCount -lt 9) { $issues += "Claude entry has only $fieldCount fields, expected >= 9" }
+
+        if ($issues.Count -eq 0) {
+            Write-TestResult "PlatformEntry Full" "PASS" "Returns complete hashtable, $fieldCount fields, unknown defaults to claude"
+        } else {
+            Write-TestResult "PlatformEntry Full" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "PlatformEntry Full" "FAIL" $_.Exception.Message
+    }
+
+    # Test 164: Unique Platform Keys (No Two Platforms Share Same Key)
+    try {
+        $keys = @()
+        $dupes = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($keys -contains $entry.Value.Key) { $dupes += "Duplicate Key '$($entry.Value.Key)' on platform '$($entry.Key)'" }
+            $keys += $entry.Value.Key
+        }
+        if ($dupes.Count -eq 0) {
+            Write-TestResult "Unique Platform Keys" "PASS" "$($keys.Count) platforms, all keys unique: $($keys -join ', ')"
+        } else {
+            Write-TestResult "Unique Platform Keys" "FAIL" ($dupes -join '; ')
+        }
+    } catch {
+        Write-TestResult "Unique Platform Keys" "FAIL" $_.Exception.Message
+    }
+
+    # Test 165: Unique WTPrefix (No Two Platforms Share Same Prefix)
+    try {
+        $prefixes = @()
+        $dupes = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($prefixes -contains $entry.Value.WTPrefix) { $dupes += "Duplicate WTPrefix '$($entry.Value.WTPrefix)' on platform '$($entry.Key)'" }
+            $prefixes += $entry.Value.WTPrefix
+        }
+        if ($dupes.Count -eq 0) {
+            Write-TestResult "Unique WTPrefixes" "PASS" "All $($prefixes.Count) prefixes unique: $($prefixes -join ', ')"
+        } else {
+            Write-TestResult "Unique WTPrefixes" "FAIL" ($dupes -join '; ')
+        }
+    } catch {
+        Write-TestResult "Unique WTPrefixes" "FAIL" $_.Exception.Message
+    }
+
+    # Test 166: WTPrefix Format (Must End With '-')
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if (-not $entry.Value.WTPrefix.EndsWith('-')) {
+                $issues += "Platform '$($entry.Key)' WTPrefix '$($entry.Value.WTPrefix)' does not end with '-'"
+            }
+            if ($entry.Value.WTPrefix.Length -lt 2) {
+                $issues += "Platform '$($entry.Key)' WTPrefix '$($entry.Value.WTPrefix)' too short"
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "WTPrefix Format" "PASS" "All prefixes end with '-' and have valid length"
+        } else {
+            Write-TestResult "WTPrefix Format" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "WTPrefix Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 167: ColorRGB Values In Valid Range (0-255)
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            $rgb = $entry.Value.ColorRGB
+            for ($c = 0; $c -lt $rgb.Count; $c++) {
+                if ($rgb[$c] -lt 0 -or $rgb[$c] -gt 255) {
+                    $issues += "Platform '$($entry.Key)' ColorRGB[$c]=$($rgb[$c]) out of range 0-255"
+                }
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "ColorRGB Range" "PASS" "All RGB values in 0-255 range"
+        } else {
+            Write-TestResult "ColorRGB Range" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "ColorRGB Range" "FAIL" $_.Exception.Message
+    }
+
+    # Test 168: ResumeCmd Contains {0} Placeholder
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($entry.Value.ResumeCmd -and $entry.Value.ResumeCmd -notmatch '\{0\}') {
+                $issues += "Platform '$($entry.Key)' ResumeCmd '$($entry.Value.ResumeCmd)' missing {0} placeholder"
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "ResumeCmd Placeholder" "PASS" "All ResumeCmd contain {0} placeholder"
+        } else {
+            Write-TestResult "ResumeCmd Placeholder" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "ResumeCmd Placeholder" "FAIL" $_.Exception.Message
+    }
+
+    # Test 169: ForkCmd Contains {0} Placeholder (When Not Null)
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($entry.Value.ForkCmd -and $entry.Value.ForkCmd -notmatch '\{0\}') {
+                $issues += "Platform '$($entry.Key)' ForkCmd '$($entry.Value.ForkCmd)' missing {0} placeholder"
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "ForkCmd Placeholder" "PASS" "All non-null ForkCmd contain {0} placeholder"
+        } else {
+            Write-TestResult "ForkCmd Placeholder" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "ForkCmd Placeholder" "FAIL" $_.Exception.Message
+    }
+
+    # Test 170: ResumeCmd Produces Valid Command With Session ID
+    try {
+        $testId = "12345678-abcd-1234-efgh-123456789abc"
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            $cmd = $entry.Value.ResumeCmd -f $testId
+            if ($cmd -notmatch $testId) {
+                $issues += "Platform '$($entry.Key)' ResumeCmd format result '$cmd' does not contain session ID"
+            }
+            if ($cmd -match '\{0\}') {
+                $issues += "Platform '$($entry.Key)' ResumeCmd still contains {0} after formatting"
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "ResumeCmd Format" "PASS" "All ResumeCmd produce valid commands with session ID"
+        } else {
+            Write-TestResult "ResumeCmd Format" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "ResumeCmd Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 171: ForkCmd Produces Valid Command With Session ID
+    try {
+        $testId = "12345678-abcd-1234-efgh-123456789abc"
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($entry.Value.ForkCmd) {
+                $cmd = $entry.Value.ForkCmd -f $testId
+                if ($cmd -notmatch $testId) {
+                    $issues += "Platform '$($entry.Key)' ForkCmd format result '$cmd' does not contain session ID"
+                }
+                if ($cmd -match '\{0\}') {
+                    $issues += "Platform '$($entry.Key)' ForkCmd still contains {0} after formatting"
+                }
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "ForkCmd Format" "PASS" "All non-null ForkCmd produce valid commands with session ID"
+        } else {
+            Write-TestResult "ForkCmd Format" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "ForkCmd Format" "FAIL" $_.Exception.Message
+    }
+
+    # Test 172: CLIPathFunc References Existing Function
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            $funcName = $entry.Value.CLIPathFunc
+            if ($funcName) {
+                $func = Get-Command $funcName -ErrorAction SilentlyContinue
+                if (-not $func) {
+                    $issues += "Platform '$($entry.Key)' CLIPathFunc '$funcName' does not exist as a function"
+                }
+            }
+        }
+        if ($issues.Count -eq 0) {
+            $funcNames = ($Global:PlatformRegistry.Values | ForEach-Object { $_.CLIPathFunc }) -join ', '
+            Write-TestResult "CLIPathFunc Exists" "PASS" "All CLIPathFunc reference real functions: $funcNames"
+        } else {
+            Write-TestResult "CLIPathFunc Exists" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "CLIPathFunc Exists" "FAIL" $_.Exception.Message
+    }
+
+    # Test 173: Color Property Is Valid ConsoleColor
+    try {
+        $validColors = [Enum]::GetNames([ConsoleColor])
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($validColors -notcontains $entry.Value.Color) {
+                $issues += "Platform '$($entry.Key)' Color '$($entry.Value.Color)' is not a valid ConsoleColor"
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "Color Is ConsoleColor" "PASS" "All platform Colors are valid ConsoleColor values"
+        } else {
+            Write-TestResult "Color Is ConsoleColor" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "Color Is ConsoleColor" "FAIL" $_.Exception.Message
+    }
+
+    # ================================================================
+    # PLATFORM REGISTRY CODE SCAN - Verify no hardcoded platform identity in production code
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # These tests scan the source file to ensure registry is used consistently.
+    # ================================================================
+
+    # Test 174: No Hardcoded WT Prefix Strings In Profile Management Functions
+    # Functions that create/find/filter WT profiles must use registry, not literal "Claude-" or "Codex-"
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $profileFunctions = @(
+                'function Get-WTProfileName',
+                'function Find-OrphanedWTProfiles',
+                'function Update-SessionBackgroundImage',
+                'function Show-BackgroundDiagnostics'
+            )
+            $issues = @()
+            foreach ($funcSig in $profileFunctions) {
+                $inFunction = $false
+                $funcName = ($funcSig -replace 'function\s+', '')
+                for ($i = 0; $i -lt $lines.Count; $i++) {
+                    # Must be an actual function definition line (starts with 'function'), not a string reference in test code
+                    if ($lines[$i] -match ('^\s*' + [regex]::Escape($funcSig) + '\s*\{')) { $inFunction = $true; continue }
+                    if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch [regex]::Escape($funcName)) { break }
+                    if ($inFunction) {
+                        # Check for hardcoded prefix strings (not in comments)
+                        $trimmed = $lines[$i].TrimStart()
+                        if ($trimmed -notmatch '^\s*#' -and $trimmed -notmatch '^\s*Write-DebugInfo') {
+                            if ($trimmed -match '"Claude-"' -or $trimmed -match '"Codex-"' -or $trimmed -match "'Claude-'" -or $trimmed -match "'Codex-'") {
+                                $issues += "$funcName line $($i+1): hardcoded prefix '$($lines[$i].Trim())'"
+                            }
+                        }
+                    }
+                }
+            }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "No Hardcoded Prefixes" "PASS" "All 4 profile functions use registry for WT prefixes"
+            } else {
+                Write-TestResult "No Hardcoded Prefixes" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "No Hardcoded Prefixes" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "No Hardcoded Prefixes" "FAIL" $_.Exception.Message
+    }
+
+    # Test 175: No Hardcoded Source Marker Assignment (X/C) in Row Building
+    # Row builders must use Get-PlatformProperty for source markers, not if/else with "X"/"C"
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $issues = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                # Skip comment lines, test section (lines after "# Test 1:"), and the PlatformRegistry definition itself
+                if ($line -match '^\s*#') { continue }
+                if ($line -match 'Write-TestResult') { continue }
+                if ($line -match 'PlatformRegistry\s*=') { continue }
+                # Detect pattern: source -eq 'codex') { "X" } else { "C" }
+                if ($line -match 'source\s*-eq\s*[''"]codex[''"].*\{\s*"X"\s*\}.*\{\s*"C"\s*\}') {
+                    $issues += "Line $($i+1): hardcoded source marker assignment: $($line.Trim())"
+                }
+            }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "No Hardcoded SrcMarker" "PASS" "No hardcoded 'X'/'C' source marker assignments found"
+            } else {
+                Write-TestResult "No Hardcoded SrcMarker" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "No Hardcoded SrcMarker" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "No Hardcoded SrcMarker" "FAIL" $_.Exception.Message
+    }
+
+    # Test 176: No Hardcoded Platform Color Assignment in Row Rendering
+    # Row renderers must use registry for color, not if/else with "Magenta"/"Blue" based on source
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $issues = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                if ($line -match '^\s*#') { continue }
+                if ($line -match 'Write-TestResult') { continue }
+                if ($line -match 'PlatformRegistry\s*=') { continue }
+                # Detect pattern: source -eq 'codex') { "Magenta" } else { "Blue" }
+                if ($line -match 'source\s*-eq\s*[''"]codex[''"].*\{\s*"Magenta"\s*\}.*\{\s*"Blue"\s*\}') {
+                    $issues += "Line $($i+1): hardcoded platform color: $($line.Trim())"
+                }
+            }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "No Hardcoded PlatColor" "PASS" "No hardcoded Magenta/Blue platform color assignments found"
+            } else {
+                Write-TestResult "No Hardcoded PlatColor" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "No Hardcoded PlatColor" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "No Hardcoded PlatColor" "FAIL" $_.Exception.Message
+    }
+
+    # Test 177: Image Generation Uses PlatformRegistry
+    # New-UniformBackgroundImage must reference Get-PlatformEntry or Get-PlatformProperty, not hardcoded source checks
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesRegistry = $false
+            $hasHardcodedPlatform = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function New-UniformBackgroundImage\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'New-UniformBackgroundImage') { break }
+                if ($inFunction) {
+                    if ($lines[$i] -match 'Get-PlatformEntry|Get-PlatformProperty') { $usesRegistry = $true }
+                    if ($lines[$i] -notmatch '^\s*#' -and $lines[$i] -match 'source\s*-eq\s*.*codex.*Platform') {
+                        $hasHardcodedPlatform = $true
+                    }
+                }
+            }
+            if ($usesRegistry -and -not $hasHardcodedPlatform) {
+                Write-TestResult "ImageGen Uses Registry" "PASS" "New-UniformBackgroundImage uses PlatformRegistry for platform text/color"
+            } else {
+                $msg = @()
+                if (-not $usesRegistry) { $msg += "no registry call found" }
+                if ($hasHardcodedPlatform) { $msg += "hardcoded source check for Platform text" }
+                Write-TestResult "ImageGen Uses Registry" "FAIL" ($msg -join '; ')
+            }
+        } else {
+            Write-TestResult "ImageGen Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "ImageGen Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 178: Title Bar Uses Get-InstalledPlatforms
+    # Show-SessionMenu title rendering must call Get-InstalledPlatforms, not hardcode platform names
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesInstalledPlatforms = $false
+            $hasHardcodedTitle = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Show-SessionMenu\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Show-SessionMenu') { break }
+                if ($inFunction) {
+                    if ($lines[$i] -match 'Get-InstalledPlatforms') { $usesInstalledPlatforms = $true }
+                    # Check for hardcoded "Codex (X) and Claude Code (C)" style title
+                    if ($lines[$i] -notmatch '^\s*#' -and $lines[$i] -match '"Codex \(X\) and Claude Code \(C\)"') { $hasHardcodedTitle = $true }
+                }
+            }
+            if ($usesInstalledPlatforms -and -not $hasHardcodedTitle) {
+                Write-TestResult "Title Uses Registry" "PASS" "Show-SessionMenu auto-generates title from Get-InstalledPlatforms"
+            } else {
+                $msg = @()
+                if (-not $usesInstalledPlatforms) { $msg += "Get-InstalledPlatforms not called" }
+                if ($hasHardcodedTitle) { $msg += "hardcoded title string found" }
+                Write-TestResult "Title Uses Registry" "FAIL" ($msg -join '; ')
+            }
+        } else {
+            Write-TestResult "Title Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Title Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 179: Stats Line Uses PlatformRegistry For Colors
+    # Session count line must use Get-PlatformProperty for colors, not hardcoded Blue/Magenta
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            # Find the stats line section (after "Count sessions by source" and before "Build display rows")
+            $issues = @()
+            $inStatsSection = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match 'Display session count \+ cost line') { $inStatsSection = $true; continue }
+                if ($inStatsSection -and $lines[$i] -match 'Build display rows') { break }
+                if ($inStatsSection -and $lines[$i] -notmatch '^\s*#') {
+                    # Detect hardcoded -ForegroundColor Blue or -ForegroundColor Magenta that should use registry
+                    if ($lines[$i] -match '-ForegroundColor\s+Blue\b' -or $lines[$i] -match '-ForegroundColor\s+Magenta\b') {
+                        $issues += "Line $($i+1): hardcoded platform color in stats: $($lines[$i].Trim())"
+                    }
+                }
+            }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "Stats Uses Registry" "PASS" "Stats line uses registry-based colors"
+            } else {
+                Write-TestResult "Stats Uses Registry" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "Stats Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Stats Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 180: Diagnose Function Uses Registry Prefixes
+    # Show-BackgroundDiagnostics must use Get-AllWTProfilePrefixes, not hardcoded "Claude-"
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesRegistry = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Show-BackgroundDiagnostics\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Show-BackgroundDiagnostics') { break }
+                if ($inFunction -and ($lines[$i] -match 'Get-AllWTProfilePrefixes' -or $lines[$i] -match 'Get-PlatformProperty.*WTPrefix')) { $usesRegistry = $true }
+            }
+            if ($usesRegistry) {
+                Write-TestResult "Diagnose Uses Registry" "PASS" "Show-BackgroundDiagnostics uses registry for profile prefix stripping"
+            } else {
+                Write-TestResult "Diagnose Uses Registry" "FAIL" "Show-BackgroundDiagnostics does not reference PlatformRegistry for prefixes"
+            }
+        } else {
+            Write-TestResult "Diagnose Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Diagnose Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 181: Cost Table Uses Registry For Source Markers
+    # Show-CostAnalysis must use Get-PlatformProperty for source markers and Get-PlatformByKey for colors
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesRegistryMarker = $false
+            $usesRegistryColor = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Show-CostAnalysis\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Show-CostAnalysis') { break }
+                if ($inFunction) {
+                    if ($lines[$i] -match 'Get-PlatformProperty.*Key') { $usesRegistryMarker = $true }
+                    if ($lines[$i] -match 'Get-PlatformByKey') { $usesRegistryColor = $true }
+                }
+            }
+            $issues = @()
+            if (-not $usesRegistryMarker) { $issues += "No Get-PlatformProperty 'Key' call for source markers" }
+            if (-not $usesRegistryColor) { $issues += "No Get-PlatformByKey call for color lookup" }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "CostTable Uses Registry" "PASS" "Show-CostAnalysis uses registry for markers and colors"
+            } else {
+                Write-TestResult "CostTable Uses Registry" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "CostTable Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "CostTable Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 182: ColumnDefinitions Source Column Matches Registry Keys
+    # The Source column exists and its values (C/X) correspond to PlatformRegistry keys
+    try {
+        $sourceCol = $Global:ColumnDefinitions | Where-Object { $_.ConfigKey -eq 'Source' }
+        $issues = @()
+        if (-not $sourceCol) {
+            $issues += "No 'Source' column in ColumnDefinitions"
+        } else {
+            if ($sourceCol.Header -ne 'Src') { $issues += "Source column Header expected 'Src', got '$($sourceCol.Header)'" }
+            if ($sourceCol.SortProperty -ne 'Source') { $issues += "Source column SortProperty expected 'Source', got '$($sourceCol.SortProperty)'" }
+        }
+        # Verify every platform Key is a single uppercase letter (for display in narrow column)
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($entry.Value.Key.Length -ne 1) { $issues += "Platform '$($entry.Key)' Key '$($entry.Value.Key)' is not single character" }
+            if ($entry.Value.Key -cne $entry.Value.Key.ToUpper()) { $issues += "Platform '$($entry.Key)' Key '$($entry.Value.Key)' is not uppercase" }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "Source Col Matches Keys" "PASS" "Source column configured correctly, all platform Keys are single uppercase letters"
+        } else {
+            Write-TestResult "Source Col Matches Keys" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "Source Col Matches Keys" "FAIL" $_.Exception.Message
+    }
+
+    # Test 183: New Session Prompt Uses Registry For CLI Choice
+    # Start-NewSession must use Get-InstalledPlatforms or PlatformRegistry for CLI choice, not hardcoded Test-CodexCLI
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesInstalledPlatforms = $false
+            $usesRegistryKeys = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Start-NewSession\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Start-NewSession') { break }
+                if ($inFunction) {
+                    if ($lines[$i] -match 'Get-InstalledPlatforms') { $usesInstalledPlatforms = $true }
+                    if ($lines[$i] -match 'PlatformRegistry') { $usesRegistryKeys = $true }
+                }
+            }
+            if ($usesInstalledPlatforms -or $usesRegistryKeys) {
+                Write-TestResult "NewSession Uses Registry" "PASS" "Start-NewSession uses PlatformRegistry for CLI choice prompt"
+            } else {
+                Write-TestResult "NewSession Uses Registry" "FAIL" "Start-NewSession does not reference PlatformRegistry or Get-InstalledPlatforms"
+            }
+        } else {
+            Write-TestResult "NewSession Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "NewSession Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 184: Continue Session Uses Registry For Codex Resume Command
+    # Start-ContinueSession Codex path must use Get-PlatformProperty for ResumeCmd
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesResumeCmd = $false
+            $hasHardcodedResume = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Start-ContinueSession\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Start-ContinueSession') { break }
+                if ($inFunction) {
+                    if ($lines[$i] -match "Get-PlatformProperty.*ResumeCmd") { $usesResumeCmd = $true }
+                    if ($lines[$i] -notmatch '^\s*#' -and $lines[$i] -match '"resume \$') { $hasHardcodedResume = $true }
+                }
+            }
+            $issues = @()
+            if (-not $usesResumeCmd) { $issues += "No Get-PlatformProperty 'ResumeCmd' call found" }
+            if ($hasHardcodedResume) { $issues += "Hardcoded 'resume \$' command string found" }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "Continue Uses Registry" "PASS" "Start-ContinueSession uses ResumeCmd from PlatformRegistry"
+            } else {
+                Write-TestResult "Continue Uses Registry" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "Continue Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Continue Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 185: Fork Session Uses Registry For Codex Fork Command
+    # Start-ForkSession Codex path must use Get-PlatformProperty for ForkCmd
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesForkCmd = $false
+            $hasHardcodedFork = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Start-ForkSession\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Start-ForkSession') { break }
+                if ($inFunction) {
+                    if ($lines[$i] -match "Get-PlatformProperty.*ForkCmd") { $usesForkCmd = $true }
+                    if ($lines[$i] -notmatch '^\s*#' -and $lines[$i] -match '"fork \$') { $hasHardcodedFork = $true }
+                }
+            }
+            $issues = @()
+            if (-not $usesForkCmd) { $issues += "No Get-PlatformProperty 'ForkCmd' call found" }
+            if ($hasHardcodedFork) { $issues += "Hardcoded 'fork \$' command string found" }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "Fork Uses Registry" "PASS" "Start-ForkSession uses ForkCmd from PlatformRegistry"
+            } else {
+                Write-TestResult "Fork Uses Registry" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "Fork Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Fork Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 186: Rename Session Uses Registry For WT Prefix
+    # Rename-ClaudeSession must use Get-PlatformProperty for WTPrefix
+    try {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+        if (-not $scriptPath) { $scriptPath = "$env:USERPROFILE\.claude-menu\Claude-Menu.ps1" }
+
+        if (Test-Path $scriptPath) {
+            $lines = Get-Content $scriptPath
+            $inFunction = $false
+            $usesRegistry = $false
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*function Rename-ClaudeSession\s*\{') { $inFunction = $true; continue }
+                if ($inFunction -and $lines[$i] -match '^\s*function\s' -and $lines[$i] -notmatch 'Rename-ClaudeSession') { break }
+                if ($inFunction -and ($lines[$i] -match 'Get-PlatformProperty.*WTPrefix' -or $lines[$i] -match 'Get-AllWTProfilePrefixes')) { $usesRegistry = $true }
+            }
+            if ($usesRegistry) {
+                Write-TestResult "Rename Uses Registry" "PASS" "Rename-ClaudeSession uses PlatformRegistry for WT prefix"
+            } else {
+                Write-TestResult "Rename Uses Registry" "FAIL" "Rename-ClaudeSession does not reference PlatformRegistry for WTPrefix"
+            }
+        } else {
+            Write-TestResult "Rename Uses Registry" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "Rename Uses Registry" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================
+    # Dependency Checks (Tests 187-190)
+    # RULE: When a test fails, examine the PRODUCTION CODE first — not the test.
+    # These check external dependencies not covered by tests 1-3.
+    # =====================================================
+    Write-Host ""
+    Write-ColorText "--- Dependency Checks ---" -Color Cyan
+
+    # Test 187: System.Drawing Assembly
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        Write-TestResult "System.Drawing Assembly" "PASS" "System.Drawing loaded successfully"
+    } catch {
+        Write-TestResult "System.Drawing Assembly" "WARN" "System.Drawing not available - background images won't generate"
+    }
+
+    # Test 188: Git In PATH
+    try {
+        $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+        if ($gitCmd) {
+            Write-TestResult "Git In PATH" "PASS" "git found at $($gitCmd.Source)"
+        } else {
+            Write-TestResult "Git In PATH" "WARN" "git not found in PATH - branch detection disabled"
+        }
+    } catch {
+        Write-TestResult "Git In PATH" "WARN" "Error checking for git: $($_.Exception.Message)"
+    }
+
+    # Test 189: Python For Codex
+    try {
+        $pythonAvail = Test-CodexPythonAvailable
+        if ($pythonAvail) {
+            $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+            if (-not $pyCmd) { $pyCmd = Get-Command python3 -ErrorAction SilentlyContinue }
+            $pyPath = if ($pyCmd) { $pyCmd.Source } else { "unknown" }
+            Write-TestResult "Python For Codex" "PASS" "Python found at $pyPath"
+        } else {
+            Write-TestResult "Python For Codex" "WARN" "Neither python nor python3 found - Codex features unavailable"
+        }
+    } catch {
+        Write-TestResult "Python For Codex" "WARN" "Error checking Python: $($_.Exception.Message)"
+    }
+
+    # Test 190: Codex CLI In PATH
+    try {
+        $codexPath = Get-CodexCLIPath
+        if ($codexPath) {
+            Write-TestResult "Codex CLI In PATH" "PASS" "Codex CLI found at $codexPath"
+        } else {
+            Write-TestResult "Codex CLI In PATH" "WARN" "Codex CLI not found - Codex features disabled"
+        }
+    } catch {
+        Write-TestResult "Codex CLI In PATH" "WARN" "Error checking Codex CLI: $($_.Exception.Message)"
+    }
+
+    # =====================================================
+    # Claude Format Validation (Tests 191-200)
+    # RULE: When a test fails, examine the PRODUCTION CODE first — not the test.
+    # These detect if Claude changes its file format before users hit silent data loss.
+    # Gate: $claudeFormatTestable set by Test 191.
+    # Sample file pattern: read 1 file, max 200 lines. Never O(n) over all sessions.
+    # =====================================================
+    Write-Host ""
+    Write-ColorText "--- Claude Format Validation ---" -Color Cyan
+
+    $claudeFormatTestable = $false
+    $claudeSampleFile = $null
+
+    # Test 191: Claude Data Available
+    try {
+        if ((Test-Path $Global:ClaudeProjectsPath)) {
+            $jsonlFiles = Get-ChildItem $Global:ClaudeProjectsPath -Recurse -Filter "*.jsonl" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -gt 1000 } |
+                Sort-Object Length -Descending |
+                Select-Object -First 1
+            if ($jsonlFiles) {
+                $claudeFormatTestable = $true
+                $claudeSampleFile = $jsonlFiles
+                Write-TestResult "Claude Data Available" "PASS" "Found .jsonl files in $($Global:ClaudeProjectsPath); sample: $($claudeSampleFile.Name)"
+            } else {
+                Write-TestResult "Claude Data Available" "SKIP" "No .jsonl files >1KB found in $($Global:ClaudeProjectsPath)"
+            }
+        } else {
+            Write-TestResult "Claude Data Available" "SKIP" "Claude projects path does not exist: $($Global:ClaudeProjectsPath)"
+        }
+    } catch {
+        Write-TestResult "Claude Data Available" "FAIL" $_.Exception.Message
+    }
+
+    # Test 192: JSONL Valid JSON Lines
+    if ($claudeFormatTestable -and $claudeSampleFile) {
+        try {
+            $first5 = Get-Content $claudeSampleFile.FullName -TotalCount 5 -ErrorAction Stop
+            $allValid = $true
+            $badLine = 0
+            for ($li = 0; $li -lt $first5.Count; $li++) {
+                $trimmed = $first5[$li].Trim()
+                if ($trimmed -eq '') { continue }
+                try {
+                    $null = $trimmed | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    $allValid = $false
+                    $badLine = $li + 1
+                    break
+                }
+            }
+            if ($allValid) {
+                Write-TestResult "JSONL Valid JSON Lines" "PASS" "First 5 lines of $($claudeSampleFile.Name) parse as valid JSON"
+            } else {
+                Write-TestResult "JSONL Valid JSON Lines" "FAIL" "Line $badLine of $($claudeSampleFile.Name) is not valid JSON"
+            }
+        } catch {
+            Write-TestResult "JSONL Valid JSON Lines" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "JSONL Valid JSON Lines" "SKIP" "No Claude data available"
+    }
+
+    # Test 193: Assistant Usage Fields
+    if ($claudeFormatTestable -and $claudeSampleFile) {
+        $test193Reader = $null
+        try {
+            $test193Reader = [System.IO.StreamReader]::new($claudeSampleFile.FullName)
+            $foundUsage = $false
+            $linesRead = 0
+            while ($linesRead -lt 200 -and $null -ne ($aline = $test193Reader.ReadLine())) {
+                $linesRead++
+                if ($aline -match '"type"\s*:\s*"assistant"' -and $aline -match '"usage"') {
+                    $parsed = $aline | ConvertFrom-Json -ErrorAction Stop
+                    if ($parsed.message.usage.PSObject.Properties['input_tokens'] -and
+                        $parsed.message.usage.PSObject.Properties['output_tokens']) {
+                        $foundUsage = $true
+                        break
+                    }
+                }
+            }
+            $test193Reader.Close(); $test193Reader = $null
+            if ($foundUsage) {
+                Write-TestResult "Assistant Usage Fields" "PASS" "Found input_tokens + output_tokens in assistant message (line $linesRead)"
+            } else {
+                Write-TestResult "Assistant Usage Fields" "WARN" "No assistant message with usage fields found in first 200 lines"
+            }
+        } catch {
+            $errMsg = $_.Exception.Message
+            Write-TestResult "Assistant Usage Fields" "FAIL" $errMsg
+        } finally {
+            if ($test193Reader) { $test193Reader.Close() }
+        }
+    } else {
+        Write-TestResult "Assistant Usage Fields" "SKIP" "No Claude data available"
+    }
+
+    # Test 194: Assistant Model Field
+    if ($claudeFormatTestable -and $claudeSampleFile) {
+        $test194Reader = $null
+        try {
+            $test194Reader = [System.IO.StreamReader]::new($claudeSampleFile.FullName)
+            $foundModel = $false
+            $modelValue = ''
+            $linesRead = 0
+            while ($linesRead -lt 200 -and $null -ne ($aline = $test194Reader.ReadLine())) {
+                $linesRead++
+                if ($aline -match '"type"\s*:\s*"assistant"' -and $aline -match '"model"') {
+                    $parsed = $aline | ConvertFrom-Json -ErrorAction Stop
+                    if ($parsed.message.PSObject.Properties['model'] -and $parsed.message.model) {
+                        $foundModel = $true
+                        $modelValue = $parsed.message.model
+                        break
+                    }
+                }
+            }
+            $test194Reader.Close(); $test194Reader = $null
+            if ($foundModel) {
+                Write-TestResult "Assistant Model Field" "PASS" "Found model='$modelValue' in assistant message (line $linesRead)"
+            } else {
+                Write-TestResult "Assistant Model Field" "WARN" "No assistant message with model field found in first 200 lines"
+            }
+        } catch {
+            $errMsg = $_.Exception.Message
+            Write-TestResult "Assistant Model Field" "FAIL" $errMsg
+        } finally {
+            if ($test194Reader) { $test194Reader.Close() }
+        }
+    } else {
+        Write-TestResult "Assistant Model Field" "SKIP" "No Claude data available"
+    }
+
+    # Test 195: sessions-index.json Schema
+    if ($claudeFormatTestable) {
+        try {
+            $indexFiles = Get-ChildItem $Global:ClaudeProjectsPath -Directory |
+                ForEach-Object { Join-Path $_.FullName "sessions-index.json" } |
+                Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+            if ($indexFiles) {
+                $indexContent = Get-Content $indexFiles -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if ($indexContent.PSObject.Properties['version'] -and $indexContent.PSObject.Properties['entries']) {
+                    if ($indexContent.entries.Count -gt 0) {
+                        $firstEntry = $indexContent.entries[0]
+                        if ($firstEntry.PSObject.Properties['sessionId'] -and $firstEntry.PSObject.Properties['projectPath']) {
+                            Write-TestResult "sessions-index.json Schema" "PASS" "Has version=$($indexContent.version), entries array with sessionId+projectPath"
+                        } else {
+                            Write-TestResult "sessions-index.json Schema" "FAIL" "Entry missing sessionId or projectPath fields"
+                        }
+                    } else {
+                        Write-TestResult "sessions-index.json Schema" "WARN" "sessions-index.json has empty entries array"
+                    }
+                } else {
+                    Write-TestResult "sessions-index.json Schema" "FAIL" "sessions-index.json missing 'version' or 'entries' top-level fields"
+                }
+            } else {
+                Write-TestResult "sessions-index.json Schema" "SKIP" "No sessions-index.json found"
+            }
+        } catch {
+            Write-TestResult "sessions-index.json Schema" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "sessions-index.json Schema" "SKIP" "No Claude data available"
+    }
+
+    # Test 196: Path Encoding Matches FS
+    if ($claudeFormatTestable) {
+        try {
+            $indexFiles = Get-ChildItem $Global:ClaudeProjectsPath -Directory |
+                ForEach-Object { Join-Path $_.FullName "sessions-index.json" } |
+                Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+            if ($indexFiles) {
+                $indexContent = Get-Content $indexFiles -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if ($indexContent.entries.Count -gt 0) {
+                    $entry = $indexContent.entries[0]
+                    if ($entry.PSObject.Properties['projectPath'] -and $entry.projectPath) {
+                        $encoded = ConvertTo-ClaudeprojectPath -Path $entry.projectPath
+                        $expectedDir = Join-Path $Global:ClaudeProjectsPath $encoded
+                        if (Test-Path $expectedDir) {
+                            Write-TestResult "Path Encoding Matches FS" "PASS" "projectPath '$($entry.projectPath)' -> '$encoded' -> directory exists"
+                        } else {
+                            Write-TestResult "Path Encoding Matches FS" "WARN" "Encoded path '$expectedDir' does not exist on filesystem"
+                        }
+                    } else {
+                        Write-TestResult "Path Encoding Matches FS" "SKIP" "First entry has no projectPath"
+                    }
+                } else {
+                    Write-TestResult "Path Encoding Matches FS" "SKIP" "No entries in sessions-index.json"
+                }
+            } else {
+                Write-TestResult "Path Encoding Matches FS" "SKIP" "No sessions-index.json found"
+            }
+        } catch {
+            Write-TestResult "Path Encoding Matches FS" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "Path Encoding Matches FS" "SKIP" "No Claude data available"
+    }
+
+    # Test 197: Regex vs JSON Token Match
+    # CRITICAL: Validates regex optimization in Get-SessionTokenUsage matches JSON parsing
+    if ($claudeFormatTestable -and $claudeSampleFile) {
+        $test197Reader = $null
+        try {
+            $test197Reader = [System.IO.StreamReader]::new($claudeSampleFile.FullName)
+            $foundLine = $null
+            $linesRead = 0
+            while ($linesRead -lt 200 -and $null -ne ($aline = $test197Reader.ReadLine())) {
+                $linesRead++
+                if ($aline -match '"type"\s*:\s*"assistant"' -and $aline -match '"usage"' -and $aline -notmatch '"type"\s*:\s*"progress"') {
+                    $foundLine = $aline
+                    break
+                }
+            }
+            $test197Reader.Close(); $test197Reader = $null
+
+            if ($foundLine) {
+                # Regex extraction (same patterns as Get-SessionTokenUsage)
+                $regexInput = if ($foundLine -match '"input_tokens":(\d+)') { [long]$matches[1] } else { 0 }
+                $regexCacheCreate = if ($foundLine -match '"cache_creation_input_tokens":(\d+)') { [long]$matches[1] } else { 0 }
+                $regexCacheRead = if ($foundLine -match '"cache_read_input_tokens":(\d+)') { [long]$matches[1] } else { 0 }
+                $regexOutput = if ($foundLine -match '"output_tokens":(\d+)') { [long]$matches[1] } else { 0 }
+
+                # JSON extraction
+                $parsed = $foundLine | ConvertFrom-Json -ErrorAction Stop
+                $jsonInput = [long]($parsed.message.usage.input_tokens)
+                $jsonCacheCreate = [long]($parsed.message.usage.cache_creation_input_tokens)
+                $jsonCacheRead = [long]($parsed.message.usage.cache_read_input_tokens)
+                $jsonOutput = [long]($parsed.message.usage.output_tokens)
+
+                if ($regexInput -eq $jsonInput -and $regexCacheCreate -eq $jsonCacheCreate -and
+                    $regexCacheRead -eq $jsonCacheRead -and $regexOutput -eq $jsonOutput) {
+                    Write-TestResult "Regex vs JSON Token Match" "PASS" "All 4 token counts match: in=$regexInput cache_w=$regexCacheCreate cache_r=$regexCacheRead out=$regexOutput"
+                } else {
+                    Write-TestResult "Regex vs JSON Token Match" "FAIL" "MISMATCH regex(in=$regexInput cw=$regexCacheCreate cr=$regexCacheRead out=$regexOutput) vs json(in=$jsonInput cw=$jsonCacheCreate cr=$jsonCacheRead out=$jsonOutput)"
+                }
+            } else {
+                Write-TestResult "Regex vs JSON Token Match" "SKIP" "No assistant usage line found in first 200 lines"
+            }
+        } catch {
+            $errMsg = $_.Exception.Message
+            Write-TestResult "Regex vs JSON Token Match" "FAIL" $errMsg
+        } finally {
+            if ($test197Reader) { $test197Reader.Close() }
+        }
+    } else {
+        Write-TestResult "Regex vs JSON Token Match" "SKIP" "No Claude data available"
+    }
+
+    # Test 198: Progress Filter Works
+    if ($claudeFormatTestable -and $claudeSampleFile) {
+        $test198Reader = $null
+        try {
+            $test198Reader = [System.IO.StreamReader]::new($claudeSampleFile.FullName)
+            $foundProgress = $false
+            $progressFilterWorks = $true
+            $linesRead = 0
+            while ($linesRead -lt 500 -and $null -ne ($aline = $test198Reader.ReadLine())) {
+                $linesRead++
+                if ($aline -match '"type"\s*:\s*"progress"') {
+                    $foundProgress = $true
+                    # Our production filter: line must match "type":"assistant" AND NOT match "type":"progress"
+                    if ($aline -match '"type"\s*:\s*"assistant"') {
+                        # This is the tricky case: progress line that also contains assistant
+                        # Production code's progress filter should catch it
+                        if ($aline -notmatch '"type":"progress"') {
+                            $progressFilterWorks = $false
+                        }
+                    }
+                    break
+                }
+            }
+            $test198Reader.Close(); $test198Reader = $null
+            if ($foundProgress) {
+                if ($progressFilterWorks) {
+                    Write-TestResult "Progress Filter Works" "PASS" "Progress line found at line $linesRead; filter correctly handles it"
+                } else {
+                    Write-TestResult "Progress Filter Works" "FAIL" "Progress line at line $linesRead would slip past our filter"
+                }
+            } else {
+                Write-TestResult "Progress Filter Works" "SKIP" "No progress-type lines found in first 500 lines (not all sessions have them)"
+            }
+        } catch {
+            $errMsg = $_.Exception.Message
+            Write-TestResult "Progress Filter Works" "FAIL" $errMsg
+        } finally {
+            if ($test198Reader) { $test198Reader.Close() }
+        }
+    } else {
+        Write-TestResult "Progress Filter Works" "SKIP" "No Claude data available"
+    }
+
+    # Test 199: JSONL Known Type Values
+    if ($claudeFormatTestable -and $claudeSampleFile) {
+        try {
+            $knownTypes = @('user', 'assistant', 'progress', 'result', 'tool_use', 'tool_result', 'summary', 'system', 'file-history-snapshot')
+            $first20 = Get-Content $claudeSampleFile.FullName -TotalCount 20 -ErrorAction Stop
+            $allKnown = $true
+            $unknownType = ''
+            $unknownLineNum = 0
+            for ($li = 0; $li -lt $first20.Count; $li++) {
+                $trimmed = $first20[$li].Trim()
+                if ($trimmed -eq '') { continue }
+                try {
+                    $parsed = $trimmed | ConvertFrom-Json -ErrorAction Stop
+                    if ($parsed.PSObject.Properties['type']) {
+                        if ($parsed.type -notin $knownTypes) {
+                            $allKnown = $false
+                            $unknownType = $parsed.type
+                            $unknownLineNum = $li + 1
+                            break
+                        }
+                    }
+                } catch {
+                    # Already tested in 192, skip parse errors here
+                }
+            }
+            if ($allKnown) {
+                Write-TestResult "JSONL Known Type Values" "PASS" "All type values in first 20 lines are recognized"
+            } else {
+                Write-TestResult "JSONL Known Type Values" "WARN" "Unknown type '$unknownType' at line $unknownLineNum - Claude may have added new message types"
+            }
+        } catch {
+            Write-TestResult "JSONL Known Type Values" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "JSONL Known Type Values" "SKIP" "No Claude data available"
+    }
+
+    # Test 200: SessionEntry Fields
+    if ($claudeFormatTestable) {
+        try {
+            $indexFiles = Get-ChildItem $Global:ClaudeProjectsPath -Directory |
+                ForEach-Object { Join-Path $_.FullName "sessions-index.json" } |
+                Where-Object { Test-Path $_ } |
+                Select-Object -First 1
+            if ($indexFiles) {
+                $indexContent = Get-Content $indexFiles -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if ($indexContent.entries.Count -gt 0) {
+                    $entry = $indexContent.entries[0]
+                    $requiredFields = @('sessionId', 'projectPath', 'created', 'modified', 'messageCount')
+                    $missingFields = @()
+                    foreach ($field in $requiredFields) {
+                        if (-not $entry.PSObject.Properties[$field]) {
+                            $missingFields += $field
+                        }
+                    }
+                    if ($missingFields.Count -eq 0) {
+                        Write-TestResult "SessionEntry Fields" "PASS" "First entry has all required fields: $($requiredFields -join ', ')"
+                    } else {
+                        Write-TestResult "SessionEntry Fields" "FAIL" "First entry missing fields: $($missingFields -join ', ')"
+                    }
+                } else {
+                    Write-TestResult "SessionEntry Fields" "SKIP" "No entries in sessions-index.json"
+                }
+            } else {
+                Write-TestResult "SessionEntry Fields" "SKIP" "No sessions-index.json found"
+            }
+        } catch {
+            Write-TestResult "SessionEntry Fields" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "SessionEntry Fields" "SKIP" "No Claude data available"
+    }
+
+    # =====================================================
+    # Codex Format Validation (Tests 201-207)
+    # RULE: When a test fails, examine the PRODUCTION CODE first — not the test.
+    # Gate: $codexFormatTestable set by Test 201.
+    # Uses Python one-liners for SQLite reading (same approach as production code).
+    # =====================================================
+    Write-Host ""
+    Write-ColorText "--- Codex Format Validation ---" -Color Cyan
+
+    $codexFormatTestable = $false
+    $codexDbPath = $null
+    $codexPythonExe = $null
+
+    # Test 201: Codex DB Available
+    try {
+        $codexDbPath = Get-CodexDbPath
+        $codexPythonAvail = Test-CodexPythonAvailable
+        if ($codexDbPath -and (Test-Path $codexDbPath) -and $codexPythonAvail) {
+            $codexFormatTestable = $true
+            # Determine python executable
+            $codexPythonExe = "python"
+            $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+            if (-not $pyCmd) {
+                $pyCmd = Get-Command python3 -ErrorAction SilentlyContinue
+                if ($pyCmd) { $codexPythonExe = "python3" }
+            }
+            Write-TestResult "Codex DB Available" "PASS" "Database at $codexDbPath, Python=$codexPythonExe"
+        } elseif (-not $codexDbPath) {
+            Write-TestResult "Codex DB Available" "SKIP" "No Codex database found (Codex not installed or no sessions)"
+        } else {
+            Write-TestResult "Codex DB Available" "SKIP" "Codex DB found but Python unavailable for SQLite reading"
+        }
+    } catch {
+        Write-TestResult "Codex DB Available" "FAIL" $_.Exception.Message
+    }
+
+    # Test 202: threads Table Schema
+    if ($codexFormatTestable) {
+        try {
+            $dbEscaped = $codexDbPath -replace '\\', '/'
+            $pyScript = "import sqlite3; conn=sqlite3.connect('file:$($dbEscaped)?mode=ro',uri=True); cols=[r[1] for r in conn.execute('PRAGMA table_info(threads)').fetchall()]; print(','.join(cols)); conn.close()"
+            $result = & $codexPythonExe -c $pyScript 2>&1
+            $resultStr = $result -join ''
+            $expectedCols = @('id', 'cwd', 'created_at', 'updated_at', 'title', 'tokens_used', 'rollout_path')
+            $actualCols = $resultStr.Split(',')
+            $missingCols = @()
+            foreach ($col in $expectedCols) {
+                if ($col -notin $actualCols) { $missingCols += $col }
+            }
+            if ($missingCols.Count -eq 0) {
+                Write-TestResult "threads Table Schema" "PASS" "All expected columns present: $($expectedCols -join ', ')"
+            } else {
+                Write-TestResult "threads Table Schema" "FAIL" "Missing columns: $($missingCols -join ', '). Actual: $resultStr"
+            }
+        } catch {
+            Write-TestResult "threads Table Schema" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "threads Table Schema" "SKIP" "Codex DB not available"
+    }
+
+    # Test 203: Timestamps Are Unix Epoch
+    if ($codexFormatTestable) {
+        try {
+            $dbEscaped = $codexDbPath -replace '\\', '/'
+            $pyScript = "import sqlite3; conn=sqlite3.connect('file:$($dbEscaped)?mode=ro',uri=True); r=conn.execute('SELECT created_at FROM threads LIMIT 1').fetchone(); print(r[0] if r else 'EMPTY'); conn.close()"
+            $result = & $codexPythonExe -c $pyScript 2>&1
+            $resultStr = ($result -join '').Trim()
+            if ($resultStr -eq 'EMPTY') {
+                Write-TestResult "Timestamps Are Unix Epoch" "SKIP" "No rows in threads table"
+            } elseif ($resultStr -match '^\d+$') {
+                Write-TestResult "Timestamps Are Unix Epoch" "PASS" "created_at=$resultStr is numeric (Unix epoch)"
+            } else {
+                Write-TestResult "Timestamps Are Unix Epoch" "FAIL" "created_at='$resultStr' is not a numeric Unix epoch - format may have changed"
+            }
+        } catch {
+            Write-TestResult "Timestamps Are Unix Epoch" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "Timestamps Are Unix Epoch" "SKIP" "Codex DB not available"
+    }
+
+    # Test 204: tokens_used Is Numeric
+    if ($codexFormatTestable) {
+        try {
+            $dbEscaped = $codexDbPath -replace '\\', '/'
+            $pyScript = "import sqlite3; conn=sqlite3.connect('file:$($dbEscaped)?mode=ro',uri=True); r=conn.execute('SELECT tokens_used FROM threads WHERE tokens_used IS NOT NULL LIMIT 1').fetchone(); print(r[0] if r else 'NULL'); conn.close()"
+            $result = & $codexPythonExe -c $pyScript 2>&1
+            $resultStr = ($result -join '').Trim()
+            if ($resultStr -eq 'NULL') {
+                Write-TestResult "tokens_used Is Numeric" "PASS" "All tokens_used values are NULL (valid - no usage recorded)"
+            } elseif ($resultStr -match '^\d+$') {
+                Write-TestResult "tokens_used Is Numeric" "PASS" "tokens_used=$resultStr is numeric integer"
+            } else {
+                Write-TestResult "tokens_used Is Numeric" "FAIL" "tokens_used='$resultStr' is not integer or null - format may have changed"
+            }
+        } catch {
+            Write-TestResult "tokens_used Is Numeric" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "tokens_used Is Numeric" "SKIP" "Codex DB not available"
+    }
+
+    # Test 205: Rollout JSONL Format
+    if ($codexFormatTestable) {
+        try {
+            $dbEscaped = $codexDbPath -replace '\\', '/'
+            $pyScript = "import sqlite3; conn=sqlite3.connect('file:$($dbEscaped)?mode=ro',uri=True); r=conn.execute('SELECT rollout_path FROM threads WHERE rollout_path IS NOT NULL LIMIT 1').fetchone(); print(r[0] if r else 'NONE'); conn.close()"
+            $result = & $codexPythonExe -c $pyScript 2>&1
+            $rolloutPath = ($result -join '').Trim()
+            if ($rolloutPath -eq 'NONE') {
+                Write-TestResult "Rollout JSONL Format" "SKIP" "No rollout paths in threads table"
+            } elseif (Test-Path $rolloutPath) {
+                $firstLine = Get-Content $rolloutPath -TotalCount 1 -ErrorAction Stop
+                if ($firstLine) {
+                    try {
+                        $parsed = $firstLine | ConvertFrom-Json -ErrorAction Stop
+                        if ($parsed.PSObject.Properties['type']) {
+                            Write-TestResult "Rollout JSONL Format" "PASS" "Rollout JSONL first line is valid JSON with type='$($parsed.type)'"
+                        } else {
+                            Write-TestResult "Rollout JSONL Format" "WARN" "Rollout JSONL first line is valid JSON but has no 'type' field"
+                        }
+                    } catch {
+                        Write-TestResult "Rollout JSONL Format" "FAIL" "Rollout JSONL first line is not valid JSON"
+                    }
+                } else {
+                    Write-TestResult "Rollout JSONL Format" "SKIP" "Rollout file is empty: $rolloutPath"
+                }
+            } else {
+                Write-TestResult "Rollout JSONL Format" "WARN" "Rollout path does not exist: $rolloutPath"
+            }
+        } catch {
+            Write-TestResult "Rollout JSONL Format" "FAIL" $_.Exception.Message
+        }
+    } else {
+        Write-TestResult "Rollout JSONL Format" "SKIP" "Codex DB not available"
+    }
+
+    # Test 206: config.toml Model Parse
+    try {
+        $codexConfigPath = "$env:USERPROFILE\.codex\config.toml"
+        if (Test-Path $codexConfigPath) {
+            $configContent = Get-Content $codexConfigPath -Raw -ErrorAction Stop
+            if ($configContent -match 'model\s*=\s*"([^"]+)"') {
+                $parsedModel = $matches[1]
+                # Also verify Get-CodexDefaultModel returns the same value
+                $funcModel = Get-CodexDefaultModel
+                if ($funcModel -eq $parsedModel) {
+                    Write-TestResult "config.toml Model Parse" "PASS" "model='$parsedModel' matches Get-CodexDefaultModel output"
+                } else {
+                    Write-TestResult "config.toml Model Parse" "WARN" "Regex found '$parsedModel' but Get-CodexDefaultModel returned '$funcModel'"
+                }
+            } else {
+                Write-TestResult "config.toml Model Parse" "WARN" "config.toml exists but no 'model = \"...\"' line found"
+            }
+        } else {
+            Write-TestResult "config.toml Model Parse" "SKIP" "No config.toml at $codexConfigPath"
+        }
+    } catch {
+        Write-TestResult "config.toml Model Parse" "FAIL" $_.Exception.Message
+    }
+
+    # Test 207: Codex Session Discovery
+    try {
+        $codexSessions = @(Get-AllCodexSessions)
+        # Should return an array (possibly empty) without crashing
+        Write-TestResult "Codex Session Discovery" "PASS" "Get-AllCodexSessions returned $($codexSessions.Count) session(s) without errors"
+    } catch {
+        Write-TestResult "Codex Session Discovery" "FAIL" "Get-AllCodexSessions threw: $($_.Exception.Message)"
+    }
+
+    # =====================================================
+    # Platform Smoke Tests (Tests 208-211)
+    # RULE: When a test fails, examine the PRODUCTION CODE first — not the test.
+    # These iterate $Global:PlatformRegistry — new platforms get tested automatically.
+    # =====================================================
+    Write-Host ""
+    Write-ColorText "--- Platform Smoke Tests ---" -Color Cyan
+
+    # Test 208: CLI Discovery No Crash
+    try {
+        $allPassed = $true
+        $details = @()
+        foreach ($platformKey in $Global:PlatformRegistry.Keys) {
+            $platform = $Global:PlatformRegistry[$platformKey]
+            $funcName = $platform.CLIPathFunc
+            try {
+                $cliResult = & $funcName
+                $details += "$platformKey=$( if ($cliResult) { 'found' } else { 'not found' } )"
+            } catch {
+                $allPassed = $false
+                $details += "$platformKey=THREW: $($_.Exception.Message)"
+            }
+        }
+        if ($allPassed) {
+            Write-TestResult "CLI Discovery No Crash" "PASS" "All CLIPathFuncs returned without throwing: $($details -join '; ')"
+        } else {
+            Write-TestResult "CLI Discovery No Crash" "FAIL" "Some CLIPathFuncs threw exceptions: $($details -join '; ')"
+        }
+    } catch {
+        Write-TestResult "CLI Discovery No Crash" "FAIL" $_.Exception.Message
+    }
+
+    # Test 209: Session Discovery Arrays
+    try {
+        $claudeResult = @(Get-AllClaudeSessions)
+        $codexResult = @(Get-AllCodexSessions)
+        # Both should be arrays (even if empty) — never $null
+        if ($null -eq $claudeResult -or $null -eq $codexResult) {
+            Write-TestResult "Session Discovery Arrays" "FAIL" "Discovery returned `$null instead of array (Claude=$($null -eq $claudeResult) Codex=$($null -eq $codexResult))"
+        } else {
+            Write-TestResult "Session Discovery Arrays" "PASS" "Both return arrays: Claude=$($claudeResult.Count) sessions, Codex=$($codexResult.Count) sessions"
+        }
+    } catch {
+        Write-TestResult "Session Discovery Arrays" "FAIL" "Discovery threw: $($_.Exception.Message)"
+    }
+
+    # Test 210: Cost Calc Mock
+    try {
+        $mockTokens = @{
+            InputTokens          = 1000000
+            CacheCreationTokens  = 1000000
+            CacheReadTokens      = 1000000
+            OutputTokens         = 1000000
+        }
+        # Expected: (1M * $3/1M) + (1M * $3.75/1M) + (1M * $0.30/1M) + (1M * $15/1M) = $22.05
+        $cost = Get-SessionCost -TokenUsage $mockTokens
+        $expected = 22.05
+        if ([Math]::Abs($cost - $expected) -lt 0.01) {
+            Write-TestResult "Cost Calc Mock" "PASS" "1M tokens each: cost=`$$cost (expected `$$expected)"
+        } else {
+            Write-TestResult "Cost Calc Mock" "FAIL" "1M tokens each: cost=`$$cost but expected `$$expected - pricing constants may have changed"
+        }
+    } catch {
+        Write-TestResult "Cost Calc Mock" "FAIL" $_.Exception.Message
+    }
+
+    # Test 211: WT Prefixes Unique
+    try {
+        $prefixes = @($Global:PlatformRegistry.Values | ForEach-Object { $_.WTPrefix })
+        $uniquePrefixes = @($prefixes | Select-Object -Unique)
+        if ($prefixes.Count -eq $uniquePrefixes.Count) {
+            Write-TestResult "WT Prefixes Unique" "PASS" "All $($prefixes.Count) WTPrefix values are unique: $($prefixes -join ', ')"
+        } else {
+            $dupes = $prefixes | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name }
+            Write-TestResult "WT Prefixes Unique" "FAIL" "Duplicate WTPrefix values would cause profile collisions: $($dupes -join ', ')"
+        }
+    } catch {
+        Write-TestResult "WT Prefixes Unique" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================================
+    Write-Host ""
+    Write-ColorText "--- WT Safety ---" -Color Cyan
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # These tests validate the backup/restore safety net for WT settings writes.
+
+    # Test 212: No Test-Json In Restore
+    # Test-Json doesn't exist in PS 5.1 and has no -Path param in PS 7+. ConvertFrom-Json is the correct approach.
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        # Look for Test-Json in Add-WTProfile and Remove-WTProfile catch blocks (not in test region)
+        $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+        $productionCode = if ($testRegionStart -gt 0) { $scriptContent.Substring(0, $testRegionStart) } else { $scriptContent }
+        $testJsonHits = ([regex]::Matches($productionCode, 'Test-Json')).Count
+        if ($testJsonHits -eq 0) {
+            Write-TestResult "No Test-Json In Restore" "PASS" "No Test-Json calls in production code (ConvertFrom-Json used instead)"
+        } else {
+            Write-TestResult "No Test-Json In Restore" "FAIL" "Found $testJsonHits Test-Json call(s) in production code -- breaks PS 5.1 and PS 7+ backup restore"
+        }
+    } catch {
+        Write-TestResult "No Test-Json In Restore" "FAIL" $_.Exception.Message
+    }
+
+    # Test 213: WT Settings Round-Trip
+    try {
+        if (Test-Path $Global:WTSettingsPath) {
+            $raw = Get-Content $Global:WTSettingsPath -Raw
+            # Strip comments (WT settings allows // comments which break ConvertFrom-Json)
+            $stripped = $raw -replace '(?m)^\s*//.*$', '' -replace ',\s*([}\]])', '$1'
+            $parsed = $stripped | ConvertFrom-Json
+            $reserialized = $parsed | ConvertTo-Json -Depth 10
+            $reparsed = $reserialized | ConvertFrom-Json
+            $profileCount = @($reparsed.profiles.list).Count
+            if ($profileCount -gt 0) {
+                Write-TestResult "WT Settings Round-Trip" "PASS" "Round-trip preserved $profileCount profiles"
+            } else {
+                Write-TestResult "WT Settings Round-Trip" "FAIL" "Round-trip lost profiles.list (count=0)"
+            }
+        } else {
+            Write-TestResult "WT Settings Round-Trip" "SKIP" "WT settings.json not found"
+        }
+    } catch {
+        Write-TestResult "WT Settings Round-Trip" "FAIL" $_.Exception.Message
+    }
+
+    # Test 214: WT Settings Has Profiles
+    try {
+        if (Test-Path $Global:WTSettingsPath) {
+            $raw = Get-Content $Global:WTSettingsPath -Raw
+            $stripped = $raw -replace '(?m)^\s*//.*$', '' -replace ',\s*([}\]])', '$1'
+            $parsed = $stripped | ConvertFrom-Json
+            $profileCount = @($parsed.profiles.list).Count
+            if ($profileCount -gt 0) {
+                Write-TestResult "WT Settings Has Profiles" "PASS" "profiles.list has $profileCount entries"
+            } else {
+                Write-TestResult "WT Settings Has Profiles" "FAIL" "profiles.list is empty or missing"
+            }
+        } else {
+            Write-TestResult "WT Settings Has Profiles" "SKIP" "WT settings.json not found"
+        }
+    } catch {
+        Write-TestResult "WT Settings Has Profiles" "FAIL" $_.Exception.Message
+    }
+
+    # Test 215: Test-WTSettingsValid Works
+    try {
+        if (Test-Path $Global:WTSettingsPath) {
+            $valid = Test-WTSettingsValid
+            if ($valid) {
+                Write-TestResult "WTSettingsValid Works" "PASS" "Test-WTSettingsValid returned true for current settings"
+            } else {
+                Write-TestResult "WTSettingsValid Works" "WARN" "Test-WTSettingsValid returned false -- WT settings may be corrupted"
+            }
+        } else {
+            Write-TestResult "WTSettingsValid Works" "SKIP" "WT settings.json not found"
+        }
+    } catch {
+        Write-TestResult "WTSettingsValid Works" "FAIL" $_.Exception.Message
+    }
+
+    # Test 216: Normalize Paths No Crash
+    try {
+        if (Test-Path $Global:WTSettingsPath) {
+            # Just verify it doesn't throw -- we don't care about the return value
+            Normalize-WTBackgroundPaths | Out-Null
+            Write-TestResult "Normalize Paths No Crash" "PASS" "Normalize-WTBackgroundPaths completed without error"
+        } else {
+            Write-TestResult "Normalize Paths No Crash" "SKIP" "WT settings.json not found"
+        }
+    } catch {
+        Write-TestResult "Normalize Paths No Crash" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================================
+    Write-Host ""
+    Write-ColorText "--- Prefix Handling ---" -Color Cyan
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # These tests validate that no code uses hardcoded platform prefixes to strip WT profile names.
+
+    # Test 217: No Hardcoded Claude- Strip
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+        $productionCode = if ($testRegionStart -gt 0) { $scriptContent.Substring(0, $testRegionStart) } else { $scriptContent }
+        $hits = ([regex]::Matches($productionCode, "-replace\s+'\^Claude-'")).Count
+        if ($hits -eq 0) {
+            Write-TestResult "No Hardcoded Claude- Strip" "PASS" "No hardcoded -replace '^Claude-' in production code"
+        } else {
+            Write-TestResult "No Hardcoded Claude- Strip" "FAIL" "Found $hits hardcoded -replace '^Claude-' -- use Get-SessionNameFromWTProfile instead"
+        }
+    } catch {
+        Write-TestResult "No Hardcoded Claude- Strip" "FAIL" $_.Exception.Message
+    }
+
+    # Test 218: No Hardcoded Codex- Strip
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+        $productionCode = if ($testRegionStart -gt 0) { $scriptContent.Substring(0, $testRegionStart) } else { $scriptContent }
+        $hits = ([regex]::Matches($productionCode, "-replace\s+'\^Codex-'")).Count
+        if ($hits -eq 0) {
+            Write-TestResult "No Hardcoded Codex- Strip" "PASS" "No hardcoded -replace '^Codex-' in production code"
+        } else {
+            Write-TestResult "No Hardcoded Codex- Strip" "FAIL" "Found $hits hardcoded -replace '^Codex-' -- use Get-SessionNameFromWTProfile instead"
+        }
+    } catch {
+        Write-TestResult "No Hardcoded Codex- Strip" "FAIL" $_.Exception.Message
+    }
+
+    # Test 219: SessionNameFromWTProfile Exists
+    try {
+        $fn = Get-Command Get-SessionNameFromWTProfile -ErrorAction SilentlyContinue
+        if ($fn) {
+            Write-TestResult "SessionNameFromWTProfile Exists" "PASS" "Function Get-SessionNameFromWTProfile is defined"
+        } else {
+            Write-TestResult "SessionNameFromWTProfile Exists" "FAIL" "Function Get-SessionNameFromWTProfile not found"
+        }
+    } catch {
+        Write-TestResult "SessionNameFromWTProfile Exists" "FAIL" $_.Exception.Message
+    }
+
+    # Test 220: Prefix Strip All Platforms
+    try {
+        $claudeResult = Get-SessionNameFromWTProfile "Claude-Foo"
+        $codexResult = Get-SessionNameFromWTProfile "Codex-Bar"
+        $issues = @()
+        if ($claudeResult -ne "Foo") { $issues += "Claude-Foo -> '$claudeResult' (expected 'Foo')" }
+        if ($codexResult -ne "Bar") { $issues += "Codex-Bar -> '$codexResult' (expected 'Bar')" }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "Prefix Strip All Platforms" "PASS" "Claude-Foo=Foo, Codex-Bar=Bar"
+        } else {
+            Write-TestResult "Prefix Strip All Platforms" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "Prefix Strip All Platforms" "FAIL" $_.Exception.Message
+    }
+
+    # Test 221: Prefix Strip Unknown
+    try {
+        $result = Get-SessionNameFromWTProfile "Unknown-Foo"
+        if ($result -eq "Unknown-Foo") {
+            Write-TestResult "Prefix Strip Unknown" "PASS" "Unknown prefix returned unchanged: '$result'"
+        } else {
+            Write-TestResult "Prefix Strip Unknown" "FAIL" "Unknown-Foo -> '$result' (expected 'Unknown-Foo' unchanged)"
+        }
+    } catch {
+        Write-TestResult "Prefix Strip Unknown" "FAIL" $_.Exception.Message
+    }
+
+    # Test 222: Background Funcs Use Helper
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+        $productionCode = if ($testRegionStart -gt 0) { $scriptContent.Substring(0, $testRegionStart) } else { $scriptContent }
+        $helperUsages = ([regex]::Matches($productionCode, 'Get-SessionNameFromWTProfile')).Count
+        if ($helperUsages -ge 10) {
+            Write-TestResult "Background Funcs Use Helper" "PASS" "Found $helperUsages usages of Get-SessionNameFromWTProfile in production code"
+        } else {
+            Write-TestResult "Background Funcs Use Helper" "WARN" "Only $helperUsages usages of Get-SessionNameFromWTProfile found (expected >= 10)"
+        }
+    } catch {
+        Write-TestResult "Background Funcs Use Helper" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================================
+    Write-Host ""
+    Write-ColorText "--- JSON File Safety ---" -Color Cyan
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # These tests validate corruption handling for the 4 data files.
+
+    # Test 223: Session Mapping Loadable
+    try {
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            if ($null -ne $mapping.version -and $null -ne $mapping.sessions) {
+                Write-TestResult "Session Mapping Loadable" "PASS" "version=$($mapping.version), sessions count=$(@($mapping.sessions).Count)"
+            } else {
+                Write-TestResult "Session Mapping Loadable" "FAIL" "Missing 'version' or 'sessions' property"
+            }
+        } else {
+            Write-TestResult "Session Mapping Loadable" "SKIP" "session-mapping.json not found"
+        }
+    } catch {
+        Write-TestResult "Session Mapping Loadable" "FAIL" "JSON parse error: $($_.Exception.Message)"
+    }
+
+    # Test 224: Background Tracking Loadable
+    try {
+        if (Test-Path $Global:BackgroundTrackingPath) {
+            $tracking = Get-Content $Global:BackgroundTrackingPath -Raw | ConvertFrom-Json
+            if ($null -ne $tracking.version -and $null -ne $tracking.backgrounds) {
+                Write-TestResult "BG Tracking Loadable" "PASS" "version=$($tracking.version), backgrounds count=$(@($tracking.backgrounds).Count)"
+            } else {
+                Write-TestResult "BG Tracking Loadable" "FAIL" "Missing 'version' or 'backgrounds' property"
+            }
+        } else {
+            Write-TestResult "BG Tracking Loadable" "SKIP" "background-tracking.json not found"
+        }
+    } catch {
+        Write-TestResult "BG Tracking Loadable" "FAIL" "JSON parse error: $($_.Exception.Message)"
+    }
+
+    # Test 225: Profile Registry Loadable
+    try {
+        if (Test-Path $Global:ProfileRegistryPath) {
+            $registry = Get-Content $Global:ProfileRegistryPath -Raw | ConvertFrom-Json
+            if ($null -ne $registry.version -and $null -ne $registry.profiles) {
+                Write-TestResult "Profile Registry Loadable" "PASS" "version=$($registry.version), profiles count=$(@($registry.profiles).Count)"
+            } else {
+                Write-TestResult "Profile Registry Loadable" "FAIL" "Missing 'version' or 'profiles' property"
+            }
+        } else {
+            Write-TestResult "Profile Registry Loadable" "SKIP" "profile-registry.json not found"
+        }
+    } catch {
+        Write-TestResult "Profile Registry Loadable" "FAIL" "JSON parse error: $($_.Exception.Message)"
+    }
+
+    # Test 226: Column Config Loadable
+    try {
+        if (Test-Path $Global:ColumnConfigPath) {
+            $config = Get-Content $Global:ColumnConfigPath -Raw | ConvertFrom-Json
+            $props = $config.PSObject.Properties
+            $nonBool = @($props | Where-Object { $_.Value -isnot [bool] })
+            if ($props.Count -gt 0 -and $nonBool.Count -eq 0) {
+                Write-TestResult "Column Config Loadable" "PASS" "$($props.Count) columns, all boolean values"
+            } elseif ($props.Count -eq 0) {
+                Write-TestResult "Column Config Loadable" "FAIL" "Column config has no properties"
+            } else {
+                $badNames = $nonBool | ForEach-Object { "$($_.Name)=$($_.Value)" }
+                Write-TestResult "Column Config Loadable" "FAIL" "Non-boolean values: $($badNames -join ', ')"
+            }
+        } else {
+            Write-TestResult "Column Config Loadable" "SKIP" "column-config.json not found"
+        }
+    } catch {
+        Write-TestResult "Column Config Loadable" "FAIL" "JSON parse error: $($_.Exception.Message)"
+    }
+
+    # Test 227: Session Mapping Array
+    try {
+        if (Test-Path $Global:SessionMappingPath) {
+            $mapping = Get-Content $Global:SessionMappingPath -Raw | ConvertFrom-Json
+            $sessions = @($mapping.sessions)
+            if ($null -ne $mapping.sessions) {
+                Write-TestResult "Session Mapping Array" "PASS" "sessions is array with $($sessions.Count) entries"
+            } else {
+                Write-TestResult "Session Mapping Array" "FAIL" "sessions property is null"
+            }
+        } else {
+            Write-TestResult "Session Mapping Array" "SKIP" "session-mapping.json not found"
+        }
+    } catch {
+        Write-TestResult "Session Mapping Array" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================================
+    Write-Host ""
+    Write-ColorText "--- Resource Safety ---" -Color Cyan
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # These tests validate GDI+ disposal and file handle cleanup patterns.
+
+    # Test 228: Image Gen Error Disposal
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        # Find New-UniformBackgroundImage function body
+        $funcStart = $scriptContent.IndexOf('function New-UniformBackgroundImage {')
+        if ($funcStart -ge 0) {
+            # Get the function body (approximate: next 300 lines worth)
+            $funcBody = $scriptContent.Substring($funcStart, [Math]::Min(5000, $scriptContent.Length - $funcStart))
+            $tryDispose = ($funcBody -match '\.Dispose\(\)')
+            $hasCatch = ($funcBody -match 'catch\s*\{')
+            if ($tryDispose -and $hasCatch) {
+                # Count Dispose calls - should have at least 5 (bitmap, graphics, brushes, fonts)
+                $disposeCount = ([regex]::Matches($funcBody, '\.Dispose\(\)')).Count
+                if ($disposeCount -ge 5) {
+                    Write-TestResult "Image Gen Error Disposal" "PASS" "Found $disposeCount .Dispose() calls in New-UniformBackgroundImage"
+                } else {
+                    Write-TestResult "Image Gen Error Disposal" "WARN" "Only $disposeCount .Dispose() calls -- some GDI+ objects may leak on success"
+                }
+            } else {
+                Write-TestResult "Image Gen Error Disposal" "FAIL" "Missing Dispose or catch in New-UniformBackgroundImage"
+            }
+        } else {
+            Write-TestResult "Image Gen Error Disposal" "FAIL" "Could not find New-UniformBackgroundImage function"
+        }
+    } catch {
+        Write-TestResult "Image Gen Error Disposal" "FAIL" $_.Exception.Message
+    }
+
+    # Test 229: StreamReader Cleanup
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+        $productionCode = if ($testRegionStart -gt 0) { $scriptContent.Substring(0, $testRegionStart) } else { $scriptContent }
+        $readerCreations = ([regex]::Matches($productionCode, 'StreamReader.*::new')).Count
+        $disposeOrClose = ([regex]::Matches($productionCode, '\$reader\.(Dispose|Close)\(\)')).Count
+        $finallyBlocks = ([regex]::Matches($productionCode, 'finally\s*\{')).Count
+        if ($readerCreations -gt 0) {
+            if ($disposeOrClose -ge $readerCreations) {
+                Write-TestResult "StreamReader Cleanup" "PASS" "$readerCreations reader(s) created, $disposeOrClose dispose/close calls, $finallyBlocks finally blocks"
+            } else {
+                Write-TestResult "StreamReader Cleanup" "WARN" "$readerCreations reader(s) created but only $disposeOrClose dispose/close calls"
+            }
+        } else {
+            Write-TestResult "StreamReader Cleanup" "PASS" "No StreamReader usage in production code"
+        }
+    } catch {
+        Write-TestResult "StreamReader Cleanup" "FAIL" $_.Exception.Message
+    }
+
+    # Test 230: Session ID Length Guard
+    try {
+        $scriptContent = Get-Content $PSCommandPath -Raw
+        $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+        $productionCode = if ($testRegionStart -gt 0) { $scriptContent.Substring(0, $testRegionStart) } else { $scriptContent }
+        $substringHits = ([regex]::Matches($productionCode, '\.Substring\(0,\s*8\)')).Count
+        if ($substringHits -eq 0) {
+            Write-TestResult "Session ID Length Guard" "PASS" "No unguarded .Substring(0, 8) calls in production code"
+        } else {
+            # Check if they're inside try/catch or have length guards
+            $guardedPattern = '(?:\.Length\s*(?:-ge|-gt)\s*8|try\s*\{[^}]*\.Substring\(0,\s*8\))'
+            $guardedHits = ([regex]::Matches($productionCode, $guardedPattern)).Count
+            Write-TestResult "Session ID Length Guard" "WARN" "$substringHits .Substring(0, 8) calls found -- verify they are length-guarded or in try/catch"
+        }
+    } catch {
+        Write-TestResult "Session ID Length Guard" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================================
+    Write-Host ""
+    Write-ColorText "--- Edge Cases ---" -Color Cyan
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # These tests verify boundary conditions in core utility functions.
+
+    # Test 231: Cost Zero Tokens
+    try {
+        $zeroTokens = @{
+            InputTokens          = 0
+            CacheCreationTokens  = 0
+            CacheReadTokens      = 0
+            OutputTokens         = 0
+        }
+        $cost = Get-SessionCost -TokenUsage $zeroTokens
+        if ($cost -eq 0) {
+            Write-TestResult "Cost Zero Tokens" "PASS" "All-zero tokens returns exactly 0"
+        } else {
+            Write-TestResult "Cost Zero Tokens" "FAIL" "All-zero tokens returned $cost (expected 0)"
+        }
+    } catch {
+        Write-TestResult "Cost Zero Tokens" "FAIL" $_.Exception.Message
+    }
+
+    # Test 232: Cost Negative Guard
+    try {
+        $negativeTokens = @{
+            InputTokens          = -1000
+            CacheCreationTokens  = -1000
+            CacheReadTokens      = -1000
+            OutputTokens         = -1000
+        }
+        $cost = Get-SessionCost -TokenUsage $negativeTokens
+        if ($cost -le 0) {
+            Write-TestResult "Cost Negative Guard" "PASS" "Negative tokens returns $cost (non-positive)"
+        } else {
+            Write-TestResult "Cost Negative Guard" "FAIL" "Negative tokens returned positive cost: $cost"
+        }
+    } catch {
+        Write-TestResult "Cost Negative Guard" "FAIL" $_.Exception.Message
+    }
+
+    # Test 233: Format-Cost Large
+    try {
+        $result = Format-Cost 9999.99
+        if ($result -and $result.Length -gt 0 -and $result -match '\$') {
+            Write-TestResult "Format-Cost Large" "PASS" "Format-Cost 9999.99 = '$result'"
+        } else {
+            Write-TestResult "Format-Cost Large" "FAIL" "Format-Cost 9999.99 returned '$result'"
+        }
+    } catch {
+        Write-TestResult "Format-Cost Large" "FAIL" $_.Exception.Message
+    }
+
+    # Test 234: Format-TokenCount Zero
+    try {
+        $result = Format-TokenCount 0
+        if ($result -eq "-") {
+            Write-TestResult "Format-TokenCount Zero" "PASS" "Format-TokenCount 0 = '-' (dash for zero)"
+        } elseif ($result -eq "0") {
+            Write-TestResult "Format-TokenCount Zero" "PASS" "Format-TokenCount 0 = '0'"
+        } elseif ([string]::IsNullOrEmpty($result)) {
+            Write-TestResult "Format-TokenCount Zero" "FAIL" "Format-TokenCount 0 returned empty string"
+        } else {
+            Write-TestResult "Format-TokenCount Zero" "PASS" "Format-TokenCount 0 = '$result'"
+        }
+    } catch {
+        Write-TestResult "Format-TokenCount Zero" "FAIL" $_.Exception.Message
+    }
+
+    # Test 235: CamelCase Empty String
+    try {
+        $result = ConvertTo-CamelCaseTitle ""
+        if ($result -eq "") {
+            Write-TestResult "CamelCase Empty String" "PASS" "Empty input returns empty string"
+        } else {
+            Write-TestResult "CamelCase Empty String" "FAIL" "Empty input returned '$result' (expected '')"
+        }
+    } catch {
+        Write-TestResult "CamelCase Empty String" "FAIL" "Empty input threw exception: $($_.Exception.Message)"
+    }
+
+    # Test 236: CamelCase Punctuation
+    try {
+        $result = ConvertTo-CamelCaseTitle "Hello! @#$ World..."
+        if ($result -and $result.Length -gt 0) {
+            Write-TestResult "CamelCase Punctuation" "PASS" "'Hello! @#`$ World...' -> '$result'"
+        } else {
+            Write-TestResult "CamelCase Punctuation" "FAIL" "Punctuation input returned empty"
+        }
+    } catch {
+        Write-TestResult "CamelCase Punctuation" "FAIL" "Punctuation input threw exception: $($_.Exception.Message)"
+    }
+
+    # Test 237: CamelCase Whitespace Only
+    try {
+        $result = ConvertTo-CamelCaseTitle "   "
+        if ($result -eq "") {
+            Write-TestResult "CamelCase Whitespace Only" "PASS" "Whitespace-only input returns empty string"
+        } else {
+            Write-TestResult "CamelCase Whitespace Only" "FAIL" "Whitespace-only input returned '$result' (expected '')"
+        }
+    } catch {
+        Write-TestResult "CamelCase Whitespace Only" "FAIL" $_.Exception.Message
+    }
+
+    # Test 238: Format-Cost Zero
+    try {
+        $result = Format-Cost 0
+        if ($result -eq "-") {
+            Write-TestResult "Format-Cost Zero" "PASS" "Format-Cost 0 = '-' (dash for zero)"
+        } else {
+            Write-TestResult "Format-Cost Zero" "FAIL" "Format-Cost 0 = '$result' (expected '-')"
+        }
+    } catch {
+        Write-TestResult "Format-Cost Zero" "FAIL" $_.Exception.Message
+    }
+
+    # Test 239: Format-Cost SubPenny
+    try {
+        $result = Format-Cost 0.005
+        if ($result -eq '<$0.01') {
+            Write-TestResult "Format-Cost SubPenny" "PASS" "Format-Cost 0.005 = '$result'"
+        } else {
+            Write-TestResult "Format-Cost SubPenny" "FAIL" "Format-Cost 0.005 = '$result' (expected '<`$0.01')"
+        }
+    } catch {
+        Write-TestResult "Format-Cost SubPenny" "FAIL" $_.Exception.Message
+    }
+
+    # Test 240: Get-SessionCost Null Input
+    try {
+        $result = Get-SessionCost -TokenUsage $null
+        if ($result -eq 0) {
+            Write-TestResult "Get-SessionCost Null" "PASS" "Null TokenUsage returns 0"
+        } else {
+            Write-TestResult "Get-SessionCost Null" "FAIL" "Null TokenUsage returned $result (expected 0)"
+        }
+    } catch {
+        Write-TestResult "Get-SessionCost Null" "FAIL" $_.Exception.Message
+    }
+
+    # =====================================================================
+    Write-Host ""
+    Write-ColorText "--- Menu Key Audit ---" -Color Cyan
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # Validates that every key handled in the main menu is also displayed to the user.
+
+    # Test 241: No Undisplayed Main Menu Keys
+    # Scans the key handler for char keys that trigger actions, then scans the
+    # display legend for keys shown to the user. Reports handled-but-never-shown keys.
+    # Exempt: numeric keys (0-9), navigation (arrows, PgUp/PgDn, Enter, Escape).
+    try {
+        $scriptLines = Get-Content $PSCommandPath
+
+        # --- Locate the key handler section ---
+        # Find the ToUpper() assignment line (skip comments to avoid self-match)
+        # then find the numeric-key-sorting comment that follows it.
+        $handlerStart = -1
+        $handlerEnd = -1
+        for ($i = 0; $i -lt $scriptLines.Count; $i++) {
+            if ($scriptLines[$i] -notmatch '^\s*#' -and $scriptLines[$i] -match '\$char = \$key\.Character\.ToString\(\)\.ToUpper\(\)') {
+                $handlerStart = $i
+            }
+            if ($handlerStart -ge 0 -and $i -gt $handlerStart + 5 -and $scriptLines[$i].TrimStart().StartsWith('# Number keys for column sorting')) {
+                $handlerEnd = $i
+                break
+            }
+        }
+
+        if ($handlerStart -lt 0 -or $handlerEnd -lt 0) {
+            Write-TestResult "No Undisplayed Menu Keys" "FAIL" "Could not locate key handler section (start=$handlerStart, end=$handlerEnd)"
+        } else {
+            # Extract handled character keys from the handler section (non-DeleteMode only)
+            $handledKeys = @{}
+            for ($i = $handlerStart; $i -lt $handlerEnd; $i++) {
+                $line = $scriptLines[$i]
+                # Match: $char -eq 'X'  (single uppercase letter)
+                if ($line -match '\$char -eq ''([A-Z])''') {
+                    $k = $Matches[1]
+                    # Skip keys that REQUIRE DeleteMode (have $DeleteMode without -not)
+                    $requiresDeleteMode = ($line -match '\$DeleteMode' -and $line -notmatch '-not \$DeleteMode')
+                    if (-not $requiresDeleteMode) {
+                        $handledKeys[$k] = $true
+                    }
+                }
+                # Match: $key.Character -eq '$'  (special characters)
+                if ($line -match '\$key\.Character -eq ''([^'']+)''') {
+                    $k = $Matches[1]
+                    $requiresDeleteMode = ($line -match '\$DeleteMode' -and $line -notmatch '-not \$DeleteMode')
+                    if (-not $requiresDeleteMode) {
+                        $handledKeys[$k] = $true
+                    }
+                }
+            }
+
+            # --- Locate the display sections (non-DeleteMode) ---
+            # Find the exact comment line (use .Trim() -eq to avoid matching quoted strings)
+            $displayStart = -1
+            for ($i = 0; $i -lt $scriptLines.Count; $i++) {
+                if ($scriptLines[$i].Trim() -eq '# Display prompt with available commands ONCE') {
+                    $displayStart = $i
+                    break
+                }
+            }
+            # Scan a generous range -- the inNormalMode flag filters correctly
+            $displayEnd = if ($displayStart -ge 0) { [Math]::Min($displayStart + 200, $scriptLines.Count - 1) } else { -1 }
+
+            $displayedKeys = @{}
+            if ($displayStart -ge 0) {
+                $inNormalMode = $false
+                for ($i = $displayStart; $i -le $displayEnd; $i++) {
+                    $line = $scriptLines[$i]
+                    # Track which display mode we're in
+                    if ($line -match 'elseif \(\$ShowUnnamed\)') {
+                        $inNormalMode = $true
+                    }
+                    if ($line -match '^\s*if \(\$DeleteMode\)') {
+                        $inNormalMode = $false
+                    }
+                    # The final } else { after ShowUnnamed is the HideUnnamed mode
+                    if ($line -match '^\s*\} else \{' -and $inNormalMode) {
+                        $inNormalMode = $true
+                    }
+
+                    # In the non-DeleteMode display sections, find displayed keys
+                    if ($inNormalMode -and $line -match "Write-Host '([^']+)' -NoNewline -ForegroundColor") {
+                        $displayedKeys[$Matches[1]] = $true
+                    }
+                    # Also match last item on line (no -NoNewline)
+                    if ($inNormalMode -and $line -match "Write-Host '([^']+)' -ForegroundColor" -and $line -notmatch '-NoNewline') {
+                        if ($Matches[1].Length -eq 1) {
+                            $displayedKeys[$Matches[1]] = $true
+                        }
+                    }
+                }
+            }
+
+            # Compare: find handled keys that are never displayed
+            $undisplayed = @()
+            foreach ($k in $handledKeys.Keys) {
+                if (-not $displayedKeys.ContainsKey($k)) {
+                    $undisplayed += $k
+                }
+            }
+
+            $handledList = ($handledKeys.Keys | Sort-Object) -join ', '
+            $displayList = ($displayedKeys.Keys | Sort-Object) -join ', '
+
+            if ($undisplayed.Count -eq 0) {
+                Write-TestResult "No Undisplayed Menu Keys" "PASS" "All $($handledKeys.Count) handled keys are displayed. Handled=[$handledList] Displayed=[$displayList]"
+            } else {
+                $undisplayedList = ($undisplayed | Sort-Object) -join ', '
+                Write-TestResult "No Undisplayed Menu Keys" "FAIL" "Keys handled but NEVER shown in any menu legend: [$undisplayedList]. Handled=[$handledList] Displayed=[$displayList]"
+            }
+        }
+    } catch {
+        Write-TestResult "No Undisplayed Menu Keys" "FAIL" $_.Exception.Message
+    }
+
+    # =============================================
+    # Tests 242-247: Costing JSON Persistence
+    # RULE: When a test fails, examine the PRODUCTION CODE first.
+    # =============================================
+
+    # Test 242: CostingPath Global Exists
+    if ($Global:CostingPath -and $Global:CostingPath.Length -gt 0) {
+        Write-TestResult "CostingPath Global Exists" "PASS" "Path: $Global:CostingPath"
+    } else {
+        Write-TestResult "CostingPath Global Exists" "FAIL" "Global:CostingPath is not set"
+    }
+
+    # Test 243: Initialize-CostingData Exists
+    if (Get-Command Initialize-CostingData -ErrorAction SilentlyContinue) {
+        Write-TestResult "Initialize-CostingData Exists" "PASS" "Function is defined"
+    } else {
+        Write-TestResult "Initialize-CostingData Exists" "FAIL" "Function not found"
+    }
+
+    # Test 244: Open-CostingBatch Exists
+    if (Get-Command Open-CostingBatch -ErrorAction SilentlyContinue) {
+        Write-TestResult "Open-CostingBatch Exists" "PASS" "Function is defined"
+    } else {
+        Write-TestResult "Open-CostingBatch Exists" "FAIL" "Function not found"
+    }
+
+    # Test 245: Close-CostingBatch Exists
+    if (Get-Command Close-CostingBatch -ErrorAction SilentlyContinue) {
+        Write-TestResult "Close-CostingBatch Exists" "PASS" "Function is defined"
+    } else {
+        Write-TestResult "Close-CostingBatch Exists" "FAIL" "Function not found"
+    }
+
+    # Test 247: Save-CostingEntry Exists
+    if (Get-Command Save-CostingEntry -ErrorAction SilentlyContinue) {
+        Write-TestResult "Save-CostingEntry Exists" "PASS" "Function is defined"
+    } else {
+        Write-TestResult "Save-CostingEntry Exists" "FAIL" "Function not found"
+    }
+
+    # Test 248: Get-CostingData Exists
+    if (Get-Command Get-CostingData -ErrorAction SilentlyContinue) {
+        Write-TestResult "Get-CostingData Exists" "PASS" "Function is defined"
+    } else {
+        Write-TestResult "Get-CostingData Exists" "FAIL" "Function not found"
+    }
+
+    # Test 249: Set-CostingPurged Exists
+    if (Get-Command Set-CostingPurged -ErrorAction SilentlyContinue) {
+        Write-TestResult "Set-CostingPurged Exists" "PASS" "Function is defined"
+    } else {
+        Write-TestResult "Set-CostingPurged Exists" "FAIL" "Function not found"
+    }
+
+    # Test 250: Costing JSON Structure
+    if (Test-Path $Global:CostingPath) {
+        try {
+            $costData = Get-Content $Global:CostingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($null -ne $costData.version -and $null -ne $costData.entries) {
+                Write-TestResult "Costing JSON Structure" "PASS" "version=$($costData.version), entries=$(@($costData.entries).Count)"
+            } else {
+                Write-TestResult "Costing JSON Structure" "FAIL" "Missing version or entries property"
+            }
+        } catch {
+            Write-TestResult "Costing JSON Structure" "FAIL" "JSON parse error: $_"
+        }
+    } else {
+        Write-TestResult "Costing JSON Structure" "SKIP" "costing.json does not exist yet (will be created on first cost calculation)"
+    }
+
     # Summary
     Write-Host ""
     Write-ColorText "========================================" -Color Cyan
@@ -4684,6 +6961,8 @@ function Test-SystemValidation {
     Write-Host $script:ValidationPassCount -ForegroundColor Green
     Write-Host "Warnings: " -NoNewline
     Write-Host $script:ValidationWarnCount -ForegroundColor Yellow
+    Write-Host "Skipped: " -NoNewline
+    Write-Host $script:ValidationSkipCount -ForegroundColor DarkGray
     Write-Host "Failed: " -NoNewline
     Write-Host $script:ValidationFailCount -ForegroundColor Red
     Write-Host ""
@@ -4696,14 +6975,22 @@ function Test-SystemValidation {
         Write-ColorText "Some tests failed. Please review failures above." -Color Red
     }
 
+    # Write summary totals to debug.log (individual results already logged by Write-TestResult)
+    Write-DebugInfo "=== VALIDATION SUMMARY: Passed: $($script:ValidationPassCount) | Warnings: $($script:ValidationWarnCount) | Skipped: $($script:ValidationSkipCount) | Failed: $($script:ValidationFailCount) ===" -Force
+
+    # Preamble prepended to all clipboard copies of validation results
+    $clipPreamble = "As you inspect the following list of errors and warnings, Remember: DO NOT shortcut the purpose of testing. Testing is not for the sake of fixing tests, it is for the sake of finding logical errors in the app itself, for which the test cases breaking indicate a problem in the app, not test cases to fix. You should be leveraging a broken test as the occasion to find and fix problems in the app. Use the debug.log file for Claude Code for further information for diagnosing the following errors and warnings (see list below). These are test case results. If you do decide a test case needs fixed, you MUST (HARD MUST) prompt and ask for permission to do so. Your main job is to help maintain the application code, not the testing code. After you finish, show me the number of bugs you fixed in the app and explain each bug, and the number of tests you think need updating (if any)."
+
     Write-Host ""
     Write-Host "Copy " -NoNewline -ForegroundColor Gray
     Write-Host "E" -NoNewline -ForegroundColor Yellow
-    Write-Host "rrors to clipboard | Copy " -NoNewline -ForegroundColor Gray
+    Write-Host "rrors | " -NoNewline -ForegroundColor Gray
     Write-Host "W" -NoNewline -ForegroundColor Yellow
-    Write-Host "arnings and errors to clipboard | Copy " -NoNewline -ForegroundColor Gray
+    Write-Host "arnings+errors | " -NoNewline -ForegroundColor Gray
+    Write-Host "S" -NoNewline -ForegroundColor Yellow
+    Write-Host "kipped | " -NoNewline -ForegroundColor Gray
     Write-Host "A" -NoNewline -ForegroundColor Yellow
-    Write-Host "ll results to clipboard | Return to main menu " -NoNewline -ForegroundColor Gray
+    Write-Host "ll  to clipboard | Return to main menu " -NoNewline -ForegroundColor Gray
     Write-Host "[Enter]" -ForegroundColor Yellow
 
     while ($true) {
@@ -4718,7 +7005,7 @@ function Test-SystemValidation {
             # Copy errors only
             $filtered = @($script:ValidationResults | Where-Object { $_.Status -eq 'FAIL' })
             if ($filtered.Count -gt 0) {
-                $clipText = ($filtered | ForEach-Object { $_.Text }) -join "`r`n"
+                $clipText = $clipPreamble + "`r`n`r`n" + (($filtered | ForEach-Object { $_.Text }) -join "`r`n")
                 $clipText | Set-Clipboard
                 Write-Host ""
                 Write-ColorText "$($filtered.Count) error(s) copied to clipboard." -Color Green
@@ -4734,7 +7021,7 @@ function Test-SystemValidation {
             # Copy warnings and errors
             $filtered = @($script:ValidationResults | Where-Object { $_.Status -eq 'WARN' -or $_.Status -eq 'FAIL' })
             if ($filtered.Count -gt 0) {
-                $clipText = ($filtered | ForEach-Object { $_.Text }) -join "`r`n"
+                $clipText = $clipPreamble + "`r`n`r`n" + (($filtered | ForEach-Object { $_.Text }) -join "`r`n")
                 $clipText | Set-Clipboard
                 Write-Host ""
                 Write-ColorText "$($filtered.Count) warning(s)/error(s) copied to clipboard." -Color Green
@@ -4746,10 +7033,26 @@ function Test-SystemValidation {
             break
         }
 
+        if ($ch -eq 'S') {
+            # Copy skipped tests
+            $filtered = @($script:ValidationResults | Where-Object { $_.Status -eq 'SKIP' })
+            if ($filtered.Count -gt 0) {
+                $clipText = (($filtered | ForEach-Object { $_.Text }) -join "`r`n")
+                $clipText | Set-Clipboard
+                Write-Host ""
+                Write-ColorText "$($filtered.Count) skipped test(s) copied to clipboard." -Color Green
+            } else {
+                Write-Host ""
+                Write-ColorText "No skipped tests to copy." -Color Green
+            }
+            Start-Sleep -Milliseconds 800
+            break
+        }
+
         if ($ch -eq 'A') {
             # Copy all results
-            $summary = "SYSTEM VALIDATION TESTS - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`r`nPassed: $($script:ValidationPassCount) | Warnings: $($script:ValidationWarnCount) | Failed: $($script:ValidationFailCount)`r`n`r`n"
-            $allText = $summary + (($script:ValidationResults | ForEach-Object { $_.Text }) -join "`r`n")
+            $summary = "SYSTEM VALIDATION TESTS - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`r`nPassed: $($script:ValidationPassCount) | Warnings: $($script:ValidationWarnCount) | Skipped: $($script:ValidationSkipCount) | Failed: $($script:ValidationFailCount)`r`n`r`n"
+            $allText = $clipPreamble + "`r`n`r`n" + $summary + (($script:ValidationResults | ForEach-Object { $_.Text }) -join "`r`n")
             $allText | Set-Clipboard
             Write-Host ""
             Write-ColorText "$($script:ValidationResults.Count) result(s) copied to clipboard." -Color Green
@@ -4762,6 +7065,8 @@ function Test-SystemValidation {
     Remove-Variable -Name "ValidationPassCount" -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name "ValidationFailCount" -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name "ValidationWarnCount" -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name "ValidationSkipCount" -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name "ValidationTestNumber" -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name "ValidationResults" -Scope Script -ErrorAction SilentlyContinue
 }
 
@@ -4772,7 +7077,18 @@ function Show-AboutScreen {
     #>
 
     Clear-Host
-    Write-ColorText "Codex (X) and Claude Code (C) Session Manager with Win Terminal Forking" -Color Yellow
+    # Auto-generate title from PlatformRegistry
+    $installedPlatforms = Get-InstalledPlatforms
+    $sortedKeys = @('claude') + @($installedPlatforms.Keys | Where-Object { $_ -ne 'claude' } | Sort-Object)
+    $titleParts = @()
+    foreach ($pKey in $sortedKeys) {
+        if ($installedPlatforms.ContainsKey($pKey)) {
+            $p = $installedPlatforms[$pKey]
+            $titleParts += "$($p.DisplayName) ($($p.Key))"
+        }
+    }
+    $titleStr = "SessionForge (sf) - " + ($titleParts -join " and ") + " Session Manager with Win Terminal Forking"
+    Write-ColorText $titleStr -Color Yellow
     Write-Host "Version: $Global:ScriptVersion" -ForegroundColor Gray
     Write-Host ""
     Write-Host "=**=---========--------===--=====--==-------==" -ForegroundColor Cyan
@@ -4800,7 +7116,7 @@ function Show-AboutScreen {
     Write-Host "==========+#@@@%@@@@@@%%@@%*==================" -ForegroundColor Cyan
     Write-Host "---====++===++*#@@@@%%%@@@%*+++=============++" -ForegroundColor Cyan
   # Write-Host "*###%%%%%##%%%%%%%%%%##%@@@@@%%%%%%%%%%%%%%%@@" -ForegroundColor Cyan
-    Write-Host " https://github.com/srives/WinClaudeCodeForker" -ForegroundColor Cyan
+    Write-Host " https://github.com/srives/SessionForge" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "By: S. Rives" -ForegroundColor Gray
     # OSC 8 hyperlink: ESC ] 8 ; ; URL ST text ESC ] 8 ; ; ST
@@ -5025,43 +7341,57 @@ function Get-SessionContextUsage {
             $contextLimits["default"]
         }
 
-        # Read file and find the LAST assistant message with usage
+        # Read file BACKWARDS to find the LAST assistant message with usage
+        # Only reads the tail of the file (starting at 32KB), avoiding full-file scans on large .jsonl files
         $lastInputTokens = 0
-        $foundMessages = 0
-        $reader = [System.IO.StreamReader]::new($sessionFile)
-        try {
-            while ($null -ne ($line = $reader.ReadLine())) {
-                # Only check lines that contain assistant messages with usage
-                if ($line -notmatch '"type"\s*:\s*"assistant"') {
-                    continue
-                }
-                if ($line -notmatch '"usage"') {
-                    continue
-                }
+        $fileInfo = [System.IO.FileInfo]::new($sessionFile)
+        $fileLength = $fileInfo.Length
 
-                # Parse the JSON
+        # Start with 32KB tail chunk, double if needed (caps at full file)
+        $chunkSize = 32768
+        $found = $false
+        while (-not $found -and $chunkSize -le $fileLength) {
+            $seekPos = [Math]::Max(0, $fileLength - $chunkSize)
+            $stream = [System.IO.FileStream]::new($sessionFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                $stream.Seek($seekPos, [System.IO.SeekOrigin]::Begin) | Out-Null
+                $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8)
+                # If we seeked mid-file, discard the first partial line
+                if ($seekPos -gt 0) { $reader.ReadLine() | Out-Null }
+                # Read all remaining lines into an array
+                $lines = @()
+                while ($null -ne ($line = $reader.ReadLine())) {
+                    $lines += $line
+                }
+            } finally {
+                if ($reader) { $reader.Close() }
+            }
+
+            # Scan backwards for the last assistant message with usage
+            for ($li = $lines.Count - 1; $li -ge 0; $li--) {
+                $line = $lines[$li]
+                if ($line -notmatch '"type"\s*:\s*"assistant"') { continue }
+                if ($line -notmatch '"usage"') { continue }
                 $entry = $line | ConvertFrom-Json
-
-                # Check if this is an assistant message with usage info
                 if ($entry.type -eq "assistant" -and $entry.message -and $entry.message.usage) {
-                    $foundMessages++
                     $usage = $entry.message.usage
-                    # Total context = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
-                    # input_tokens alone is just the new tokens, not the full context
                     $totalTokens = 0
                     if ($usage.input_tokens) { $totalTokens += $usage.input_tokens }
                     if ($usage.cache_creation_input_tokens) { $totalTokens += $usage.cache_creation_input_tokens }
                     if ($usage.cache_read_input_tokens) { $totalTokens += $usage.cache_read_input_tokens }
                     if ($totalTokens -gt 0) {
                         $lastInputTokens = $totalTokens
+                        $found = $true
+                        break
                     }
                 }
             }
-        } finally {
-            $reader.Close()
+
+            # If not found in this chunk, try a bigger one
+            if (-not $found) { $chunkSize *= 2 }
         }
 
-        Write-DebugInfo "LimitFeature: Session $($SessionId.Substring(0,8))... - Found $foundMessages msgs, totalTokens=$lastInputTokens" -Color DarkGray
+        Write-DebugInfo "LimitFeature: Session $($SessionId.Substring(0,8))... - tail read ${chunkSize}B of ${fileLength}B, totalTokens=$lastInputTokens" -Color DarkGray
 
         if ($lastInputTokens -eq 0) {
             return $null
@@ -5119,27 +7449,24 @@ function Get-SessionTokenUsage {
         [long]$totalCacheReadTokens = 0
         [long]$totalOutputTokens = 0
 
-        # Read file line by line
+        # Read file line by line — use regex extraction instead of ConvertFrom-Json (~2.5x faster)
+        # ConvertFrom-Json is very slow on large JSONL lines (100KB+ with thinking/content blocks)
+        # Regex directly extracts the 4 token counts from the usage block without full JSON parse
         $reader = [System.IO.StreamReader]::new($sessionFile)
         try {
             while ($null -ne ($line = $reader.ReadLine())) {
-                # Only check lines that contain assistant messages with usage
+                # Must contain assistant type and usage data
                 if ($line -notmatch '"type":"assistant"' -or $line -notmatch '"usage"') {
                     continue
                 }
+                # Skip "type":"progress" lines that embed "type":"assistant" in nested data
+                if ($line -match '"type":"progress"') { continue }
 
-                # Parse the JSON
-                $entry = $line | ConvertFrom-Json
-
-                # Check if this is an assistant message with usage info
-                if ($entry.type -eq "assistant" -and $entry.message.usage) {
-                    $usage = $entry.message.usage
-
-                    $totalInputTokens += if ($usage.input_tokens) { $usage.input_tokens } else { 0 }
-                    $totalCacheCreationTokens += if ($usage.cache_creation_input_tokens) { $usage.cache_creation_input_tokens } else { 0 }
-                    $totalCacheReadTokens += if ($usage.cache_read_input_tokens) { $usage.cache_read_input_tokens } else { 0 }
-                    $totalOutputTokens += if ($usage.output_tokens) { $usage.output_tokens } else { 0 }
-                }
+                # Extract token counts directly via regex (avoids parsing entire JSON object)
+                if ($line -match '"input_tokens":(\d+)') { $totalInputTokens += [long]$matches[1] }
+                if ($line -match '"cache_creation_input_tokens":(\d+)') { $totalCacheCreationTokens += [long]$matches[1] }
+                if ($line -match '"cache_read_input_tokens":(\d+)') { $totalCacheReadTokens += [long]$matches[1] }
+                if ($line -match '"output_tokens":(\d+)') { $totalOutputTokens += [long]$matches[1] }
             }
         } finally {
             $reader.Close()
@@ -5199,6 +7526,210 @@ function Get-SessionCost {
     return [Math]::Round($totalCost, 4)
 }
 
+function Initialize-CostingData {
+    <#
+    .SYNOPSIS
+        Creates costing.json if it does not exist
+    #>
+    if (-not (Test-Path $Global:CostingPath)) {
+        @{ version = 1; entries = @() } | ConvertTo-Json -Depth 10 |
+            Set-Content $Global:CostingPath -Encoding UTF8
+    }
+}
+
+function Open-CostingBatch {
+    <#
+    .SYNOPSIS
+        Loads costing.json into memory for batch updates (avoids per-session disk I/O)
+    #>
+    Initialize-CostingData
+    try {
+        $Global:CostingBatch = Get-Content $Global:CostingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $Global:CostingBatch.entries) {
+            $Global:CostingBatch | Add-Member -NotePropertyName entries -NotePropertyValue @() -Force
+        }
+        # Convert to mutable list for fast lookups
+        $Global:CostingBatchEntries = [System.Collections.ArrayList]@($Global:CostingBatch.entries)
+        $Global:CostingBatchDirty = $false
+    } catch {
+        Write-DebugInfo "Error opening costing batch: $_" -Color Red
+        $Global:CostingBatch = [PSCustomObject]@{ version = 1; entries = @() }
+        $Global:CostingBatchEntries = [System.Collections.ArrayList]::new()
+        $Global:CostingBatchDirty = $false
+    }
+}
+
+function Close-CostingBatch {
+    <#
+    .SYNOPSIS
+        Writes accumulated costing entries to disk (single write) and clears batch state
+    #>
+    if ($Global:CostingBatchDirty -and $null -ne $Global:CostingBatch) {
+        try {
+            $Global:CostingBatch.entries = @($Global:CostingBatchEntries)
+            $Global:CostingBatch | ConvertTo-Json -Depth 10 | Set-Content $Global:CostingPath -Encoding UTF8
+        } catch {
+            Write-DebugInfo "Error closing costing batch: $_" -Color Red
+        }
+    }
+    $Global:CostingBatch = $null
+    $Global:CostingBatchEntries = $null
+    $Global:CostingBatchDirty = $false
+}
+
+function Save-CostingEntry {
+    <#
+    .SYNOPSIS
+        Upserts a session's cost snapshot into costing data
+    .DESCRIPTION
+        If a batch is open (Open-CostingBatch), upserts in memory only.
+        Otherwise reads/writes costing.json directly (single-entry fallback).
+    #>
+    param(
+        [string]$SessionId,
+        [string]$Title,
+        [string]$Source,
+        [string]$ProjectPath,
+        [double]$Cost,
+        [long]$InputTokens,
+        [long]$OutputTokens,
+        [long]$CacheCreationTokens,
+        [long]$CacheReadTokens,
+        [long]$TotalTokens,
+        [string]$Model
+    )
+
+    if (-not $SessionId) { return }
+
+    $entry = [PSCustomObject]@{
+        sessionId           = $SessionId
+        title               = $Title
+        source              = $Source
+        projectPath         = $ProjectPath
+        cost                = $Cost
+        inputTokens         = $InputTokens
+        outputTokens        = $OutputTokens
+        cacheCreationTokens = $CacheCreationTokens
+        cacheReadTokens     = $CacheReadTokens
+        totalTokens         = $TotalTokens
+        model               = $Model
+        snapshotDate        = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
+        purged              = $false
+    }
+
+    # Batch mode: upsert in memory
+    if ($null -ne $Global:CostingBatchEntries) {
+        $existingIdx = -1
+        for ($i = 0; $i -lt $Global:CostingBatchEntries.Count; $i++) {
+            if ($Global:CostingBatchEntries[$i].sessionId -eq $SessionId) {
+                $existingIdx = $i
+                break
+            }
+        }
+        if ($existingIdx -ge 0) {
+            if ($Global:CostingBatchEntries[$existingIdx].purged -eq $true) {
+                $entry.purged = $true
+            }
+            $Global:CostingBatchEntries[$existingIdx] = $entry
+        } else {
+            $null = $Global:CostingBatchEntries.Add($entry)
+        }
+        $Global:CostingBatchDirty = $true
+        return
+    }
+
+    # Fallback: single-entry direct write
+    Initialize-CostingData
+    try {
+        $data = Get-Content $Global:CostingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $data.entries) {
+            $data | Add-Member -NotePropertyName entries -NotePropertyValue @() -Force
+        }
+        $entries = @($data.entries)
+
+        $existingIdx = -1
+        for ($i = 0; $i -lt $entries.Count; $i++) {
+            if ($entries[$i].sessionId -eq $SessionId) {
+                $existingIdx = $i
+                break
+            }
+        }
+
+        if ($existingIdx -ge 0) {
+            if ($entries[$existingIdx].purged -eq $true) {
+                $entry.purged = $true
+            }
+            $entries[$existingIdx] = $entry
+        } else {
+            $entries += $entry
+        }
+
+        $data.entries = $entries
+        $data | ConvertTo-Json -Depth 10 | Set-Content $Global:CostingPath -Encoding UTF8
+    } catch {
+        Write-DebugInfo "Error saving costing entry: $_" -Color Red
+    }
+}
+
+function Get-CostingData {
+    <#
+    .SYNOPSIS
+        Returns parsed costing.json data, or empty structure if missing
+    #>
+    Initialize-CostingData
+    try {
+        $data = Get-Content $Global:CostingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $data.entries) {
+            $data | Add-Member -NotePropertyName entries -NotePropertyValue @() -Force
+        }
+        return $data
+    } catch {
+        Write-DebugInfo "Error reading costing data: $_" -Color Red
+        return [PSCustomObject]@{ version = 1; entries = @() }
+    }
+}
+
+function Set-CostingPurged {
+    <#
+    .SYNOPSIS
+        Marks costing entries as purged for the given session IDs
+    #>
+    param(
+        [string[]]$SessionIds
+    )
+
+    if (-not $SessionIds -or $SessionIds.Count -eq 0) { return }
+
+    Initialize-CostingData
+
+    try {
+        $data = Get-Content $Global:CostingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $data.entries) { return }
+
+        $entries = @($data.entries)
+        $changed = $false
+        foreach ($entry in $entries) {
+            if ($SessionIds -contains $entry.sessionId) {
+                $entry.purged = $true
+                # Use Add-Member with Force in case property doesn't exist as settable
+                if (-not ($entry.PSObject.Properties.Name -contains 'purged')) {
+                    $entry | Add-Member -NotePropertyName purged -NotePropertyValue $true -Force
+                } else {
+                    $entry.purged = $true
+                }
+                $changed = $true
+            }
+        }
+
+        if ($changed) {
+            $data.entries = $entries
+            $data | ConvertTo-Json -Depth 10 | Set-Content $Global:CostingPath -Encoding UTF8
+        }
+    } catch {
+        Write-DebugInfo "Error marking costing entries as purged: $_" -Color Red
+    }
+}
+
 function Format-Cost {
     <#
     .SYNOPSIS
@@ -5253,6 +7784,7 @@ function Show-CostAnalysis {
     Write-Host "Calculating costs for $($Sessions.Count) session(s)..." -ForegroundColor Yellow
     Write-Host ""
 
+    Open-CostingBatch
     $sessionCosts = @()
     $totalCost = 0.0
     [long]$totalTokens = 0
@@ -5282,7 +7814,7 @@ function Show-CostAnalysis {
             if ($cost -gt 0) {
                 $sessionCosts += @{
                     Title = $title
-                    Source = "X"
+                    Source = (Get-PlatformProperty -Source 'codex' -Property 'Key')
                     Cost = $cost
                     InputTokens = $codexTokens
                     OutputTokens = 0
@@ -5292,6 +7824,7 @@ function Show-CostAnalysis {
                     CacheHitRate = 0
                     Created = $session.created
                 }
+                Save-CostingEntry -SessionId $session.sessionId -Title $title -Source 'codex' -ProjectPath $session.projectPath -Cost $cost -InputTokens $codexTokens -OutputTokens 0 -CacheCreationTokens 0 -CacheReadTokens 0 -TotalTokens $codexTokens -Model $(if ($session.model) { $session.model } else { '' })
             }
         } else {
             # Claude: parse .jsonl
@@ -5310,7 +7843,7 @@ function Show-CostAnalysis {
 
                 $sessionCosts += @{
                     Title = $title
-                    Source = "C"
+                    Source = (Get-PlatformProperty -Source 'claude' -Property 'Key')
                     Cost = $cost
                     InputTokens = $usage.InputTokens
                     OutputTokens = $usage.OutputTokens
@@ -5320,9 +7853,13 @@ function Show-CostAnalysis {
                     CacheHitRate = $cacheHitRate
                     Created = $session.created
                 }
+                if ($cost -gt 0) {
+                    Save-CostingEntry -SessionId $session.sessionId -Title $title -Source 'claude' -ProjectPath $session.projectPath -Cost $cost -InputTokens $usage.InputTokens -OutputTokens $usage.OutputTokens -CacheCreationTokens $usage.CacheCreationTokens -CacheReadTokens $usage.CacheReadTokens -TotalTokens $usage.TotalTokens -Model $(if ($session.model) { $session.model } else { '' })
+                }
             }
         }
     }
+    Close-CostingBatch
 
     # Sort by cost (highest first)
     $sessionCosts = $sessionCosts | Sort-Object -Property Cost -Descending
@@ -5339,7 +7876,7 @@ function Show-CostAnalysis {
         }
         $title = $title.PadRight(35)
 
-        $srcColor = if ($sc.Source -eq 'X') { "Magenta" } else { "Blue" }
+        $srcColor = (Get-PlatformByKey -Key $sc.Source).Color
         $costStr = (Format-Cost -Cost $sc.Cost).PadRight(9)
         $userInputStr = (Format-TokenCount -Count $sc.InputTokens).PadRight(8)
         $outputStr = (Format-TokenCount -Count $sc.OutputTokens).PadRight(8)
@@ -5361,12 +7898,14 @@ function Show-CostAnalysis {
     Write-Host ""
     Write-ColorText "TOTALS:" -Color Cyan
     if ($claudeTotalCost -gt 0) {
-        Write-Host "  Claude Cost: " -NoNewline -ForegroundColor Blue
-        Write-Host (Format-Cost -Cost $claudeTotalCost) -ForegroundColor Blue
+        $cColor = Get-PlatformProperty -Source 'claude' -Property 'Color'
+        Write-Host "  $(Get-PlatformProperty -Source 'claude' -Property 'DisplayName') Cost: " -NoNewline -ForegroundColor $cColor
+        Write-Host (Format-Cost -Cost $claudeTotalCost) -ForegroundColor $cColor
     }
     if ($codexTotalCost -gt 0) {
-        Write-Host "  Codex Cost:  " -NoNewline -ForegroundColor Magenta
-        Write-Host "~$(Format-Cost -Cost $codexTotalCost)" -ForegroundColor Magenta
+        $xColor = Get-PlatformProperty -Source 'codex' -Property 'Color'
+        Write-Host "  $(Get-PlatformProperty -Source 'codex' -Property 'DisplayName') Cost:  " -NoNewline -ForegroundColor $xColor
+        Write-Host "~$(Format-Cost -Cost $codexTotalCost)" -ForegroundColor $xColor
     }
     Write-Host "  Combined:    " -NoNewline
     Write-Host (Format-Cost -Cost $totalCost) -ForegroundColor Green
@@ -5385,6 +7924,29 @@ function Show-CostAnalysis {
     } else {
         Write-Host "-" -ForegroundColor Green
     }
+
+    # Show purged sessions from costing.json
+    try {
+        $costingData = Get-CostingData
+        $purgedEntries = @($costingData.entries | Where-Object { $_.purged -eq $true })
+        if ($purgedEntries.Count -gt 0) {
+            $purgedCost = 0.0
+            [long]$purgedTokens = 0
+            foreach ($pe in $purgedEntries) {
+                $purgedCost += $pe.cost
+                $purgedTokens += $pe.totalTokens
+            }
+            Write-Host ""
+            Write-Host "  Purged Sessions: " -NoNewline -ForegroundColor DarkGray
+            Write-Host "$(Format-Cost -Cost $purgedCost) ($($purgedEntries.Count) sessions, $(Format-TokenCount -Count $purgedTokens) tokens)" -ForegroundColor DarkGray
+            $lifetimeTotal = $totalCost + $purgedCost
+            Write-Host "  Lifetime Total:  " -NoNewline -ForegroundColor DarkGray
+            Write-Host (Format-Cost -Cost $lifetimeTotal) -ForegroundColor Yellow
+        }
+    } catch {
+        # Silently ignore costing data errors in analysis view
+    }
+
     Write-Host ""
     Read-Host "Press Enter to continue"
 }
@@ -5437,9 +7999,11 @@ function Find-OrphanedWTProfiles {
         $settingsJson = Get-Content $Global:WTSettingsPath -Raw
         $settings = $settingsJson | ConvertFrom-Json
 
-        # Find all managed profiles (Claude-* and Codex-* prefixes)
+        # Find all managed profiles (all registered platform prefixes)
+        $allPrefixes = Get-AllWTProfilePrefixes
         $managedProfiles = @($settings.profiles.list | Where-Object {
-            $_.name -like "Claude-*" -or $_.name -like "Codex-*"
+            $name = $_.name
+            ($allPrefixes | Where-Object { $name -like "$_*" }).Count -gt 0
         })
 
         if ($managedProfiles.Count -eq 0) {
@@ -5461,12 +8025,7 @@ function Find-OrphanedWTProfiles {
         foreach ($session in $Sessions) {
             $title = if ($session.customTitle) { $session.customTitle } elseif ($session.trackedName) { $session.trackedName } else { $null }
             if ($title) {
-                $prefix = switch ($session.source) {
-                    'codex'    { "Codex-" }
-                    'copilot'  { "Copilot-" }
-                    'opencode' { "OpenCode-" }
-                    default    { "Claude-" }
-                }
+                $prefix = Get-PlatformProperty -Source $session.source -Property 'WTPrefix'
                 $knownProfileNames["$prefix$title"] = $true
             }
         }
@@ -5658,6 +8217,9 @@ function Show-PurgeMenu {
                 if ($confirmChar -eq 'Y') {
                     Write-Host ""
                     Write-Host ""
+                    # Mark sessions as purged in costing.json before deleting
+                    $deadIds = @($deadSessions | ForEach-Object { $_.sessionId })
+                    Set-CostingPurged -SessionIds $deadIds
                     Write-ColorText "Deleting $($deadSessions.Count) dead session(s)..." -Color Cyan
                     $deleted = 0
                     foreach ($session in $deadSessions) {
@@ -5886,7 +8448,7 @@ function Get-AllClaudeSessions {
             foreach ($mappedSession in $mapping.sessions) {
                 if ($sessionIdsSeen.ContainsKey($mappedSession.sessionId)) {
                     # Session already in our list - add trackedName to it
-                    $sessionName = $mappedSession.wtProfileName -replace '^Claude-', ''
+                    $sessionName = Get-SessionNameFromWTProfile $mappedSession.wtProfileName
                     for ($i = 0; $i -lt $allSessions.Count; $i++) {
                         if ($allSessions[$i].sessionId -eq $mappedSession.sessionId) {
                             # Add trackedName property if session is unnamed
@@ -5923,8 +8485,8 @@ function Get-AllClaudeSessions {
                     # Session exists but not in Claude's index yet - add it
                     $fileInfo = Get-Item $sessionFile
 
-                    # Extract session name from WT profile name (remove "Claude-" prefix)
-                    $sessionName = $mappedSession.wtProfileName -replace '^Claude-', ''
+                    # Extract session name from WT profile name (remove platform prefix)
+                    $sessionName = Get-SessionNameFromWTProfile $mappedSession.wtProfileName
 
                     # Note: Message count not available for tracked-only sessions
                     # (these sessions exist but haven't been indexed by Claude yet)
@@ -6100,8 +8662,8 @@ function Get-WTProfileName {
             }
 
             # Determine which prefix to check first based on source
-            $primaryPrefix = if ($Source -eq 'codex') { "Codex-" } else { "Claude-" }
-            $secondaryPrefix = if ($Source -eq 'codex') { "Claude-" } else { "Codex-" }
+            $primaryPrefix = Get-PlatformProperty -Source $Source -Property 'WTPrefix'
+            $otherPrefixes = @(Get-AllWTProfilePrefixes | Where-Object { $_ -ne $primaryPrefix })
 
             # Check primary prefix first (exact match)
             $profileName = "$primaryPrefix$SessionTitle"
@@ -6110,16 +8672,18 @@ function Get-WTProfileName {
                 return $profileName
             }
 
-            # Check secondary prefix exact match
-            $profileName = "$secondaryPrefix$SessionTitle"
-            $profile = $settings.profiles.list | Where-Object { $_.name -eq $profileName } | Select-Object -First 1
-            if ($profile) {
-                return $profileName
+            # Check other prefixes (exact match)
+            foreach ($secPrefix in $otherPrefixes) {
+                $profileName = "$secPrefix$SessionTitle"
+                $profile = $settings.profiles.list | Where-Object { $_.name -eq $profileName } | Select-Object -First 1
+                if ($profile) {
+                    return $profileName
+                }
             }
 
             # Prefix match — catches profiles created under a different CamelCase truncation length
             # e.g. title "DontFixItJustCheckCreate" (30-char) starts with "DontFixItJust" from profile "Codex-DontFixItJust" (20-char)
-            foreach ($prefix in @($primaryPrefix, $secondaryPrefix)) {
+            foreach ($prefix in @($primaryPrefix) + $otherPrefixes) {
                 $candidates = @($settings.profiles.list | Where-Object { $_.name -like "$prefix*" })
                 foreach ($candidate in $candidates) {
                     $candidateTitle = $candidate.name.Substring($prefix.Length)
@@ -6715,12 +9279,29 @@ function Show-SessionMenu {
         Write-Host ""
     }
 
-    # Title with color-coded CLI markers
-    Write-Host "Codex (" -NoNewline -ForegroundColor Cyan
-    Write-Host "X" -NoNewline -ForegroundColor Magenta
-    Write-Host ") and Claude Code (" -NoNewline -ForegroundColor Cyan
-    Write-Host "C" -NoNewline -ForegroundColor Blue
-    Write-Host ") Session Manager with Win Terminal Forking, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
+    # Title with color-coded CLI markers (auto-generated from PlatformRegistry)
+    $installedPlatforms = Get-InstalledPlatforms
+    $platformNames = @()
+    # Sort: claude first, then alphabetical
+    $sortedKeys = @('claude') + @($installedPlatforms.Keys | Where-Object { $_ -ne 'claude' } | Sort-Object)
+    foreach ($pKey in $sortedKeys) {
+        if ($installedPlatforms.ContainsKey($pKey)) {
+            $p = $installedPlatforms[$pKey]
+            $platformNames += @{ DisplayName = $p.DisplayName; Key = $p.Key; Color = $p.Color }
+        }
+    }
+    # Render: "SessionForge (sf) Claude Code (C) and Codex (X) Session Manager..."
+    Write-Host "SessionForge (" -NoNewline -ForegroundColor Cyan
+    Write-Host "sf" -NoNewline -ForegroundColor Yellow
+    Write-Host ") " -NoNewline -ForegroundColor Cyan
+    for ($pi = 0; $pi -lt $platformNames.Count; $pi++) {
+        if ($pi -gt 0) { Write-Host " and " -NoNewline -ForegroundColor Cyan }
+        $pn = $platformNames[$pi]
+        Write-Host "$($pn.DisplayName) (" -NoNewline -ForegroundColor Cyan
+        Write-Host "$($pn.Key)" -NoNewline -ForegroundColor $pn.Color
+        Write-Host ")" -NoNewline -ForegroundColor Cyan
+    }
+    Write-Host " Session Manager with Win Terminal Forking, S. Rives, v.$Global:ScriptVersion" -ForegroundColor Cyan
     # Build current directory line with debug and permission status
     $debugStatus = if (Get-DebugState) { "ON" } else { "OFF" }
     $permissionStatus = Get-GlobalPermissionStatus
@@ -6762,7 +9343,7 @@ function Show-SessionMenu {
         Write-Host "Windows Terminal will cache images." -NoNewline -ForegroundColor Red
         Write-Host " Background image changes need a Windows Terminal restart." -ForegroundColor DarkGray
     } else {
-        Write-Host "* A newly forked session shows in [brackets] until you /rename it and until Claude CLI caches it." -ForegroundColor DarkGray
+        Write-Host "* A newly forked session shows in [brackets] until you /rename it." -ForegroundColor DarkGray
     }
 
     # Calculate status information
@@ -6789,42 +9370,74 @@ function Show-SessionMenu {
     $claudeCostSuffix = ""
     $codexCostSuffix = ""
     if ($costColumnEnabled) {
+        Open-CostingBatch
         $claudeCost = 0.0
         $codexCost = 0.0
+        [long]$claudeTokenTotal = 0
+        [long]$codexTokenTotal = 0
         foreach ($s in $codexSessions) {
             $ct = if ($s.codexTokensUsed) { $s.codexTokensUsed } else { 0 }
-            if ($ct -gt 0) { $codexCost += [Math]::Round($ct * 9.0 / 1000000, 4) }
+            if ($ct -gt 0) {
+                $codexCost += [Math]::Round($ct * 9.0 / 1000000, 4)
+                $codexTokenTotal += [long]$ct
+                $cTitle = if ($s.customTitle) { $s.customTitle } elseif ($s.trackedName) { $s.trackedName } elseif ($s.source -eq 'codex' -and $s.firstPrompt) { $c = ConvertTo-CamelCaseTitle $s.firstPrompt; if ($c) { $c } else { "(unnamed)" } } else { "(unnamed)" }
+                Save-CostingEntry -SessionId $s.sessionId -Title $cTitle -Source 'codex' -ProjectPath $s.projectPath -Cost ([Math]::Round($ct * 9.0 / 1000000, 4)) -InputTokens $ct -OutputTokens 0 -CacheCreationTokens 0 -CacheReadTokens 0 -TotalTokens $ct -Model $(if ($s.model) { $s.model } else { '' })
+            }
         }
         $claudeTotal = $claudeSessions.Count
         $claudeIdx = 0
         foreach ($s in $claudeSessions) {
             $claudeIdx++
-            Write-Host "`rCalculating costs (to speed up load, turn this off with the `$ option below)... $claudeIdx/$claudeTotal" -NoNewline -ForegroundColor DarkGray
+            Write-Host "`rCalculating costs " -NoNewline -ForegroundColor Yellow
+            Write-Host "(to speed up load, turn this off with the `$ option below)" -NoNewline -ForegroundColor Cyan
+            Write-Host " $claudeIdx/$claudeTotal" -NoNewline -ForegroundColor Yellow
             $usage = Get-SessionTokenUsage -SessionId $s.sessionId -ProjectPath $s.projectPath
-            if ($usage) { $claudeCost += Get-SessionCost -TokenUsage $usage }
+            if ($usage) {
+                $cCost = Get-SessionCost -TokenUsage $usage
+                $claudeCost += $cCost
+                $claudeTokenTotal += [long]$usage.TotalTokens
+                if ($cCost -gt 0) {
+                    $cTitle = if ($s.customTitle) { $s.customTitle } elseif ($s.trackedName) { $s.trackedName } else { "(unnamed)" }
+                    Save-CostingEntry -SessionId $s.sessionId -Title $cTitle -Source 'claude' -ProjectPath $s.projectPath -Cost $cCost -InputTokens $usage.InputTokens -OutputTokens $usage.OutputTokens -CacheCreationTokens $usage.CacheCreationTokens -CacheReadTokens $usage.CacheReadTokens -TotalTokens $usage.TotalTokens -Model $(if ($s.model) { $s.model } else { '' })
+                }
+            }
         }
-        # Clear the progress line
+        # Clear the progress line and save costing batch
+        Write-Host "`rSaving cost snapshots...     $(' ' * 70)`r" -NoNewline -ForegroundColor DarkGray
+        Close-CostingBatch
         Write-Host "`r$(' ' * 100)`r" -NoNewline
-        $claudeCostSuffix = ", Total Cost: $(Format-Cost -Cost $claudeCost)"
-        $codexCostSuffix = ", Total Cost: ~$(Format-Cost -Cost $codexCost)"
+        $claudeCostSuffix = ", Cost: $(Format-Cost -Cost $claudeCost), Tokens: $(Format-TokenCount -Count $claudeTokenTotal)"
+        $codexCostSuffix = ", Cost: ~$(Format-Cost -Cost $codexCost), Tokens: $(Format-TokenCount -Count $codexTokenTotal)"
     }
 
-    # Display session count + cost line — Claude in blue, Codex in magenta
-    if ($claudeNamedCount -eq 0 -and $claudeCount -gt 0) {
-        Write-Host "Claude Unnamed Sessions: $claudeUnnamedCount$claudeCostSuffix" -NoNewline -ForegroundColor Blue
-    } elseif ($claudeUnnamedCount -eq 0 -and $claudeCount -gt 0) {
-        Write-Host "Claude Named Sessions: $claudeNamedCount$claudeCostSuffix" -NoNewline -ForegroundColor Blue
-    } elseif ($claudeCount -gt 0) {
-        Write-Host "Claude Sessions: $claudeCount (Named: $claudeNamedCount, Unnamed: $claudeUnnamedCount)$claudeCostSuffix" -NoNewline -ForegroundColor Blue
+    # Display session count + cost line — auto-generated from PlatformRegistry
+    # Build per-platform session groups with cost suffixes
+    $platformStats = @{
+        claude = @{ Sessions = $claudeSessions; CostSuffix = $claudeCostSuffix }
+        codex  = @{ Sessions = $codexSessions; CostSuffix = $codexCostSuffix }
     }
-
-    if ($codexCount -gt 0) {
-        $codexNamedCount = ($codexSessions | Where-Object { $_.customTitle -and $_.customTitle -ne "" }).Count
-        $codexUnnamedCount = $codexCount - $codexNamedCount
-        if ($claudeCount -gt 0) {
-            Write-Host " | " -NoNewline -ForegroundColor DarkGray
+    $isFirstStat = $true
+    foreach ($pKey in @('claude', 'codex')) {
+        $pSessions = $platformStats[$pKey].Sessions
+        $pCostSuffix = $platformStats[$pKey].CostSuffix
+        $pCount = $pSessions.Count
+        if ($pCount -gt 0) {
+            $pColor = Get-PlatformProperty -Source $pKey -Property 'Color'
+            $pDisplayName = Get-PlatformProperty -Source $pKey -Property 'DisplayName'
+            $pNamedCount = ($pSessions | Where-Object { $_.customTitle -and $_.customTitle -ne "" }).Count
+            $pUnnamedCount = $pCount - $pNamedCount
+            if (-not $isFirstStat) {
+                Write-Host " | " -NoNewline -ForegroundColor DarkGray
+            }
+            if ($pNamedCount -eq 0) {
+                Write-Host "$pDisplayName Unnamed Sessions: $pUnnamedCount$pCostSuffix" -NoNewline -ForegroundColor $pColor
+            } elseif ($pUnnamedCount -eq 0) {
+                Write-Host "$pDisplayName Named Sessions: $pNamedCount$pCostSuffix" -NoNewline -ForegroundColor $pColor
+            } else {
+                Write-Host "$pDisplayName Sessions: $pCount (Named: $pNamedCount, Unnamed: $pUnnamedCount)$pCostSuffix" -NoNewline -ForegroundColor $pColor
+            }
+            $isFirstStat = $false
         }
-        Write-Host "Codex Sessions: $codexCount (Named: $codexNamedCount, Unnamed: $codexUnnamedCount)$codexCostSuffix" -NoNewline -ForegroundColor Magenta
     }
     Write-Host ""  # end the line
     Write-Host ""
@@ -6984,8 +9597,8 @@ function Show-SessionMenu {
         # Background change detection disabled for performance
         # Use Win Terminal Config > Diagnose (I key) to check/regenerate backgrounds manually
 
-        # Source marker: C for Claude, X for Codex
-        $sourceMarker = if ($session.source -eq 'codex') { "X" } else { "C" }
+        # Source marker from PlatformRegistry
+        $sourceMarker = Get-PlatformProperty -Source $session.source -Property 'Key'
 
         $rows += [PSCustomObject]@{
             Title = $title
@@ -7101,8 +9714,8 @@ function Show-SessionMenu {
             # Calculate dynamic path width: boxWidth - borders(4) - fixed columns + Src(4) + spaces(8) = 126
             $pathWidth = [Math]::Max(15, $boxWidth - 126)
 
-            $srcMarker = if ($row.Session.source -eq 'codex') { "X" } else { "C" }
-            $srcColor = if ($row.Session.source -eq 'codex') { "Magenta" } else { "Blue" }
+            $srcMarker = Get-PlatformProperty -Source $row.Session.source -Property 'Key'
+            $srcColor = Get-PlatformProperty -Source $row.Session.source -Property 'Color'
             $title = Truncate-String $row.Title 30
             $cost = Truncate-String $row.Cost 8
             $profile = Truncate-String $row.Profile 20
@@ -7212,7 +9825,7 @@ function Show-SessionMenu {
                 $srcOffset = 0
                 if ($columnConfig.Active) { $srcOffset += 7 }  # 6 width + 1 space
                 $srcWidth = 4
-                $srcColor = if ($row.Session.source -eq 'codex') { "Magenta" } else { "Blue" }
+                $srcColor = Get-PlatformProperty -Source $row.Session.source -Property 'Color'
 
                 # Split: before source, source value, after source
                 $beforeSrc = $truncated.Substring(0, [Math]::Min($srcOffset, $truncated.Length))
@@ -7318,7 +9931,7 @@ function Write-SingleMenuRow {
     # Build row text (same logic as Show-SessionMenu)
     if ($OnlyWithProfiles) {
         $pathWidth = [Math]::Max(15, $BoxWidth - 126)
-        $srcMarker = if ($RowData.Session.source -eq 'codex') { "X" } else { "C" }
+        $srcMarker = Get-PlatformProperty -Source $RowData.Session.source -Property 'Key'
         $title = Truncate-String $RowData.Title 30
         $cost = Truncate-String $RowData.Cost 8
         $profile = Truncate-String $RowData.Profile 20
@@ -7386,7 +9999,7 @@ function Write-SingleMenuRow {
         # Source column is first in WT Config mode (offset 0), or after Active in main menu
         $srcOffset = if ($OnlyWithProfiles) { 0 } else { if ($columnConfig.Active) { 7 } else { 0 } }
         $srcWidth = 4
-        $srcColor = if ($RowData.Session.source -eq 'codex') { "Magenta" } else { "Blue" }
+        $srcColor = Get-PlatformProperty -Source $RowData.Session.source -Property 'Color'
 
         $beforeSrc = $truncated.Substring(0, [Math]::Min($srcOffset, $truncated.Length))
         $srcText = if ($srcOffset -lt $truncated.Length) {
@@ -7542,6 +10155,11 @@ function Get-ArrowKeyNavigation {
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'A' -NoNewline -ForegroundColor Yellow
         Write-Host "bout" -NoNewline -ForegroundColor Gray
+        Write-Host " | [" -NoNewline -ForegroundColor Gray
+        Write-Host '0' -NoNewline -ForegroundColor Yellow
+        Write-Host ".." -NoNewline -ForegroundColor Gray
+        Write-Host '9' -NoNewline -ForegroundColor Yellow
+        Write-Host "] sort" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($TotalPages -gt 1) {
             Write-Host "Pg" -NoNewline -ForegroundColor Yellow
@@ -7598,6 +10216,11 @@ function Get-ArrowKeyNavigation {
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host 'A' -NoNewline -ForegroundColor Yellow
         Write-Host "bout" -NoNewline -ForegroundColor Gray
+        Write-Host " | [" -NoNewline -ForegroundColor Gray
+        Write-Host '0' -NoNewline -ForegroundColor Yellow
+        Write-Host ".." -NoNewline -ForegroundColor Gray
+        Write-Host '9' -NoNewline -ForegroundColor Yellow
+        Write-Host "] sort" -NoNewline -ForegroundColor Gray
         Write-Host " | " -NoNewline -ForegroundColor Gray
         if ($TotalPages -gt 1) {
             Write-Host "Pg" -NoNewline -ForegroundColor Yellow
@@ -8097,14 +10720,14 @@ function Test-SessionFileValid {
 
         # Check if file exists
         if (-not (Test-Path $sessionFile)) {
-            Write-ErrorLog "Session file not found: $sessionFile"
+            Write-DebugInfo "Session file not found: $sessionFile" -Color DarkGray
             return $false
         }
 
         # Check if file has content
         $fileInfo = Get-Item $sessionFile
         if ($fileInfo.Length -eq 0) {
-            Write-ErrorLog "Session file is empty: $sessionFile"
+            Write-DebugInfo "Session file is empty: $sessionFile" -Color DarkGray
             return $false
         }
 
@@ -8137,14 +10760,39 @@ function Start-NewSession {
     Write-Host ""
 
     # If Codex CLI is installed, prompt for CLI choice
-    $useCodex = $false
-    if (Test-CodexCLI) {
+    $selectedPlatform = 'claude'  # default
+    $installedPlatforms = Get-InstalledPlatforms
+    if ($installedPlatforms.Count -gt 1) {
         Write-ColorText "Which CLI?" -Color Yellow
         Write-Host ""
         Write-Host "" -NoNewline
-        Write-Host "C" -NoNewline -ForegroundColor Yellow
-        Write-Host "laude | code" -NoNewline -ForegroundColor Gray
-        Write-Host "X" -NoNewline -ForegroundColor Yellow
+
+        # Build key map and render prompt from registry
+        $keyMap = @{}
+        $first = $true
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($installedPlatforms.ContainsKey($entry.Key)) {
+                if (-not $first) {
+                    Write-Host " | " -NoNewline -ForegroundColor Gray
+                }
+                $p = $entry.Value
+                # Find key position in display name and render with highlight
+                $displayName = $p.DisplayName
+                $keyChar = $p.Key
+                $keyPos = $displayName.ToUpper().IndexOf($keyChar)
+                if ($keyPos -ge 0) {
+                    if ($keyPos -gt 0) { Write-Host $displayName.Substring(0, $keyPos) -NoNewline -ForegroundColor Gray }
+                    Write-Host $displayName[$keyPos] -NoNewline -ForegroundColor Yellow
+                    if ($keyPos -lt $displayName.Length - 1) { Write-Host $displayName.Substring($keyPos + 1) -NoNewline -ForegroundColor Gray }
+                } else {
+                    # Key not in name, show as prefix
+                    Write-Host $keyChar -NoNewline -ForegroundColor Yellow
+                    Write-Host ":$displayName" -NoNewline -ForegroundColor Gray
+                }
+                $keyMap[$keyChar] = $entry.Key
+                $first = $false
+            }
+        }
         Write-Host " | " -NoNewline -ForegroundColor Gray
         Write-Host "A" -NoNewline -ForegroundColor Yellow
         Write-Host "bort" -NoNewline -ForegroundColor Gray
@@ -8154,14 +10802,11 @@ function Start-NewSession {
             $cliChoice = $key.Character.ToString().ToUpper()
 
             if ($key.VirtualKeyCode -eq 27) { $cliChoice = 'A' }
-            if ($key.VirtualKeyCode -eq 13) { $cliChoice = 'C' }
+            if ($key.VirtualKeyCode -eq 13) { $cliChoice = (Get-PlatformProperty -Source 'claude' -Property 'Key') }
 
-            if ($cliChoice -eq 'C') {
+            if ($keyMap.ContainsKey($cliChoice)) {
                 Write-Host ""
-                break
-            } elseif ($cliChoice -eq 'X') {
-                Write-Host ""
-                $useCodex = $true
+                $selectedPlatform = $keyMap[$cliChoice]
                 break
             } elseif ($cliChoice -eq 'A') {
                 Write-Host ""
@@ -8172,11 +10817,9 @@ function Start-NewSession {
         Write-Host ""
     }
 
-    if ($useCodex) {
-        Write-ColorText "Starting new Codex session..." -Color Cyan
-    } else {
-        Write-ColorText "Starting new Claude session..." -Color Cyan
-    }
+    $useCodex = ($selectedPlatform -eq 'codex')
+    $platformEntry = Get-PlatformEntry -Source $selectedPlatform
+    Write-ColorText "Starting new $($platformEntry.DisplayName) session..." -Color Cyan
     Write-Host ""
 
     # Prompt for directory choice
@@ -8268,7 +10911,8 @@ function Start-NewSession {
         return
     }
 
-    # Codex new session: launch codex directly (skip model choice, WT profiles, etc.)
+    # Codex new session: skip model choice and trusted session (Claude-specific),
+    # but still create WT profile + background image when a name is provided.
     if ($useCodex) {
         Write-DebugInfo "=== Start-NewSession (Codex) ===" -Color Cyan
         Write-DebugInfo "  Directory: $targetDirectory" -Color DarkGray
@@ -8280,13 +10924,79 @@ function Start-NewSession {
             return
         }
         Write-DebugInfo "  Codex CLI: $codexPath" -Color Green
-        Write-Host ""
-        Write-ColorText "Launching Codex..." -Color Green
-        Write-Host ""
-        Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory
-        $Global:LastClaudeCommand = if ($sessionName) { "codex (new session '$sessionName' in $targetDirectory)" } else { "codex (new session in $targetDirectory)" }
-        $Global:LastClaudeError = $null
-        return
+        $codexCLI = Get-PlatformProperty -Source 'codex' -Property 'CLIName'
+
+        if ([string]::IsNullOrWhiteSpace($sessionName)) {
+            # No name provided - launch with default profile (no background image)
+            Write-Host ""
+            Write-ColorText "Launching Codex with default profile..." -Color Green
+            Write-Host ""
+            Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory
+            $Global:LastClaudeCommand = "$codexCLI (new session in $targetDirectory)"
+            $Global:LastClaudeError = $null
+            return
+        }
+
+        # Name provided - create WT profile with background image
+        try {
+            # 1. Check for background image conflict and resolve
+            $resolution = Resolve-BackgroundImageConflict -SessionName $sessionName
+
+            if ($resolution.action -eq 'abort') {
+                Write-Host ""
+                Write-ColorText "New session aborted." -Color Yellow
+                return
+            }
+
+            $finalSessionName = $resolution.name
+
+            # 2. Generate or use background image
+            if ($resolution.action -eq 'use') {
+                $bgPath = $resolution.path
+                Write-ColorText "Using existing background image." -Color Green
+            } else {
+                Write-Host ""
+                Write-ColorText "Generating background image..." -Color Cyan
+                $gitBranch = Get-GitBranch -Path $targetDirectory
+                $bgPath = New-SessionBackgroundImage -NewName $finalSessionName -OldName "$env:COMPUTERNAME`:$env:USERNAME" -GitBranch $gitBranch -Model "codex" -ProjectPath $targetDirectory -Source 'codex'
+            }
+
+            # 3. Create Windows Terminal profile
+            Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
+            $wtProfileName = "$(Get-PlatformProperty -Source 'codex' -Property 'WTPrefix')$finalSessionName"
+            $profile = Add-WTProfile -Name $wtProfileName -StartingDirectory $targetDirectory -BackgroundImage $bgPath
+            $actualProfileName = $profile.name
+
+            # 4. Launch with the new profile
+            Write-Host ""
+            Write-ColorText "Launching Codex with profile: $actualProfileName" -Color Green
+            Write-Host ""
+            $profileGuid = $profile.guid
+            Start-WTClaude -ClaudePath $codexPath -ProfileGuid $profileGuid -WorkingDirectory $targetDirectory
+
+            $Global:LastClaudeCommand = "$codexCLI (new session '$finalSessionName' in $targetDirectory)"
+            $Global:LastClaudeError = $null
+
+            Write-ColorText "New Codex session launched successfully!" -Color Green
+            Write-Host ""
+            Write-Host "Profile: $actualProfileName"
+            Write-Host "Directory: $targetDirectory"
+            Write-Host ""
+
+            return
+
+        } catch {
+            Write-ColorText "Failed to create Codex session profile: $_" -Color Red
+            Write-DebugInfo "Codex new session profile error: $_" -Color Red
+            # Fallback: launch without profile
+            Write-Host ""
+            Write-ColorText "Launching Codex without profile..." -Color Yellow
+            Write-Host ""
+            Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory
+            $Global:LastClaudeCommand = "$codexCLI (new session in $targetDirectory)"
+            $Global:LastClaudeError = $null
+            return
+        }
     }
 
     if ([string]::IsNullOrWhiteSpace($sessionName)) {
@@ -8362,7 +11072,7 @@ function Start-NewSession {
 
         # 4. Create Windows Terminal profile
         Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
-        $wtProfileName = "Claude-$finalSessionName"
+        $wtProfileName = "$(Get-PlatformProperty -Source 'claude' -Property 'WTPrefix')$finalSessionName"
         $profile = Add-WTProfile -Name $wtProfileName -StartingDirectory $targetDirectory -BackgroundImage $bgPath
 
         # Use the actual profile name that was created (may have integer appended if duplicate)
@@ -8474,7 +11184,7 @@ function Start-ContinueSession {
         Write-Host ""
 
         # Check for existing WT profile
-        $wtProfileName = "Codex-$sessionTitle"
+        $wtProfileName = "$(Get-PlatformProperty -Source 'codex' -Property 'WTPrefix')$sessionTitle"
         Write-DebugInfo "  Expected WT Profile Name: $wtProfileName" -Color DarkGray
         $existingProfile = $null
 
@@ -8498,7 +11208,7 @@ function Start-ContinueSession {
             Write-ColorText "Creating background image..." -Color Cyan
             $gitBranch = if ($Session.codexGitBranch) { $Session.codexGitBranch } else { Get-GitBranch -Path $Session.projectPath }
             $modelName = if ($Session.codexModel) { $Session.codexModel } else { "codex" }
-            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionTitle -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionTitle -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath -Source 'codex'
             Write-DebugInfo "  Background image created: $bgPath" -Color Green
         } else {
             Write-DebugInfo "  Background image already exists: $bgPath" -Color Green
@@ -8524,7 +11234,8 @@ function Start-ContinueSession {
 
             $profileGuid = $existingProfile.guid
             Write-DebugInfo "  Launching with existing profile GUID: $profileGuid" -Color Green
-            Start-WTClaude -ClaudePath $codexPath -Arguments "resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+            $codexResumeArgs = (Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId
+            Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
         } else {
             # Create new WT profile with background
             Write-DebugInfo "  Creating new WT profile: $wtProfileName" -Color Cyan
@@ -8533,14 +11244,16 @@ function Start-ContinueSession {
                 $profile = Add-WTProfile -Name $wtProfileName -StartingDirectory $Session.projectPath -BackgroundImage $bgPath
                 $profileGuid = $profile.guid
                 Write-ColorText "Profile created: $($profile.name)" -Color Green
-                Start-WTClaude -ClaudePath $codexPath -Arguments "resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+                $codexResumeArgs = (Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId
+                Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
             } catch {
                 Write-DebugInfo "  Failed to create profile, launching with default: $_" -Color Yellow
-                Start-WTClaude -ClaudePath $codexPath -Arguments "resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                $codexResumeArgs = (Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId
+                Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -WorkingDirectory $Session.projectPath
             }
         }
 
-        $Global:LastClaudeCommand = "codex resume $($Session.sessionId)"
+        $Global:LastClaudeCommand = "$(Get-PlatformProperty -Source 'codex' -Property 'CLIName') $((Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId)"
         $Global:LastClaudeError = $null
         return
     }
@@ -8624,7 +11337,7 @@ function Start-ContinueSession {
         Write-Host ""
 
         # Check if Windows Terminal profile already exists
-        $wtProfileName = "Claude-$sessionTitle"
+        $wtProfileName = "$(Get-PlatformProperty -Source 'claude' -Property 'WTPrefix')$sessionTitle"
         Write-DebugInfo "  Expected WT Profile Name: $wtProfileName"
         $existingProfile = $null
 
@@ -8883,7 +11596,7 @@ function Start-ContinueSession {
             $finalSafeName = $resolution.name
 
             # Create Windows Terminal profile with background image
-            $wtProfileName = "Claude-$finalSafeName"
+            $wtProfileName = "$(Get-PlatformProperty -Source 'claude' -Property 'WTPrefix')$finalSafeName"
             Write-DebugInfo "  WT Profile Name: $wtProfileName"
             Write-Host ""
             Write-ColorText "Creating Windows Terminal profile: $wtProfileName" -Color Cyan
@@ -10469,10 +13182,10 @@ function Start-ForkSession {
         Write-ColorText "Generating background image..." -Color Cyan
         $gitBranch = if ($Session.codexGitBranch) { $Session.codexGitBranch } else { Get-GitBranch -Path $Session.projectPath }
         $modelName = if ($Session.codexModel) { $Session.codexModel } else { "codex" }
-        $bgPath = New-SessionBackgroundImage -NewName $newName -OldName $oldName -IsFork -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
+        $bgPath = New-SessionBackgroundImage -NewName $newName -OldName $oldName -IsFork -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath -Source 'codex'
 
         # Create WT profile
-        $wtProfileName = "Codex-$newName"
+        $wtProfileName = "$(Get-PlatformProperty -Source 'codex' -Property 'WTPrefix')$newName"
         Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
         try {
             $profile = Add-WTProfile -Name $wtProfileName -StartingDirectory $Session.projectPath -BackgroundImage $bgPath
@@ -10480,8 +13193,9 @@ function Start-ForkSession {
             Write-ColorText "Profile created: $($profile.name)" -Color Green
             Write-Host ""
 
-            Write-DebugInfo "  Launching: codex fork $($Session.sessionId) with profile $($profile.name)" -Color Green
-            Start-WTClaude -ClaudePath $codexPath -Arguments "fork $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+            $codexForkArgs = (Get-PlatformProperty -Source 'codex' -Property 'ForkCmd') -f $Session.sessionId
+            Write-DebugInfo "  Launching: codex $codexForkArgs with profile $($profile.name)" -Color Green
+            Start-WTClaude -ClaudePath $codexPath -Arguments $codexForkArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
 
             Write-ColorText "Forked Codex session launched!" -Color Green
             Write-Host ""
@@ -10491,10 +13205,11 @@ function Start-ForkSession {
             Write-Host ""
         } catch {
             Write-DebugInfo "  Failed to create profile, launching with default: $_" -Color Yellow
-            Start-WTClaude -ClaudePath $codexPath -Arguments "fork $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+            $codexForkArgs = (Get-PlatformProperty -Source 'codex' -Property 'ForkCmd') -f $Session.sessionId
+            Start-WTClaude -ClaudePath $codexPath -Arguments $codexForkArgs -WorkingDirectory $Session.projectPath
         }
 
-        $Global:LastClaudeCommand = "codex fork $($Session.sessionId)"
+        $Global:LastClaudeCommand = "$(Get-PlatformProperty -Source 'codex' -Property 'CLIName') $((Get-PlatformProperty -Source 'codex' -Property 'ForkCmd') -f $Session.sessionId)"
         $Global:LastClaudeError = $null
         return
     }
@@ -10609,7 +13324,7 @@ function Start-ForkSession {
 
         # 6. Create Windows Terminal profile
         Write-ColorText "Creating Windows Terminal profile..." -Color Cyan
-        $profile = Add-WTProfile -Name "Claude-$finalNewName" -StartingDirectory $Session.projectPath -BackgroundImage $bgPath
+        $profile = Add-WTProfile -Name "$(Get-PlatformProperty -Source 'claude' -Property 'WTPrefix')$finalNewName" -StartingDirectory $Session.projectPath -BackgroundImage $bgPath
 
         # Use the actual profile name that was created (may have integer appended if duplicate)
         $actualProfileName = $profile.name
@@ -10724,8 +13439,10 @@ function Normalize-WTBackgroundPaths {
         for ($i = 0; $i -lt $settings.profiles.list.Count; $i++) {
             $profile = $settings.profiles.list[$i]
 
-            # Only check Claude-* profiles
-            if ($profile.name -and $profile.name -like "Claude-*" -and $profile.backgroundImage) {
+            # Only check managed profiles (all platform prefixes)
+            $allPrefixes = Get-AllWTProfilePrefixes
+            $isManagedProfile = $profile.name -and $profile.backgroundImage -and ($allPrefixes | Where-Object { $profile.name -like "$_*" }).Count -gt 0
+            if ($isManagedProfile) {
                 $bgPath = $profile.backgroundImage
 
                 # Check if path contains forward slashes
@@ -10776,7 +13493,7 @@ function Test-JsonStructure {
 
     foreach ($prop in $RequiredProperties) {
         if (-not ($JsonObject.PSObject.Properties.Name -contains $prop)) {
-            Write-ErrorLog "JSON validation failed: missing required property '$prop'"
+            Write-DebugInfo "JSON validation: missing required property '$prop'" -Color DarkGray
             return $false
         }
     }
@@ -10898,7 +13615,8 @@ function Add-WTProfile {
     } catch {
         Write-ColorText "Failed to add profile, restoring from backup..." -Color Red
         if (Test-Path $backupPath) {
-            if (Test-Json -Path $backupPath) {
+            $backupValid = try { $null = Get-Content $backupPath -Raw | ConvertFrom-Json; $true } catch { $false }
+            if ($backupValid) {
                 Copy-Item $backupPath $Global:WTSettingsPath -Force
                 Write-ColorText "Backup restored successfully" -Color Green
             } else {
@@ -10994,7 +13712,8 @@ function Remove-WTProfile {
     } catch {
         Write-ColorText "Failed to remove profile, restoring from backup..." -Color Red
         if (Test-Path $backupPath) {
-            if (Test-Json -Path $backupPath) {
+            $backupValid = try { $null = Get-Content $backupPath -Raw | ConvertFrom-Json; $true } catch { $false }
+            if ($backupValid) {
                 Copy-Item $backupPath $Global:WTSettingsPath -Force
                 Write-ColorText "Backup restored successfully" -Color Green
             } else {
@@ -11098,7 +13817,7 @@ function Get-GitRepoName {
     .PARAMETER Path
         The directory path to check for git repo
     .RETURNS
-        The repository name (e.g., "WinClaudeCodeForker") or empty string if not a git repo
+        The repository name (e.g., "SessionForge") or empty string if not a git repo
     #>
     param([string]$Path)
 
@@ -11318,6 +14037,8 @@ function New-UniformBackgroundImage {
         Line 6: Directory path (required)
     .PARAMETER OutputPath
         Full path where the PNG should be saved (required)
+    .PARAMETER Source
+        Platform source: 'claude' or 'codex' (default: 'claude'). Controls the Platform line color.
     #>
     param(
         [Parameter(Mandatory=$true)]
@@ -11337,6 +14058,8 @@ function New-UniformBackgroundImage {
 
         [Parameter(Mandatory=$true)]
         [string]$OutputPath,
+
+        [string]$Source = 'claude',
 
         [switch]$Silent
     )
@@ -11412,8 +14135,18 @@ function New-UniformBackgroundImage {
             Write-DebugInfo "  Skipping Line 5 (no Model)" -Color Yellow
         }
 
-        # Line 6: Directory Path (always shown)
-        Write-DebugInfo "  Drawing Line 6: $DirectoryPath" -Color Green
+        # Line 6: Platform (always shown, in canonical platform color)
+        $platform = Get-PlatformEntry -Source $Source
+        $platformText = "Platform: $($platform.DisplayName)"
+        $rgb = $platform.ColorRGB
+        $platformColor = [System.Drawing.Color]::FromArgb(255, $rgb[0], $rgb[1], $rgb[2])
+        $platformBrush = New-Object System.Drawing.SolidBrush($platformColor)
+        Write-DebugInfo "  Drawing Line 6: $platformText (color: $($platform.Color))" -Color Green
+        $graphics.DrawString($platformText, $fontSmall, $platformBrush, $xPosition, $yPosition)
+        $yPosition += $lineSpacing
+
+        # Line 7: Directory Path (always shown)
+        Write-DebugInfo "  Drawing Line 7: $DirectoryPath" -Color Green
         $graphics.DrawString($DirectoryPath, $fontSmall, $textBrush, $xPosition, $yPosition)
 
         # Ensure output directory exists
@@ -11440,6 +14173,7 @@ function New-UniformBackgroundImage {
         if ($Model) {
             $txtContent += "Model: $Model"
         }
+        $txtContent += "Platform: $((Get-PlatformEntry -Source $Source).DisplayName)"
         $txtContent += "Directory: $DirectoryPath"
         $txtContent += ""
         $txtContent += "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -11453,6 +14187,7 @@ function New-UniformBackgroundImage {
         $fontBig.Dispose()
         $fontSmall.Dispose()
         $textBrush.Dispose()
+        $platformBrush.Dispose()
 
         if (-not $Silent) {
             Write-ColorText "Background image created: $OutputPath" -Color Green
@@ -11482,6 +14217,8 @@ function New-SessionBackgroundImage {
         Optional model name to display
     .PARAMETER ProjectPath
         The project directory path
+    .PARAMETER Source
+        Platform source: 'claude' or 'codex' (default: 'claude')
     #>
     param(
         [string]$NewName,
@@ -11490,6 +14227,7 @@ function New-SessionBackgroundImage {
         [string]$GitBranch = $null,
         [string]$Model = $null,
         [string]$ProjectPath = "",
+        [string]$Source = 'claude',
         [switch]$Silent
     )
 
@@ -11501,6 +14239,7 @@ function New-SessionBackgroundImage {
         Write-DebugInfo "  GitBranch: $GitBranch"
         Write-DebugInfo "  Model: $Model"
         Write-DebugInfo "  ProjectPath: $ProjectPath"
+        Write-DebugInfo "  Source: $Source"
 
         # Prepare output path
         $outputDir = Join-Path $Global:MenuPath $NewName
@@ -11519,6 +14258,7 @@ function New-SessionBackgroundImage {
             -Model $Model `
             -DirectoryPath $ProjectPath `
             -OutputPath $outputPath `
+            -Source $Source `
             -Silent:$Silent
 
         # Save tracking
@@ -11548,12 +14288,15 @@ function New-ContinueSessionBackgroundImage {
         Optional model name to display
     .PARAMETER ProjectPath
         The project directory path
+    .PARAMETER Source
+        Platform source: 'claude' or 'codex' (default: 'claude')
     #>
     param(
         [string]$SessionName,
         [string]$GitBranch = $null,
         [string]$Model = $null,
         [string]$ProjectPath = "",
+        [string]$Source = 'claude',
         [switch]$Silent
     )
 
@@ -11563,6 +14306,7 @@ function New-ContinueSessionBackgroundImage {
         Write-DebugInfo "  GitBranch: $GitBranch"
         Write-DebugInfo "  Model: $Model"
         Write-DebugInfo "  ProjectPath: $ProjectPath"
+        Write-DebugInfo "  Source: $Source"
 
         # Prepare output path
         $outputDir = Join-Path $Global:MenuPath $SessionName
@@ -11580,6 +14324,7 @@ function New-ContinueSessionBackgroundImage {
             -Model $Model `
             -DirectoryPath $ProjectPath `
             -OutputPath $outputPath `
+            -Source $Source `
             -Silent:$Silent
 
         # Save tracking
@@ -11604,8 +14349,10 @@ function Update-SessionBackgroundImage {
     )
 
     try {
-        # Extract session name from Windows Terminal profile name (remove "Claude-" prefix)
-        $sessionName = $WTProfileName -replace '^Claude-', ''
+        # Extract session name from Windows Terminal profile name (remove any registered platform prefix)
+        $prefixPattern = (Get-AllWTProfilePrefixes | ForEach-Object { [regex]::Escape($_) }) -join '|'
+        $sessionName = $WTProfileName -replace "^($prefixPattern)", ''
+        $sessionSource = if ($Session.source) { $Session.source } else { 'claude' }
 
         # Check if this is a forked session by looking for forkedFrom info
         $forkInfo = Get-ForkedFromInfo -SessionId $Session.sessionId
@@ -11629,7 +14376,7 @@ function Update-SessionBackgroundImage {
             # Get model from actual session file (not mapping - mapping may be stale/empty)
             $modelName = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
 
-            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
+            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath -Source $sessionSource
         } else {
             # Not a fork - generate simple continue-style background
             Write-ColorText "Generating session background..." -Color Cyan
@@ -11640,7 +14387,7 @@ function Update-SessionBackgroundImage {
             # Get model from actual session file (not mapping - mapping may be stale/empty)
             $modelName = Get-ModelFromSession -SessionId $Session.sessionId -ProjectPath $Session.projectPath
 
-            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $gitBranch -Model $modelName -ProjectPath $Session.projectPath -Source $sessionSource
         }
 
         # Update Windows Terminal profile with new image path
@@ -11695,7 +14442,7 @@ function Get-ModelFromBackgroundTxt {
 
     try {
         # Extract session name from WT profile name
-        $sessionName = $WTProfileName -replace '^Claude-', ''
+        $sessionName = Get-SessionNameFromWTProfile $WTProfileName
 
         # Build path to background.txt
         $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
@@ -11740,7 +14487,7 @@ function Get-BranchFromBackgroundTxt {
 
     try {
         # Extract session name from WT profile name
-        $sessionName = $WTProfileName -replace '^Claude-', ''
+        $sessionName = Get-SessionNameFromWTProfile $WTProfileName
 
         # Build path to background.txt
         $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
@@ -11784,7 +14531,7 @@ function Get-AllValuesFromBackgroundTxt {
 
     try {
         # Extract session name from WT profile name
-        $sessionName = $WTProfileName -replace '^Claude-', ''
+        $sessionName = Get-SessionNameFromWTProfile $WTProfileName
 
         # Build path to background.txt
         $txtPath = Join-Path $Global:MenuPath "$sessionName\background.txt"
@@ -11853,8 +14600,9 @@ function Show-BackgroundDiagnostics {
     Write-ColorText "========================================" -Color Cyan
     Write-Host ""
 
-    # Extract session name from WT profile
-    $sessionName = $WTProfileName -replace '^Claude-', ''
+    # Extract session name from WT profile (strip any platform prefix)
+    $prefixPattern = (Get-AllWTProfilePrefixes | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $sessionName = $WTProfileName -replace "^($prefixPattern)", ''
 
     # === SECTION 1: Session Data ===
     Write-ColorText "--- SESSION DATA ---" -Color Yellow
@@ -12120,7 +14868,7 @@ function Update-BackgroundIfChanged {
 
     try {
         # Extract session name from WT profile name
-        $sessionName = $WTProfileName -replace '^Claude-', ''
+        $sessionName = Get-SessionNameFromWTProfile $WTProfileName
 
         Write-DebugInfo "  Checking background for: $sessionName" -Color Cyan
 
@@ -12214,12 +14962,13 @@ function Update-BackgroundIfChanged {
                           -GitBranch $currentBranch
 
         # Regenerate background image (silent - we'll report updates after menu renders)
+        $sessionSource = if ($Session.source) { $Session.source } else { 'claude' }
         if ($forkInfo -and $forkInfo.ForkedFrom) {
             # Fork session
-            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath -Silent
+            $bgPath = New-SessionBackgroundImage -NewName $sessionName -OldName $parentName -IsFork -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath -Source $sessionSource -Silent
         } else {
             # Non-fork session
-            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath -Silent
+            $bgPath = New-ContinueSessionBackgroundImage -SessionName $sessionName -GitBranch $currentBranch -Model $CurrentModel -ProjectPath $Session.projectPath -Source $sessionSource -Silent
         }
 
         # Update Windows Terminal profile with new image path
@@ -13089,12 +15838,14 @@ function Rename-ClaudeSession {
             # Generate new background image
             Write-ColorText "  Generating new background image..." -Color Cyan
             Write-DebugInfo "    Creating background for: $safeName"
-            $newBackgroundPath = New-SessionBackgroundImage -NewName $safeName -ProjectPath $projectPath -GitBranch $gitBranch -Model $modelName
+            $sessionSource = if ($Session.source) { $Session.source } else { 'claude' }
+            $newBackgroundPath = New-SessionBackgroundImage -NewName $safeName -ProjectPath $projectPath -GitBranch $gitBranch -Model $modelName -Source $sessionSource
             Write-DebugInfo "    New background path: $newBackgroundPath" -Color Green
 
             if ($newBackgroundPath) {
                 # Create new Windows Terminal profile
-                $newWTProfile = "Claude-$safeName"
+                $wtPrefix = Get-PlatformProperty -Source $sessionSource -Property 'WTPrefix'
+                $newWTProfile = "$wtPrefix$safeName"
                 Write-DebugInfo "    Creating new WT profile: $newWTProfile"
 
                 try {
@@ -13309,7 +16060,7 @@ function Remove-Session {
                     Write-ColorText "    Windows Terminal profile deleted" -Color Green
 
                     # Delete background image directory
-                    $sessionName = $WTProfileName -replace '^Claude-', ''
+                    $sessionName = Get-SessionNameFromWTProfile $WTProfileName
                     $bgDir = Join-Path $Global:MenuPath $sessionName
                     if (Test-Path $bgDir) {
                         Remove-Item $bgDir -Recurse -Force
@@ -13469,7 +16220,7 @@ function Get-OutOfSyncBackgrounds {
 
         $changes = @()
         $wtProfileName = $mappingEntry.wtProfileName
-        $sessionName = $wtProfileName -replace '^Claude-', ''
+        $sessionName = Get-SessionNameFromWTProfile $wtProfileName
         Write-DebugInfo "  Checking: $sessionName" -Color Yellow
 
         # Check if background image exists
@@ -13557,7 +16308,7 @@ function Get-SessionsWithMissingTxtFiles {
         }
 
         $wtProfileName = $mappingEntry.wtProfileName
-        $sessionName = $wtProfileName -replace '^Claude-', ''
+        $sessionName = Get-SessionNameFromWTProfile $wtProfileName
         Write-DebugInfo "  Checking session: $sessionName (WT: $wtProfileName)" -Color Yellow
 
         # Check if background image exists but txt doesn't
@@ -13861,10 +16612,12 @@ function Show-RegenerateBackgroundsMenu {
                 }
 
                 # Regenerate fork-style background
-                $bgPath = New-SessionBackgroundImage -NewName $item.SessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $model -ProjectPath $item.Session.projectPath
+                $itemSource = if ($item.Session.source) { $item.Session.source } else { 'claude' }
+                $bgPath = New-SessionBackgroundImage -NewName $item.SessionName -OldName $parentName -IsFork -GitBranch $gitBranch -Model $model -ProjectPath $item.Session.projectPath -Source $itemSource
             } else {
                 # Non-fork session - regenerate continue-style background
-                $bgPath = New-ContinueSessionBackgroundImage -SessionName $item.SessionName -GitBranch $gitBranch -Model $model -ProjectPath $item.Session.projectPath
+                $itemSource = if ($item.Session.source) { $item.Session.source } else { 'claude' }
+                $bgPath = New-ContinueSessionBackgroundImage -SessionName $item.SessionName -GitBranch $gitBranch -Model $model -ProjectPath $item.Session.projectPath -Source $itemSource
             }
 
             # Update Windows Terminal profile with new image path
@@ -14211,7 +16964,7 @@ function Start-MainMenu {
         }
 
         # Show menu and get display rows
-        $menuTitle = if ($deleteMode) { "WIN TERMINAL CONFIG" } else { "MAIN MENU" }
+        $menuTitle = if ($deleteMode) { "WIN TERMINAL CONFIG" } else { "S E S S I O N   F O R G E" }
         # In deleteMode, only show profiles unless showAllInDeleteMode is true
         $onlyWithProfiles = $deleteMode -and -not $showAllInDeleteMode
 
@@ -14347,7 +17100,8 @@ function Start-MainMenu {
             'NewSession' {
                 # New session
                 Start-NewSession
-                # If we get here, new session was aborted or completed, go back to menu
+                # Refresh session list so the new session appears immediately
+                $reloadSessions = $true
                 continue
             }
 
@@ -14435,7 +17189,9 @@ function Start-MainMenu {
                             $costIdx = 0
                             foreach ($s in $claudeOnly) {
                                 $costIdx++
-                                Write-Host "`rCalculating costs (to speed up load, turn this off with the `$ option below)... $costIdx/$costTotal" -NoNewline -ForegroundColor DarkGray
+                                Write-Host "`rCalculating costs " -NoNewline -ForegroundColor Yellow
+                                Write-Host "(to speed up load, turn this off with the `$ option below)" -NoNewline -ForegroundColor Cyan
+                                Write-Host " $costIdx/$costTotal" -NoNewline -ForegroundColor Yellow
                                 $null = Get-SessionTokenUsage -SessionId $s.sessionId -ProjectPath $s.projectPath
                             }
                             Write-Host "`r$(' ' * 100)`r" -NoNewline
@@ -14562,7 +17318,7 @@ function Start-MainMenu {
                             }
                             'regenerate' {
                                 # Show regenerate submenu
-                                $sessionName = $wtProfileName -replace '^Claude-', ''
+                                $sessionName = Get-SessionNameFromWTProfile $wtProfileName
                                 $regenerateChoice = Get-RegenerateImageChoice -SessionName $sessionName
 
                                 switch ($regenerateChoice) {
@@ -14845,7 +17601,7 @@ function Start-MainMenu {
                             $finalProfileName = $resolution.name
 
                             # Create Windows Terminal profile with background image
-                            $wtProfileName = "Claude-$finalProfileName"
+                            $wtProfileName = "$(Get-PlatformProperty -Source 'claude' -Property 'WTPrefix')$finalProfileName"
                             Write-Host ""
                             Write-ColorText "Creating Windows Terminal profile: $wtProfileName" -Color Cyan
 
@@ -14863,7 +17619,8 @@ function Start-MainMenu {
                                 $sessionEntry = Get-SessionMappingEntry -SessionId $session.sessionId
                                 $modelName = if ($sessionEntry -and $sessionEntry.model) { $sessionEntry.model } else { $null }
 
-                                $bgImagePath = New-SessionBackgroundImage -NewName $finalProfileName -OldName "" -GitBranch $gitBranch -Model $modelName -ProjectPath $session.projectPath
+                                $bulkSource = if ($session.source) { $session.source } else { 'claude' }
+                                $bgImagePath = New-SessionBackgroundImage -NewName $finalProfileName -OldName "" -GitBranch $gitBranch -Model $modelName -ProjectPath $session.projectPath -Source $bulkSource
                             }
 
                             if ($bgImagePath) {

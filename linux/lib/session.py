@@ -1,5 +1,5 @@
 """
-Session discovery for Claude Code Session Manager (Linux).
+Session discovery for SessionForge (Linux).
 Scans ~/.claude/projects/ to find all Claude sessions.
 Also discovers Codex sessions from SQLite database.
 """
@@ -369,7 +369,8 @@ def get_session_model(session: Session) -> str:
     For Codex sessions, returns the stored model directly.
     """
     if session.source == 'codex':
-        return session.model or 'codex'
+        from .registry import get_platform
+        return session.model or get_platform('codex')['cli_name']
 
     # Use stored session file path if available, otherwise reconstruct
     if session._session_file and session._session_file.exists():
@@ -475,9 +476,9 @@ def get_session_cost(session: Session) -> float:
     For Codex sessions, uses aggregate tokens_used with a blended rate estimate.
 
     Pricing (per 1M tokens):
-    - Claude Sonnet: $3 input, $15 output, $0.30 cache write, $3.75 cache read
-    - Claude Opus: $15 input, $75 output, $1.875 cache write, $18.75 cache read
-    - Claude Haiku: $0.25 input, $1.25 output, $0.03 cache write, $0.30 cache read
+    - Claude Sonnet: $3 input, $15 output, $3.75 cache write, $0.30 cache read
+    - Claude Opus: $15 input, $75 output, $18.75 cache write, $1.50 cache read
+    - Claude Haiku: $0.25 input, $1.25 output, $0.3125 cache write, $0.025 cache read
     """
     if session.source == 'codex':
         if session.codex_tokens_used > 0:
@@ -564,22 +565,22 @@ def get_session_cost(session: Session) -> float:
         cost = (
             (total_input / 1_000_000) * 15.00 +
             (total_output / 1_000_000) * 75.00 +
-            (total_cache_creation / 1_000_000) * 1.875 +
-            (total_cache_read / 1_000_000) * 18.75
+            (total_cache_creation / 1_000_000) * 18.75 +
+            (total_cache_read / 1_000_000) * 1.50
         )
     elif model == 'haiku':
         cost = (
             (total_input / 1_000_000) * 0.25 +
             (total_output / 1_000_000) * 1.25 +
-            (total_cache_creation / 1_000_000) * 0.03 +
-            (total_cache_read / 1_000_000) * 0.30
+            (total_cache_creation / 1_000_000) * 0.3125 +
+            (total_cache_read / 1_000_000) * 0.025
         )
     else:  # sonnet
         cost = (
             (total_input / 1_000_000) * 3.00 +
             (total_output / 1_000_000) * 15.00 +
-            (total_cache_creation / 1_000_000) * 0.30 +
-            (total_cache_read / 1_000_000) * 3.75
+            (total_cache_creation / 1_000_000) * 3.75 +
+            (total_cache_read / 1_000_000) * 0.30
         )
 
     log_debug(f"get_session_cost: Calculated cost ${cost:.4f} for model {model}")

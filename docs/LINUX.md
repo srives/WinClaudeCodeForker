@@ -1,4 +1,4 @@
-# Codex and Claude Code Session Manager - Linux
+# SessionForge (sf) - Linux
 
 A terminal-based session manager for Claude Code CLI and OpenAI Codex CLI on Linux, with support for Kitty and Konsole terminal emulators.
 
@@ -115,7 +115,7 @@ Options:
 The session manager presents an interactive menu:
 
 ```
-Claude Code Session Manager
+SessionForge (sf)
 ═══════════════════════════════════════════════════════════════════
 
   Session Name          Project Path             Last Modified
@@ -302,10 +302,10 @@ chmod +x ~/.local/bin/claude-menu
 
 ## Version
 
-Linux port version: 3.0.0
+Linux port version: 3.1.0
 
-Based on Codex and Claude Code Session Manager for Windows v3.0.0.
+Based on SessionForge (sf) for Windows v3.1.0.
 
 ## License
 
-Same license as the main Claude Code Session Manager project.
+Same license as the main SessionForge project.

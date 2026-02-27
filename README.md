@@ -1,4 +1,4 @@
-# Codex and Claude Code Session Manager v3.0.0
+# SessionForge (sf) v3.1.0
 
 A unified visual session manager for both Claude Code CLI and OpenAI Codex CLI with fork/continue workflows and background watermarks.
 
@@ -11,7 +11,7 @@ A unified visual session manager for both Claude Code CLI and OpenAI Codex CLI w
 
 ## Windows Version
 A unified session manager for Claude Code and Codex CLI on Windows Terminal.
-Download **[WinClaudeForker.exe](https://github.com/srives/WinClaudeCodeForker/releases)**
+Download **[SessionForge.exe](https://github.com/srives/SessionForge/releases)**
 
 > **Unified session management for Claude Code and Codex CLI**
 > Never lose track of your conversations. See all Claude and Codex sessions in one menu, fork with confidence, track your costs.
@@ -27,7 +27,7 @@ Working with multiple Claude Code and Codex sessions across different projects? 
 
 ## ✨ The Solution
 
-**Codex and Claude Code Session Manager** gives you a unified dashboard for all your AI coding sessions:
+**SessionForge** gives you a unified dashboard for all your AI coding sessions:
 - 🔀 **Unified multi-CLI dashboard** -- see all Claude and Codex sessions in one menu
 - 📋 See all sessions at a glance with sortable columns and color-coded Src column
 - 🍴 Fork conversations with custom Windows Terminal backgrounds
@@ -44,9 +44,9 @@ Working with multiple Claude Code and Codex sessions across different projects? 
 ## 🚀 Quick Install
 
 ### Option 1: Installer (Recommended)
-1. Download **[WinClaudeForker.exe](https://github.com/srives/WinClaudeCodeForker/releases)**
+1. Download **[SessionForge.exe](https://github.com/srives/SessionForge/releases)**
 2. Run the installer
-3. Launch "Claude Session Manager" from your desktop
+3. Launch "SessionForge" from your desktop
 
 ### Option 2: Manual Install
 ```powershell
@@ -58,7 +58,7 @@ Copy-Item "Claude-Menu.ps1" "$env:USERPROFILE\.claude-menu\"
 
 # Create desktop shortcut
 $WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Claude Session Manager.lnk")
+$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SessionForge.lnk")
 $Shortcut.TargetPath = "powershell.exe"
 $Shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$env:USERPROFILE\.claude-menu\Claude-Menu.ps1`""
 $Shortcut.Save()
@@ -92,18 +92,19 @@ $Shortcut.Save()
 - **Activity Markers** - See which sessions are active at a glance
 - **Git Integration** - Automatically detects and displays git branches
 
-### Cost Tracking
+### Cost & Token Tracking
+- **Token Totals Front & Center** - Header shows per-platform cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
 - **Per-Session Costs** - See exactly how much each conversation costs
 - **Token Analytics** - Track input, output, and cache usage
 - **Cache Hit Rates** - Monitor prompt caching effectiveness
-- **Total Spend** - Know your total API spend across all sessions
+- **Persistent Cost History** - Cost snapshots survive session purging via `costing.json`; lifetime totals in cost analysis
 
 ### Professional UX
 - **Arrow Navigation** - Instant keyboard navigation with ↑↓ keys
 - **Dynamic Columns** - Customize which columns appear (11 configurable columns)
 - **Pagination** - Handle hundreds of sessions with screen-aware pagination
 - **Universal Defaults** - Press Enter for default action in any menu
-- **Silent Validation** - 158 automated tests protect against bugs (results copyable to clipboard)
+- **Silent Validation** - 250 automated tests protect against bugs (results copyable to clipboard)
 
 ---
 
@@ -126,10 +127,10 @@ Press 1, 2, 3, etc. to sort by the Nth visible column.
 Press **P** to scan for sessions whose conversation files no longer exist on disk. Dead sessions show a skull (☠) in the Active column. Purge lets you bulk archive or bulk delete them.
 
 ### co$t Menu
-Press **$** to toggle the cost column on/off. Hiding costs skips all .jsonl parsing for instant load. Showing costs pre-calculates with a progress bar, then caches.
+Press **$** to toggle the cost column on/off. Hiding costs skips all .jsonl parsing for instant load. When ON, costs and token totals are calculated with a progress bar, cached, and displayed per platform in the header (e.g., `Cost: $1,485.63, Tokens: 2.7B`).
 
 ### Validation System
-Built-in self-protection with 158 automated tests (copy results to clipboard)
+Built-in self-protection with 250 automated tests (copy results to clipboard)
 
 ---
 
@@ -185,7 +186,7 @@ Each Windows Terminal profile gets a **custom background watermark** showing:
 
 ### Professional Quality
 - **Enterprise-grade UX** - Arrow navigation, silent input handling, universal defaults
-- **158 Automated Tests** - Self-validating code protects against regressions (results copyable to clipboard)
+- **250 Automated Tests** - Self-validating code protects against regressions (results copyable to clipboard)
 - **Comprehensive Error Handling** - Graceful recovery from failures
 - **Performance Optimized** - Caching, pagination, instant response; co$t menu ($) toggles cost column for instant load when off
 
@@ -228,7 +229,7 @@ a cost justification that is logical):
 - Development cost: $175,000
 - Time to market: 6-8 months
 - Lines of code: ~14,000+ PowerShell
-- Features: 50+ with 158 automated tests
+- Features: 65+ with 250 automated tests
 
 **Linux Port (If Developed Traditionally):**
 - Development cost: $35,000-50,000
@@ -251,9 +252,9 @@ The session manager now supports **OpenAI Codex CLI** alongside Claude. When Cod
 - **Continue** dispatches to `codex resume <id>` for Codex sessions
 - **Fork** dispatches to `codex fork <id>` for Codex sessions
 - **New Session** prompts "Claude | codeX | Abort" when Codex is available
-- **Cost display** shows approximate costs (`~$X.XX`) for Codex sessions
+- **Cost & token display** shows per-platform cost and token totals in the header
 - **WT Profiles & Watermarks** for Codex sessions (`Codex-` prefix profiles with background images)
-- **Color-coded stats** -- session stats line split by CLI source (Claude in blue, Codex in magenta)
+- **Color-coded stats** -- session stats line split by CLI source (Claude in blue, Codex in magenta), each with cost and token totals
 - Works on both **Windows** and **Linux**
 - **Graceful when Codex is not installed** -- only Claude sessions are shown
 
@@ -297,8 +298,8 @@ See [LICENSE](docs/LICENSE) for details.
 
 ## 🔗 Links
 
-- **[GitHub Repository](https://github.com/srives/WinClaudeCodeForker)**
-- **[Releases](https://github.com/srives/WinClaudeCodeForker/releases)**
+- **[GitHub Repository](https://github.com/srives/SessionForge)**
+- **[Releases](https://github.com/srives/SessionForge/releases)**
 - **[Claude Code Documentation](https://claude.com/claude-code)**
 - **[Windows Terminal Docs](https://aka.ms/terminal)**
 

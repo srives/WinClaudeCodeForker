@@ -132,31 +132,156 @@
 
 ---
 
-## Phase 3: Shared Infrastructure (Before or During Phase 1)
+## Phase 3: Platform Registry — Shared Infrastructure (Do This FIRST)
 
-### 3.1 Refactor Python Availability Check
+The current code has **~35+ hardcoded `if source == 'codex' ... else ...`** checks scattered across
+both Windows and Linux. Adding a third platform means touching every one and turning binary if/else
+into three-way branching. A platform registry eliminates this entirely — each new platform is just
+a new entry in one table.
+
+### 3.1 Platform Registry (Windows — `$Global:PlatformRegistry`)
+
+Define a single hashtable that is the **sole source of truth** for every platform-specific value.
+Every rendering, dispatch, and image generation function looks up from this registry instead of branching.
+
+```powershell
+$Global:PlatformRegistry = @{
+    claude = @{
+        Key          = 'C'                              # Src column letter
+        DisplayName  = 'Claude Code'                    # Full display name (background images, prompts)
+        Color        = 'Blue'                           # PowerShell console color name
+        ColorRGB     = @(30, 144, 255)                  # RGB for System.Drawing (background images)
+        WTPrefix     = 'Claude-'                        # Windows Terminal profile prefix
+        CLIName      = 'claude'                         # Executable name for Get-Command / which
+        ResumeCmd    = 'claude --resume {0}'            # Resume command template ({0} = session ID)
+        ForkCmd      = $null                            # Fork command template ($null = not supported natively)
+        NewCmd       = 'claude'                         # New session command
+        CostFn       = 'Get-ClaudeSessionCost'          # Function name for cost calculation
+    }
+    codex = @{
+        Key          = 'X'
+        DisplayName  = 'Codex'
+        Color        = 'Magenta'
+        ColorRGB     = @(255, 0, 255)
+        WTPrefix     = 'Codex-'
+        CLIName      = 'codex'
+        ResumeCmd    = 'codex resume {0}'
+        ForkCmd      = 'codex fork {0}'
+        NewCmd       = 'codex'
+        CostFn       = 'Get-CodexSessionCost'
+    }
+    copilot = @{
+        Key          = 'P'
+        DisplayName  = 'Copilot'
+        Color        = 'Green'
+        ColorRGB     = @(0, 200, 83)
+        WTPrefix     = 'Copilot-'
+        CLIName      = 'copilot'
+        ResumeCmd    = 'copilot --resume {0}'           # TBD — verify in Phase 1.1
+        ForkCmd      = $null                            # Copilot has no native fork
+        NewCmd       = 'copilot'
+        CostFn       = 'Get-CopilotSessionCost'
+    }
+    opencode = @{
+        Key          = 'O'
+        DisplayName  = 'OpenCode'
+        Color        = 'Cyan'
+        ColorRGB     = @(0, 188, 212)
+        WTPrefix     = 'OpenCode-'
+        CLIName      = 'opencode'
+        ResumeCmd    = 'opencode --session {0}'         # TBD — verify in Phase 2.1
+        ForkCmd      = $null
+        NewCmd       = 'opencode'
+        CostFn       = 'Get-OpenCodeSessionCost'
+    }
+}
+```
+
+Tasks:
+
+- [ ] Create `$Global:PlatformRegistry` hashtable (single source of truth)
+- [ ] Create helper functions that look up from registry:
+  - `Get-PlatformColor -Source <source>` → PowerShell color name
+  - `Get-PlatformColorRGB -Source <source>` → System.Drawing.Color
+  - `Get-PlatformKey -Source <source>` → single letter (`C`, `X`, `P`, `O`)
+  - `Get-PlatformDisplayName -Source <source>` → "Claude Code", "Codex", etc.
+  - `Get-PlatformWTPrefix -Source <source>` → "Claude-", "Codex-", etc.
+  - `Get-PlatformResumeCmd -Source <source> -SessionId <id>` → formatted command string
+  - `Get-PlatformForkCmd -Source <source> -SessionId <id>` → command string or `$null`
+- [ ] Replace all ~35 hardcoded `if ($source -eq 'codex') { ... } else { ... }` with registry lookups
+- [ ] Replace all hardcoded WT prefix logic (`"Claude-$name"`, `"Codex-$name"`) with `"$(Get-PlatformWTPrefix -Source $source)$name"`
+- [ ] Replace all hardcoded color references in `Show-SessionMenu`, `Write-SingleMenuRow`, WT Config rows, title bar, cost analysis
+- [ ] Replace hardcoded `platformText`/`platformColor` in `New-UniformBackgroundImage` with registry lookup
+- [ ] Replace resume/fork command construction in `Start-ContinueSession`, `Start-ForkSession` with registry lookup
+- [ ] Add validation test: every key in `$Global:PlatformRegistry` has all required fields
+
+### 3.2 Platform Registry (Linux — `PLATFORM_REGISTRY` dict)
+
+Same concept in Python for the Linux port.
+
+```python
+PLATFORM_REGISTRY = {
+    'claude': {
+        'key': 'C',
+        'display_name': 'Claude Code',
+        'curses_color': curses.COLOR_BLUE,
+        'rgb': (30, 144, 255),
+        'imagemagick_color': 'rgb(30,144,255)',
+        'pil_color': (30, 144, 255, 255),
+        'cli_name': 'claude',
+        'resume_cmd': 'claude --resume {session_id}',
+        'fork_cmd': None,
+        'new_cmd': 'claude',
+    },
+    'codex': {
+        'key': 'X',
+        'display_name': 'Codex',
+        'curses_color': curses.COLOR_MAGENTA,
+        'rgb': (255, 0, 255),
+        'imagemagick_color': 'rgb(255,0,255)',
+        'pil_color': (255, 0, 255, 255),
+        'cli_name': 'codex',
+        'resume_cmd': 'codex resume {session_id}',
+        'fork_cmd': 'codex fork {session_id}',
+        'new_cmd': 'codex',
+    },
+    # copilot and opencode entries added when those integrations land
+}
+```
+
+Tasks:
+
+- [ ] Create `PLATFORM_REGISTRY` dict (in a new `linux/lib/platforms.py` or in `config.py`)
+- [ ] Add curses color pair initialization from registry (replace hardcoded `init_pair` calls)
+- [ ] Replace hardcoded source checks in `menu.py`, `image.py`, `claude-menu.py` with registry lookups
+- [ ] Replace hardcoded color values in `_create_with_imagemagick` and `_create_with_pil` with registry lookup
+- [ ] Replace hardcoded resume/fork commands in `handle_continue`, `handle_fork` with registry lookup
+
+### 3.3 Refactor Python Availability Check
 
 - [ ] Rename `Test-CodexPythonAvailable` → `Test-PythonAvailable` (used by Codex and OpenCode)
 - [ ] Single Python availability check cached for the session
 
-### 3.2 Generalize Source Column Colors
+### 3.4 Generalize CLI Path Detection
 
-- [ ] Define a color map: `@{ claude = 'Blue'; codex = 'Magenta'; copilot = 'Green'; opencode = 'Cyan' }`
-- [ ] Replace hardcoded `if source -eq 'codex' { Magenta } else { Blue }` with color map lookup
-- [ ] Apply to: `Show-SessionMenu`, `Write-SingleMenuRow`, WT Config rows, title bar
+- [ ] Create `Get-CLIPath -Source <source>` that reads `CLIName` from registry and wraps `Get-Command` with `.ps1` shim detection
+- [ ] Replace `Get-ClaudeCLIPath` / `Get-CodexCLIPath` with `Get-CLIPath -Source claude` / `Get-CLIPath -Source codex`
+- [ ] New tools just call `Get-CLIPath -Source copilot` / `Get-CLIPath -Source opencode`
 
-### 3.3 Generalize CLI Path Detection
+### 3.5 Generalize New Session Prompt
 
-- [ ] Create `Get-CLIPath -Name <tool>` that wraps `Get-Command` with `.ps1` shim detection
-- [ ] Replace `Get-ClaudeCLIPath` / `Get-CodexCLIPath` with `Get-CLIPath -Name claude` / `Get-CLIPath -Name codex`
-- [ ] New tools just call `Get-CLIPath -Name copilot` / `Get-CLIPath -Name opencode`
+- [ ] Auto-generate the CLI choice prompt from installed platforms in the registry
+- [ ] E.g. if Claude + Codex + Copilot installed: `"[C]laude | code[X] | co[P]ilot | [A]bort"`
+- [ ] If only Claude installed: skip the prompt entirely (current behavior)
+- [ ] Use `Key` from registry as the hotkey letter
 
-### 3.4 Generalize WT Profile Prefix
+### 3.6 Generalize Title Bar and Stats Line
 
-- [ ] Profile prefix map: `@{ claude = 'Claude-'; codex = 'Codex-'; copilot = 'Copilot-'; opencode = 'OpenCode-' }`
-- [ ] Single function: `Get-WTProfilePrefix -Source <source>`
+- [ ] Title bar: auto-generated from installed platforms — `"Codex (X), Copilot (P), and Claude Code (C) Session Manager..."`
+- [ ] Stats line: one color-coded segment per installed platform, auto-generated from registry
+- [ ] No hardcoded two-segment or three-segment layout — loop over platforms
 
-### 3.5 Update Documentation
+### 3.7 Update Documentation
 
 - [ ] Update CLAUDE.md, README.md, CHANGELOG.md, VERSION.md, PRODUCT_ANALYSIS.md
 - [ ] Bump version (3.1.0 for Copilot, 3.2.0 for OpenCode, or 4.0.0 for both)
