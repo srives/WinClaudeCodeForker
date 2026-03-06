@@ -2,7 +2,7 @@
 
 Get up and running with SessionForge (sf) in 2 minutes!
 
-## What's New in v3.1.0
+## What's New in v3.1.1
 - **Token Totals in Header** - When Cost column is ON, stats line shows per-platform cost and token total (e.g., `Cost: $1,485.63, Tokens: 2.7B`)
 - **Persistent Cost Snapshots** - `costing.json` records cost/token data; survives session purging. Cost analysis (O key) shows lifetime totals.
 - **250 Automated Tests** - Up from 158 (+58%): WT safety, prefix handling, JSON integrity, resource safety, edge cases, menu key audit, costing persistence

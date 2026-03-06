@@ -37,7 +37,7 @@ from lib.terminal import get_adapter, detect_terminal, is_wsl
 from lib.registry import get_platform, get_installed_platforms
 
 
-VERSION = "3.1.0"
+VERSION = "3.1.1"
 
 
 def check_dependencies() -> dict:

@@ -1,4 +1,4 @@
-# SessionForge (sf) v3.1.0
+# SessionForge (sf) v3.1.1
 
 A unified visual session manager for both Claude Code CLI and OpenAI Codex CLI with fork/continue workflows and background watermarks.
 

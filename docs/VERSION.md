@@ -1,6 +1,6 @@
 # Version Information
 
-## Current Version: 3.1.0 (2026-02-26)
+## Current Version: 3.1.1 (2026-03-05)
 
 ### Release Notes
 

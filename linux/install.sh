@@ -7,7 +7,7 @@
 
 set -e
 
-VERSION="3.1.0"
+VERSION="3.1.1"
 INSTALL_DIR="$HOME/.local/share/claude-menu"
 BIN_DIR="$HOME/.local/bin"
 IS_WSL=false

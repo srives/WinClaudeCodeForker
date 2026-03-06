@@ -15,14 +15,14 @@
 
 .NOTES
     Author: S. Rives
-    Version: 3.1.0
+    Version: 3.1.1
     Date: 2026-02-26
     Requires: PowerShell 5.1+, Windows Terminal, Claude CLI or Codex CLI
 #>
 
 # Global error handling
 $ErrorActionPreference = "Stop"
-$Global:ScriptVersion = "3.1.0"
+$Global:ScriptVersion = "3.1.1"
 $Global:MenuPath = "$env:USERPROFILE\.claude-menu"
 $Global:ProfileRegistryPath = "$Global:MenuPath\profile-registry.json"
 $Global:SessionMappingPath = "$Global:MenuPath\session-mapping.json"
@@ -75,26 +75,30 @@ $Global:CurrentPage = 1  # Current page for pagination
 # Adding a new platform requires only: (1) a new entry here, (2) a session discovery function
 $Global:PlatformRegistry = @{
     claude = @{
-        Key          = 'C'
-        DisplayName  = 'Claude Code'
-        Color        = 'Blue'
-        ColorRGB     = @(30, 144, 255)
-        WTPrefix     = 'Claude-'
-        CLIName      = 'claude'
-        ResumeCmd    = '--resume {0}'
-        ForkCmd      = '--resume {0} --fork-session'
-        CLIPathFunc  = 'Get-ClaudeCLIPath'
+        Key            = 'C'
+        DisplayName    = 'Claude Code'
+        Color          = 'Blue'
+        ColorRGB       = @(30, 144, 255)
+        WTPrefix       = 'Claude-'
+        CLIName        = 'claude'
+        ResumeCmd      = '--resume {0}'
+        ForkCmd        = '--resume {0} --fork-session'
+        CLIPathFunc    = 'Get-ClaudeCLIPath'
+        QuietFlag      = $null              # Claude quiet mode is config-based (bypassPermissions), not a CLI flag
+        QuietCheckFunc = 'Test-ClaudeQuietMode'
     }
     codex = @{
-        Key          = 'X'
-        DisplayName  = 'Codex'
-        Color        = 'Magenta'
-        ColorRGB     = @(255, 0, 255)
-        WTPrefix     = 'Codex-'
-        CLIName      = 'codex'
-        ResumeCmd    = 'resume {0}'
-        ForkCmd      = 'fork {0}'
-        CLIPathFunc  = 'Get-CodexCLIPath'
+        Key            = 'X'
+        DisplayName    = 'Codex'
+        Color          = 'Magenta'
+        ColorRGB       = @(255, 0, 255)
+        WTPrefix       = 'Codex-'
+        CLIName        = 'codex'
+        ResumeCmd      = 'resume {0}'
+        ForkCmd        = 'fork {0}'
+        CLIPathFunc    = 'Get-CodexCLIPath'
+        QuietFlag      = '--danger'         # Codex danger mode: disables all confirmation prompts
+        QuietCheckFunc = 'Test-CodexQuietMode'
     }
 }
 
@@ -173,6 +177,60 @@ function Get-SessionNameFromWTProfile {
         }
     }
     return $WTProfileName
+}
+
+function Test-ClaudeQuietMode {
+    <#
+    .SYNOPSIS
+        Returns $true if Claude Code is in quiet mode (bypassPermissions).
+        Used by PlatformRegistry.QuietCheckFunc for the claude platform.
+    #>
+    $status = Get-GlobalPermissionStatus
+    if ($status -is [hashtable]) { return $status.Enabled }
+    return [bool]$status
+}
+
+function Test-CodexQuietMode {
+    <#
+    .SYNOPSIS
+        Returns $true if Codex is in quiet mode (full-auto/auto-edit approval_mode).
+        Used by PlatformRegistry.QuietCheckFunc for the codex platform.
+    #>
+    return ((Get-CodexPermissionMode) -eq 'Quiet')
+}
+
+function Get-PlatformQuietArgs {
+    <#
+    .SYNOPSIS
+        Returns the CLI quiet-mode flag for a platform if it is currently in quiet mode.
+        Returns empty string if the platform is not in quiet mode or has no CLI flag.
+    .DESCRIPTION
+        Looks up QuietFlag and QuietCheckFunc from the PlatformRegistry.
+        If QuietFlag is non-null and the check function returns $true, returns the flag.
+        This allows each platform to define its own quiet-mode CLI behavior.
+    .EXAMPLE
+        Get-PlatformQuietArgs -Source 'codex'  # Returns '--danger' if Codex is in quiet mode
+        Get-PlatformQuietArgs -Source 'claude'  # Returns '' (Claude uses config, not CLI flag)
+    #>
+    param([string]$Source)
+
+    $platform = Get-PlatformEntry -Source $Source
+    if (-not $platform) { return '' }
+
+    $quietFlag = $platform.QuietFlag
+    if (-not $quietFlag) { return '' }
+
+    $checkFunc = $platform.QuietCheckFunc
+    if (-not $checkFunc) { return '' }
+
+    try {
+        $isQuiet = & $checkFunc
+        if ($isQuiet) { return $quietFlag }
+    } catch {
+        Write-DebugInfo "Get-PlatformQuietArgs: Error calling $checkFunc - $_" -Color Yellow
+    }
+
+    return ''
 }
 
 # Trap for unhandled errors
@@ -599,23 +657,39 @@ function Get-ClaudeCLIPath {
 function Start-WTClaude {
     <#
     .SYNOPSIS
-        Launches Claude in Windows Terminal by setting the profile commandline directly.
+        Launches a CLI session in Windows Terminal by setting the profile commandline directly.
     .DESCRIPTION
         Windows Terminal cannot reliably pass executable paths with arguments through its
-        command line (wt.exe). Instead, this function writes the full claude command into
+        command line (wt.exe). Instead, this function writes the full command into
         the WT profile's commandline field in settings.json, then opens the profile.
+        When -Source is provided, automatically appends the platform's quiet-mode CLI flag
+        (e.g. --danger for Codex) if that platform is currently in quiet mode.
     #>
     param(
         [string]$ClaudePath,
         [string]$Arguments,
         [string]$ProfileGuid,
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [string]$Source              # Platform source key (e.g. 'claude', 'codex') for quiet-mode flag injection
     )
 
     # Validate CLI path
     if (-not $ClaudePath -or -not (Test-Path $ClaudePath)) {
         Write-ColorText "ERROR: CLI not found at '$ClaudePath'. Is it installed?" -Color Red
         return
+    }
+
+    # Append platform quiet-mode flag if applicable (e.g. --danger for Codex in quiet mode)
+    if ($Source) {
+        $quietArgs = Get-PlatformQuietArgs -Source $Source
+        if ($quietArgs) {
+            Write-DebugInfo "  Quiet mode active for $Source - appending: $quietArgs" -Color Yellow
+            if ($Arguments) {
+                $Arguments = "$Arguments $quietArgs"
+            } else {
+                $Arguments = $quietArgs
+            }
+        }
     }
 
     # Build the command that the profile should run
@@ -3288,10 +3362,10 @@ function Test-SystemValidation {
         if (Get-Command Start-WTClaude -ErrorAction SilentlyContinue) {
             $fn = Get-Command Start-WTClaude
             $params = $fn.Parameters.Keys
-            $requiredParams = @('ClaudePath', 'Arguments', 'ProfileGuid', 'WorkingDirectory')
+            $requiredParams = @('ClaudePath', 'Arguments', 'ProfileGuid', 'WorkingDirectory', 'Source')
             $missing = $requiredParams | Where-Object { $params -notcontains $_ }
             if ($missing.Count -eq 0) {
-                Write-TestResult "Start-WTClaude Function" "PASS" "Function exists with all 4 parameters"
+                Write-TestResult "Start-WTClaude Function" "PASS" "Function exists with all 5 parameters (including Source)"
             } else {
                 Write-TestResult "Start-WTClaude Function" "FAIL" "Missing parameters: $($missing -join ', ')"
             }
@@ -4841,7 +4915,7 @@ function Test-SystemValidation {
 
     # Test 159: PlatformRegistry Exists With Required Fields
     try {
-        $requiredFields = @('Key', 'DisplayName', 'Color', 'ColorRGB', 'WTPrefix', 'CLIName', 'ResumeCmd', 'ForkCmd', 'CLIPathFunc')
+        $requiredFields = @('Key', 'DisplayName', 'Color', 'ColorRGB', 'WTPrefix', 'CLIName', 'ResumeCmd', 'ForkCmd', 'CLIPathFunc', 'QuietCheckFunc')
         $allPass = $true
         $issues = @()
         foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
@@ -6950,6 +7024,157 @@ function Test-SystemValidation {
     } else {
         Write-TestResult "Costing JSON Structure" "SKIP" "costing.json does not exist yet (will be created on first cost calculation)"
     }
+
+    #region Tests 251-258: QuietFlag Architecture
+    # RULE: When a test fails, examine the PRODUCTION CODE first - the test is likely exposing a real bug.
+    Write-ColorText "--- QuietFlag Architecture ---" -Color Cyan
+
+    # Test 251: PlatformRegistry Has QuietCheckFunc
+    try {
+        $allHaveCheckFunc = $true
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if (-not $entry.Value.ContainsKey('QuietCheckFunc') -or -not $entry.Value.QuietCheckFunc) {
+                $allHaveCheckFunc = $false
+                $issues += "Platform '$($entry.Key)' missing QuietCheckFunc"
+            }
+        }
+        if ($allHaveCheckFunc) {
+            Write-TestResult "QuietCheckFunc In Registry" "PASS" "All platforms define QuietCheckFunc"
+        } else {
+            Write-TestResult "QuietCheckFunc In Registry" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "QuietCheckFunc In Registry" "FAIL" $_.Exception.Message
+    }
+
+    # Test 252: QuietCheckFunc Functions Exist and Are Callable
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            $funcName = $entry.Value.QuietCheckFunc
+            if ($funcName) {
+                if (-not (Get-Command $funcName -ErrorAction SilentlyContinue)) {
+                    $issues += "Platform '$($entry.Key)' QuietCheckFunc '$funcName' not found"
+                }
+            }
+        }
+        if ($issues.Count -eq 0) {
+            Write-TestResult "QuietCheckFunc Callable" "PASS" "All QuietCheckFunc functions exist and are callable"
+        } else {
+            Write-TestResult "QuietCheckFunc Callable" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "QuietCheckFunc Callable" "FAIL" $_.Exception.Message
+    }
+
+    # Test 253: QuietFlag Is String or Null (Not Misconfigured)
+    try {
+        $issues = @()
+        foreach ($entry in $Global:PlatformRegistry.GetEnumerator()) {
+            if ($entry.Value.ContainsKey('QuietFlag') -and $null -ne $entry.Value.QuietFlag) {
+                if ($entry.Value.QuietFlag -isnot [string] -or $entry.Value.QuietFlag -eq '') {
+                    $issues += "Platform '$($entry.Key)' QuietFlag is not a valid string"
+                }
+            }
+        }
+        if ($issues.Count -eq 0) {
+            $withFlag = @($Global:PlatformRegistry.Values | Where-Object { $_.QuietFlag })
+            Write-TestResult "QuietFlag Valid" "PASS" "$($withFlag.Count) platform(s) have CLI quiet flags, rest use config-based"
+        } else {
+            Write-TestResult "QuietFlag Valid" "FAIL" ($issues -join '; ')
+        }
+    } catch {
+        Write-TestResult "QuietFlag Valid" "FAIL" $_.Exception.Message
+    }
+
+    # Test 254: Get-PlatformQuietArgs Function Exists
+    try {
+        if (Get-Command Get-PlatformQuietArgs -ErrorAction SilentlyContinue) {
+            $fn = Get-Command Get-PlatformQuietArgs
+            if ($fn.Parameters.ContainsKey('Source')) {
+                Write-TestResult "Get-PlatformQuietArgs" "PASS" "Function exists with Source parameter"
+            } else {
+                Write-TestResult "Get-PlatformQuietArgs" "FAIL" "Missing Source parameter"
+            }
+        } else {
+            Write-TestResult "Get-PlatformQuietArgs" "FAIL" "Function not found"
+        }
+    } catch {
+        Write-TestResult "Get-PlatformQuietArgs" "FAIL" $_.Exception.Message
+    }
+
+    # Test 255: Get-PlatformQuietArgs Returns String (Not Null)
+    try {
+        $result = Get-PlatformQuietArgs -Source 'claude'
+        if ($null -eq $result) {
+            Write-TestResult "QuietArgs Returns String" "FAIL" "Returned null instead of empty string for claude"
+        } else {
+            Write-TestResult "QuietArgs Returns String" "PASS" "Returns string type for all platforms (empty string when no flag)"
+        }
+    } catch {
+        Write-TestResult "QuietArgs Returns String" "FAIL" $_.Exception.Message
+    }
+
+    # Test 256: Start-WTClaude Has Source Parameter
+    try {
+        $fn = Get-Command Start-WTClaude -ErrorAction SilentlyContinue
+        if ($fn -and $fn.Parameters.ContainsKey('Source')) {
+            Write-TestResult "Start-WTClaude Source Param" "PASS" "Source parameter exists for quiet-mode flag injection"
+        } else {
+            Write-TestResult "Start-WTClaude Source Param" "FAIL" "Start-WTClaude missing Source parameter"
+        }
+    } catch {
+        Write-TestResult "Start-WTClaude Source Param" "FAIL" $_.Exception.Message
+    }
+
+    # Test 257: All Start-WTClaude Call Sites Pass -Source
+    try {
+        $scriptPath = $MyInvocation.ScriptName
+        if (-not $scriptPath) { $scriptPath = $PSCommandPath }
+        if ($scriptPath -and (Test-Path $scriptPath)) {
+            $scriptContent = Get-Content $scriptPath -Raw
+            $lines = Get-Content $scriptPath
+            # Find the test region to exclude (same pattern as other static analysis tests)
+            $testRegionStart = $scriptContent.IndexOf('function Test-SystemValidation')
+            $testStartLine = if ($testRegionStart -ge 0) { ($scriptContent.Substring(0, $testRegionStart) -split "`n").Count - 1 } else { $lines.Count }
+            $issues = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                # Skip lines inside the test region
+                if ($i -ge $testStartLine) { continue }
+                $line = $lines[$i]
+                # Skip the function definition and comments
+                if ($line -match '^\s*function\s+Start-WTClaude' -or $line -match '^\s*#') { continue }
+                # Find actual call sites
+                if ($line -match '\bStart-WTClaude\b' -and $line -notmatch '-Source\s') {
+                    $issues += "Line $($i + 1): Start-WTClaude call missing -Source"
+                }
+            }
+            if ($issues.Count -eq 0) {
+                Write-TestResult "All Calls Pass Source" "PASS" "Every Start-WTClaude call site passes -Source parameter"
+            } else {
+                Write-TestResult "All Calls Pass Source" "FAIL" ($issues -join '; ')
+            }
+        } else {
+            Write-TestResult "All Calls Pass Source" "SKIP" "Could not locate script file"
+        }
+    } catch {
+        Write-TestResult "All Calls Pass Source" "FAIL" $_.Exception.Message
+    }
+
+    # Test 258: Codex QuietFlag Is --danger
+    try {
+        $codexFlag = $Global:PlatformRegistry['codex'].QuietFlag
+        if ($codexFlag -eq '--danger') {
+            Write-TestResult "Codex QuietFlag" "PASS" "Codex QuietFlag is '--danger'"
+        } else {
+            Write-TestResult "Codex QuietFlag" "FAIL" "Expected '--danger', got '$codexFlag'"
+        }
+    } catch {
+        Write-TestResult "Codex QuietFlag" "FAIL" $_.Exception.Message
+    }
+
+    #endregion
 
     # Summary
     Write-Host ""
@@ -10931,7 +11156,7 @@ function Start-NewSession {
             Write-Host ""
             Write-ColorText "Launching Codex with default profile..." -Color Green
             Write-Host ""
-            Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory
+            Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory -Source 'codex'
             $Global:LastClaudeCommand = "$codexCLI (new session in $targetDirectory)"
             $Global:LastClaudeError = $null
             return
@@ -10972,7 +11197,7 @@ function Start-NewSession {
             Write-ColorText "Launching Codex with profile: $actualProfileName" -Color Green
             Write-Host ""
             $profileGuid = $profile.guid
-            Start-WTClaude -ClaudePath $codexPath -ProfileGuid $profileGuid -WorkingDirectory $targetDirectory
+            Start-WTClaude -ClaudePath $codexPath -ProfileGuid $profileGuid -WorkingDirectory $targetDirectory -Source 'codex'
 
             $Global:LastClaudeCommand = "$codexCLI (new session '$finalSessionName' in $targetDirectory)"
             $Global:LastClaudeError = $null
@@ -10992,7 +11217,7 @@ function Start-NewSession {
             Write-Host ""
             Write-ColorText "Launching Codex without profile..." -Color Yellow
             Write-Host ""
-            Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory
+            Start-WTClaude -ClaudePath $codexPath -WorkingDirectory $targetDirectory -Source 'codex'
             $Global:LastClaudeCommand = "$codexCLI (new session in $targetDirectory)"
             $Global:LastClaudeError = $null
             return
@@ -11022,7 +11247,7 @@ function Start-NewSession {
         $claudePath = Get-ClaudeCLIPath
 
         # Launch Claude in Windows Terminal with default profile
-        Start-WTClaude -ClaudePath $claudePath -WorkingDirectory $targetDirectory
+        Start-WTClaude -ClaudePath $claudePath -WorkingDirectory $targetDirectory -Source 'claude'
 
         # Store command for display
         $Global:LastClaudeCommand = "claude (new session in $targetDirectory)"
@@ -11109,7 +11334,7 @@ function Start-NewSession {
         $claudePath = Get-ClaudeCLIPath
 
         # Launch Windows Terminal WITHOUT --session-id (let Claude create its own)
-        Start-WTClaude -ClaudePath $claudePath -Arguments "--model $model" -ProfileGuid $profileGuid -WorkingDirectory $projectPath
+        Start-WTClaude -ClaudePath $claudePath -Arguments "--model $model" -ProfileGuid $profileGuid -WorkingDirectory $projectPath -Source 'claude'
 
         # Store simplified command for display
         $Global:LastClaudeCommand = "claude --model `"$model`""
@@ -11235,7 +11460,7 @@ function Start-ContinueSession {
             $profileGuid = $existingProfile.guid
             Write-DebugInfo "  Launching with existing profile GUID: $profileGuid" -Color Green
             $codexResumeArgs = (Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId
-            Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+            Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath -Source 'codex'
         } else {
             # Create new WT profile with background
             Write-DebugInfo "  Creating new WT profile: $wtProfileName" -Color Cyan
@@ -11245,11 +11470,11 @@ function Start-ContinueSession {
                 $profileGuid = $profile.guid
                 Write-ColorText "Profile created: $($profile.name)" -Color Green
                 $codexResumeArgs = (Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId
-                Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath -Source 'codex'
             } catch {
                 Write-DebugInfo "  Failed to create profile, launching with default: $_" -Color Yellow
                 $codexResumeArgs = (Get-PlatformProperty -Source 'codex' -Property 'ResumeCmd') -f $Session.sessionId
-                Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $codexPath -Arguments $codexResumeArgs -WorkingDirectory $Session.projectPath -Source 'codex'
             }
         }
 
@@ -11447,7 +11672,7 @@ function Start-ContinueSession {
             Write-ColorText "Launching terminal with profile: $wtProfileName" -Color Cyan
             Write-Host ""
 
-            Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+            Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath -Source 'claude'
             Write-DebugInfo "  Launched successfully" -Color Green
 
             # Store simplified command for display
@@ -11469,7 +11694,7 @@ function Start-ContinueSession {
                 Write-Host ""
                 $claudePath = Get-ClaudeCLIPath
                 Write-DebugInfo "  Launching: claude --resume $($Session.sessionId) in $($Session.projectPath) (no profile)" -Color DarkGray
-                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
                 $displayName = if ($Session.customTitle) { $Session.customTitle } elseif ($Session.trackedName) { $Session.trackedName } else { $Session.sessionId }
                 $Global:LastClaudeCommand = "claude --resume $displayName"
                 $Global:LastClaudeError = $null
@@ -11522,7 +11747,7 @@ function Start-ContinueSession {
                 # Launch in new Windows Terminal profile
                 $profileGuid = $profile.guid
                 $claudePath = Get-ClaudeCLIPath
-                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath -Source 'claude'
 
                 # Store simplified command for display
                 $Global:LastClaudeCommand = "claude --resume $displayName"
@@ -11537,7 +11762,7 @@ function Start-ContinueSession {
 
                 # Fallback to Windows Terminal with default profile
                 $claudePath = Get-ClaudeCLIPath
-                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
 
                 # Store command for display
                 $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -11566,7 +11791,7 @@ function Start-ContinueSession {
 
                 # Launch in Windows Terminal with default profile
                 $claudePath = Get-ClaudeCLIPath
-                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
 
                 # Store command for display
                 $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -11687,7 +11912,7 @@ function Start-ContinueSession {
                         Write-ColorText "Launching terminal with profile: $actualProfileName" -Color Cyan
                         Write-Host ""
 
-                        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+                        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath -Source 'claude'
                         Write-DebugInfo "  Windows Terminal launched" -Color Green
 
                         # Store simplified command for display
@@ -11705,7 +11930,7 @@ function Start-ContinueSession {
                         # Fallback to Windows Terminal with default profile
                         Write-DebugInfo "  Launching Windows Terminal with default profile (fallback)" -Color Yellow
                         $claudePath = Get-ClaudeCLIPath
-                        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
 
                         # Store command for display
                         $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -11721,7 +11946,7 @@ function Start-ContinueSession {
                     # Fallback to Windows Terminal with default profile
                     Write-DebugInfo "  Launching Windows Terminal with default profile (exception fallback)" -Color Yellow
                     $claudePath = Get-ClaudeCLIPath
-                    Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                    Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
 
                     # Store command for display
                     $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -11736,7 +11961,7 @@ function Start-ContinueSession {
                 # Fallback to Windows Terminal with default profile
                 Write-DebugInfo "  Launching Windows Terminal with default profile (no background image)" -Color Yellow
                 $claudePath = Get-ClaudeCLIPath
-                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+                Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
 
                 # Store command for display
                 $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -11755,7 +11980,7 @@ function Start-ContinueSession {
             Write-DebugInfo "    Command: $claudePath --resume $($Session.sessionId)"
 
             # Launch in Windows Terminal with default profile
-            Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath
+            Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $($Session.sessionId)" -WorkingDirectory $Session.projectPath -Source 'claude'
 
             # Store command for display
             $Global:LastClaudeCommand = "claude --resume $($Session.sessionId)"
@@ -13195,7 +13420,7 @@ function Start-ForkSession {
 
             $codexForkArgs = (Get-PlatformProperty -Source 'codex' -Property 'ForkCmd') -f $Session.sessionId
             Write-DebugInfo "  Launching: codex $codexForkArgs with profile $($profile.name)" -Color Green
-            Start-WTClaude -ClaudePath $codexPath -Arguments $codexForkArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath
+            Start-WTClaude -ClaudePath $codexPath -Arguments $codexForkArgs -ProfileGuid $profileGuid -WorkingDirectory $Session.projectPath -Source 'codex'
 
             Write-ColorText "Forked Codex session launched!" -Color Green
             Write-Host ""
@@ -13206,7 +13431,7 @@ function Start-ForkSession {
         } catch {
             Write-DebugInfo "  Failed to create profile, launching with default: $_" -Color Yellow
             $codexForkArgs = (Get-PlatformProperty -Source 'codex' -Property 'ForkCmd') -f $Session.sessionId
-            Start-WTClaude -ClaudePath $codexPath -Arguments $codexForkArgs -WorkingDirectory $Session.projectPath
+            Start-WTClaude -ClaudePath $codexPath -Arguments $codexForkArgs -WorkingDirectory $Session.projectPath -Source 'codex'
         }
 
         $Global:LastClaudeCommand = "$(Get-PlatformProperty -Source 'codex' -Property 'CLIName') $((Get-PlatformProperty -Source 'codex' -Property 'ForkCmd') -f $Session.sessionId)"
@@ -13357,7 +13582,7 @@ function Start-ForkSession {
 
         # Launch Windows Terminal with the new profile
         # Using both --fork-session and --session-id to control the new session's ID
-        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $oldSessionId --fork-session --session-id $newSessionId --model $model" -ProfileGuid $profileGuid -WorkingDirectory $projectPath
+        Start-WTClaude -ClaudePath $claudePath -Arguments "--resume $oldSessionId --fork-session --session-id $newSessionId --model $model" -ProfileGuid $profileGuid -WorkingDirectory $projectPath -Source 'claude'
 
         # Store simplified command for display (use old session name if available)
         $displayOldName = if ($oldName -ne "(unnamed)") { $oldName } else { $oldSessionId }

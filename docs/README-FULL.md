@@ -3,7 +3,7 @@
 [Download Installer Here](https://github.com/srives/SessionForge/releases/tag/name), called SessionForge.exe
 
 
-## What's New in v3.1.0 (2026-02-26)
+## What's New in v3.1.1 (2026-03-05)
 
 ✨ **Quality & Resilience Overhaul:**
 - ✅ **250 Automated Tests** - Up from 158 (+58%): WT safety, prefix handling, JSON integrity, resource safety, edge cases, menu key audit, costing persistence

@@ -2,6 +2,19 @@
 
 All notable changes to SessionForge (sf) will be documented in this file.
 
+## [3.1.1] - 2026-03-05
+
+### QuietFlag Architecture
+- **Platform-specific quiet-mode CLI flags**: Added `QuietFlag` and `QuietCheckFunc` to PlatformRegistry so each platform can define its own danger/auto-approve CLI behavior
+- **Codex --danger mode**: When Codex is in Quiet mode (full-auto), `--danger` flag is automatically appended to all launch commands
+- **Start-WTClaude -Source parameter**: All 21 call sites now pass `-Source` for automatic quiet-mode flag injection
+- **Extensible design**: New platforms just add `QuietFlag` + `QuietCheckFunc` to their registry entry — no other code changes needed
+
+### Testing
+- **258 automated tests** (up from 250): 8 new QuietFlag architecture tests (registry fields, callable check functions, Get-PlatformQuietArgs, Start-WTClaude Source param, static analysis of all call sites, Codex --danger flag)
+
+---
+
 ## [3.1.0] - 2026-02-26
 
 ### Token Totals & Cost Snapshots

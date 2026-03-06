@@ -4,7 +4,7 @@
 
 **SessionForge (sf)** is a PowerShell-based unified session manager for both Claude Code CLI and OpenAI Codex CLI with deep Windows Terminal integration. It enables visual session management across both CLIs, forking workflows, cost tracking, and custom terminal backgrounds. Launch with `sf` or `fork` from the command line.
 
-**Current Version:** 3.1.0 (2026-02-26)
+**Current Version:** 3.1.1 (2026-03-05)
 **Author:** S. Rives
 **Created:** January 2026
 **Platform:** Windows 10/11 with PowerShell 5.1+
@@ -113,7 +113,7 @@ The Windows version is intentionally a single PowerShell file for easy distribut
 #region Profile Registry        # ~200 lines - Legacy profile tracking
 #region Model Detection         # ~150 lines - Parse model from sessions
 #region Background Tracking     # ~300 lines - Background image metadata
-#region Validation Tests        # ~3000 lines - 250 automated tests
+#region Validation Tests        # ~3000 lines - 258 automated tests
 #region Main Program            # ~200 lines - Entry point, main loop
 ```
 
@@ -276,7 +276,7 @@ All data stored in `~/.claude-menu/`:
 - `New-ContinueSessionBackgroundImage` - Wrapper for continued sessions
 
 ### Validation
-- `Test-SystemValidation` - Runs 250 automated tests (results can be copied to clipboard: errors only, warnings+errors, or all)
+- `Test-SystemValidation` - Runs 258 automated tests (results can be copied to clipboard: errors only, warnings+errors, or all)
 
 ## Menu Keys
 
@@ -312,7 +312,7 @@ All data stored in `~/.claude-menu/`:
 
 ## Testing
 
-The script includes 250 automated validation tests accessible via Debug menu (D → V):
+The script includes 258 automated validation tests accessible via Debug menu (D → V):
 
 - **Tests 1-15**: Infrastructure (PowerShell, CLI, directories, JSON)
 - **Tests 16-30**: Logic (functions, encoding, sanitization)
@@ -332,6 +332,7 @@ The script includes 250 automated validation tests accessible via Debug menu (D 
 - **Tests 231-240**: Edge Cases (boundary conditions in core utilities: costs, tokens, CamelCase, Format-Cost)
 - **Tests 241**: Menu Key Audit (static code analysis: every handled main menu key appears in display legend)
 - **Tests 242-250**: Costing JSON Persistence (global path, function existence, batch I/O, JSON structure)
+- **Tests 251-258**: QuietFlag Architecture (registry fields, check functions callable, Get-PlatformQuietArgs, Start-WTClaude Source param, all call sites pass Source, Codex --danger flag)
 
 **Validation results can be copied to clipboard:** Errors only, Warnings+Errors, or All results.
 
@@ -469,7 +470,7 @@ claude-menu --enable-debug
 
 ## Recent Work (February 26, 2026)
 
-### v3.1.0 - Token Totals, Cost Snapshots, 250 Tests
+### v3.1.0 - Token Totals, Cost Snapshots, 258 Tests
 
 1. **Critical Bug Fixes**
    - **WT Backup Restore:** `Test-Json -Path` broken on all PS versions (PS 5.1: no cmdlet; PS 7+: no -Path param). Replaced with `ConvertFrom-Json` validation.
@@ -483,8 +484,8 @@ claude-menu --enable-debug
    - Auto-refresh main menu after new session creation (`$reloadSessions = $true`)
    - `Get-SessionNameFromWTProfile` function for platform-agnostic prefix stripping
 
-3. **Test Suite Expansion (158 → 250, +58%)**
-   - 92 new tests: WT Safety, Prefix Handling, JSON File Safety, Resource Safety, Edge Cases, Menu Key Audit, Costing JSON Persistence
+3. **Test Suite Expansion (158 → 258, +63%)**
+   - 100 new tests: WT Safety, Prefix Handling, JSON File Safety, Resource Safety, Edge Cases, Menu Key Audit, Costing JSON Persistence, QuietFlag Architecture
    - Static code analysis test: scans own source for undisplayed main menu keys
    - Tests now validate OUTSIDE the app boundary (WT settings, JSON files, GDI+ patterns)
 
@@ -632,7 +633,7 @@ Session discovery in WSL - need to verify:
 
 ## Version History Highlights
 
-- **3.1.0**: Token totals in header, persistent cost snapshots (costing.json), quality & resilience overhaul, 2 critical bug fixes (WT backup restore, Codex prefix strip), 250 tests (+58%), Codex new session WT profiles, auto-refresh, Linux cost math fix, platform prefix abstraction
+- **3.1.0**: Token totals in header, persistent cost snapshots (costing.json), quality & resilience overhaul, 2 critical bug fixes (WT backup restore, Codex prefix strip), 258 tests (+63%), Codex new session WT profiles, auto-refresh, Linux cost math fix, platform prefix abstraction, QuietFlag architecture for platform-specific danger modes
 - **3.0.0**: Codex CLI integration, unified Claude + Codex menu, performance optimization (hidden columns skip I/O, cost lazy-loading), co$t menu, 158 tests with clipboard copy, CamelCase titles, bug fixes (Format-Cost, token overflow, array wrapping)
 - **2.1.1**: Claude .exe launch fix, Purge dead sessions, column sort fix, bug fixes
 - **2.0.1**: Linux port with WSL support, debug logging, multi-path detection

@@ -302,9 +302,9 @@ chmod +x ~/.local/bin/claude-menu
 
 ## Version
 
-Linux port version: 3.1.0
+Linux port version: 3.1.1
 
-Based on SessionForge (sf) for Windows v3.1.0.
+Based on SessionForge (sf) for Windows v3.1.1.
 
 ## License
 
